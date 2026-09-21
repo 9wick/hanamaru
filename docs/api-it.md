@@ -28,7 +28,14 @@
 
 上記は二者択一です。引数は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
 引数のない関数にも `.args()` を書きます。
-argsFromは実行時、setup・useの前処理の後・targetの前に1回評価します。
+argsFromは各試行で、setup・useの前処理の後・targetの前に1回評価します。
+
+## timeout / retry
+
+`.timeout(ms)` / `.retry(count)` でそのケースだけの実行設定を上書きします。
+argsの前後で使え、expect / expectCallsの後には変更できません。
+未指定の項目はgroup・targetから引き継ぎます。eachのtにも同じ操作があります。
+[timeoutとretry](./execution-options.md)を参照してください。
 
 ## mock
 
@@ -53,7 +60,7 @@ expectは結果・例外、expectCallsは呼び出しを検証します。
 空配列、マッチャの呼び忘れ、配列のreturn忘れは型エラーです。
 
 一方だけでもケースとして完成します。両方書く場合はどちらの順でもよく、それぞれ1回だけ設定できます。
-複数の条件は、それぞれの配列に並べます。期待を書いた後にargsやmockを変更することはできません。
+複数の条件は、それぞれの配列に並べます。期待を書いた後にargs・mock・timeout・retryを変更することはできません。
 
 | 期待の内容 | 期待する終了 |
 |---|---|
@@ -76,7 +83,7 @@ mockやspyの事前登録は不要で、別途importする補助関数もあり�
 
 ## 結果の期待を組み立てる時点
 
-expectのコールバックはtarget終了後に1回評価します。
+expectのコールバックは各試行のtarget終了後に1回評価します。
 `e.ctx` はsetup・useで渡した値を順に反映したctxで、`e.result` と `e.error` は記述子を作るためのマッチャです。
 対象が例外を投げた場合もresultの記述子は作れますが、実際の終了と合わなければ失敗します。
 コールバック自体のthrowはテストの失敗であり、targetに期待した例外として扱いません。

@@ -129,7 +129,7 @@ export const addition = new Test()
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-setupはケースごとに実行します。戻り値の型が `argsFrom` と `e.ctx` に伝わります。
+setupは各ケースの各試行で実行します。戻り値の型が `argsFrom` と `e.ctx` に伝わります。
 非同期setupも使えます。準備と後始末を同じ場所に書く場合は、[useのmiddleware](./middleware.md)でケースを囲みます。
 共通設定は最初のケース・groupの前に書き、追加した後の変更は型で防ぎます。
 
@@ -174,3 +174,9 @@ setupはケースごとに実行します。戻り値の型が `argsFrom` と `e
 リポジトリ内の例は `tsc -p docs/spec/tsconfig.json` で検証できます。
 
 次は[テストをグループにまとめる](./grouping.md)と[実行計画とmetadata](./metadata.md)を参照してください。
+
+## 入力を並べる・実行設定を変える
+
+入力と期待だけが違うケースには[each](./each.md)を使えます。
+[timeoutとretry](./execution-options.md)はgroup・target・ケースで設定し、必要な項目だけ上書きできます。
+[失敗の表示と結果](./results.md)には宣言位置が自動で残り、IDやソース位置の入力は不要です。

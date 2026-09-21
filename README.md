@@ -53,6 +53,25 @@ export const addition = new Test()
   ]))
 ```
 
+## 行データからケースを書く
+
+```ts
+import { Test } from 'hanamaru'
+import { add } from './math.ts'
+
+export const addition = new Test()
+  .target(add)
+  .each('2つの数を足す', [
+    { a: 1, b: 2, expected: 3 },
+    { a: 2, b: 3, expected: 5 },
+  ], (t, row) => t
+    .args(row.a, row.b)
+    .expect(e => [e.result.toBe(row.expected)]))
+```
+
+eachはitと並ぶ入口です。行ごとに名前やIDを追加せず、引数・期待の型を保ってケースを並べます。
+[eachの表示と実行](./docs/each.md)を参照してください。
+
 ## モックなしでも呼び出しを検証する
 
 ```ts
@@ -81,9 +100,16 @@ const tests = new Test()
   .group('退会', deletionTests)
 ```
 
-groupで関連するテストをまとめ、配下へ共通のmock・setup・useを適用できます。
+groupで関連するテストをまとめ、配下へ共通のmock・setup・use・timeout・retryを適用できます。
 名前は任意です。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
 グループ化と共通設定の範囲は[テストをグループにまとめる](./docs/grouping.md)を参照してください。
+
+## 実行設定を下流へ渡す
+
+`.timeout(1_000)` と `.retry(2)` はgroup・target・ケースで設定できます。
+内側で指定した項目だけを上書きし、未指定の項目は親から引き継ぎます。
+retryは失敗したケースだけを再試行し、各試行を結果に残します。
+[timeoutとretry](./docs/execution-options.md)に設定例と停止の保証を記載しています。
 
 ## 準備と後始末を同じ場所に書く
 
@@ -112,9 +138,22 @@ const plan = users.plan()
 const result = await run(plan)
 ```
 
-`.plan()` はテストを実行せず、グループの階層、対象、準備やmiddleware、各スコープのモック、引数、呼び出し条件、結果の期待の組み立て方を返します。
+`.plan()` はテストを実行せず、グループの階層、対象、準備やmiddleware、各スコープの実行設定・モック、引数、呼び出し条件、結果の期待の組み立て方、宣言位置を返します。
 この実行計画がmetadataです。定義することと、実行することを分離します。
 テストを書くために、識別子やソース位置を別途登録する必要はありません。
+
+失敗には宣言位置を自動で添え、条件・期待・観測・原因を構造として返します。
+
+```text
+createUser
+  ✗ 保存して通知する  src/user.test.ts:42:4
+    call(send).calledOnceWith
+      expected: 合計1回、引数 [{ id: 'u1' }]
+      actual:   合計2回
+```
+
+expectは現在の書き方と実行時のctxを保つため、計画では遅延処理として保持します。
+全ての条件を実行前に展開する保証はありません。[宣言位置と実行結果](./docs/results.md)も参照してください。
 
 ## ドキュメント
 
@@ -123,17 +162,19 @@ const result = await run(plan)
 - [Test ビルダー](./docs/api-test.md) / [it ビルダー](./docs/api-it.md)
 - [モック](./docs/api-mock.md) / [マッチャ](./docs/api-expect.md)
 - [テストをグループにまとめる](./docs/grouping.md) / [middleware](./docs/middleware.md)
-- [実行計画とmetadata](./docs/metadata.md)
+- [each](./docs/each.md) / [timeoutとretry](./docs/execution-options.md)
+- [実行計画とmetadata](./docs/metadata.md) / [宣言位置と実行結果](./docs/results.md)
 - [実行セマンティクス](./docs/semantics.md) / [CLI](./docs/cli.md)
 - [型推論](./docs/type-inference.md) / [制約と実装状況](./docs/limitations.md)
 
 ## 現在の状態
 
-公開APIを設計している段階です。ビルダー・ランナー・CLIは未実装です。
+READMEとドキュメントは、実装する公開契約です。ビルダー・ランナー・CLIは未実装です。
 このリポジトリでは、[型契約](./docs/spec/hanamaru.d.ts)と[サンプル](./docs/examples/)を次のコマンドで検証できます。
 
 ```console
 tsc -p docs/spec/tsconfig.json
+python3 scripts/check-docs.py
 ```
 
 実行時依存0を目標とし、型チェックにはTypeScriptを使います。

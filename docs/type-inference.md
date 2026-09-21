@@ -180,3 +180,14 @@ tsc -p docs/spec/tsconfig.json
 このコマンドはサンプルの型チェックと、`@ts-expect-error` を付けた誤操作が型エラーになることを検証します。
 グループ・ctxの検証は[group-types.ts](./spec/group-types.ts)、middlewareの検証は[middleware-types.ts](./spec/middleware-types.ts)にあります。
 APIの実装を実行するものではありません。ランナー自体も型チェックはせず、通常のtest scriptからtscを呼ぶ想定です。
+
+## each・実行設定・sequence
+
+eachは行からrowを、targetからargs/resultを推論し、各行に完成済みのケースを要求します。
+最初のeach・it・group以降は共通設定を固定します。ケースのtimeout/retryは期待の構築前まで変更できます。
+onceの列だけではモックは未完成で、最後に通常動作を指定する必要があります。
+calledNthWithの引数は、指定したメソッドのParametersに従います。
+
+型で防ぐ契約は[execution-contracts.ts](./spec/execution-contracts.ts)で検証します。
+数値の範囲・有限性、空の行配列、行から作る名前の実行結果などは定義時・計画受付時の検査です。
+SourceLocationの正しい取得、設定の継承結果、期限・再試行・復元・JSONの実動作は、この型検証では確認できません。

@@ -26,28 +26,34 @@ const result = await run(plan)
 |---|---|
 | TestPlan.version / kind | 計画形式のバージョンとtest / group |
 | TestPlan.name | describeの表示名。testでは省略時に対象名、groupではnull |
+| TestPlan.config | そのノードで明示したtimeout・retry。未指定は親から継承 |
 | TestPlan.steps | そのノードのsetup・useを登録順に並べた配列。未登録なら空配列 |
 | SetupPlan | kind: setupとcreate関数 |
 | MiddlewarePlan | kind: middlewareとrun関数 |
 | TestPlan.mocks | そのノードの共通モック |
 | SuitePlan.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
 | SuitePlan.cases | 宣言順のケース |
-| GroupPlan.children | 追加した順の子。各要素はnameとplanを持つ |
+| GroupPlan.children | 追加した順の子。各要素はname・origin・planを持つ |
 | GroupEntry.name | group(name, child)の説明。省略時はnull |
+| GroupEntry.origin | その親へ追加したgroupの宣言位置 |
 | GroupEntry.plan | 子の計画。さらにグループでもよい |
 | Case.name / mode | ケース名とrun / only / skip / todo |
+| Case.origin | it / only / skip / todo / eachの宣言位置 |
+| Case.row | eachの元の行と0始まりのindex。通常ケースとtodoはnull |
+| Case.config | そのケースで明示したtimeout・retry |
 | Case.mocks | そのケースで登録したモック |
 | Case.args | 引数タプル、またはctxから組み立てる関数 |
 | Case.expect | 結果・例外のアサーションをctxから組み立てる処理。省略時はnull |
 | Case.calls | 呼び出し条件の記述子の配列。省略時は空配列 |
 
 各モックはobject・key・behaviorを持ちます。
-behaviorはreturns / resolvesと値、throws / rejectsと例外、callsFakeと関数のいずれかです。
+通常のbehaviorはreturns / resolvesと値、throws / rejectsと例外、callsFakeと関数です。
+sequenceはkind: sequenceとonceの動作列・fallbackを保持します。
 同じスコープ内のobject・keyへのモック設定は最後の振る舞い1件に解決します。
 親と子の設定は別々に保持し、実行時に外側→内側→ケースの順で重ねます。
 呼び出し条件は複数あっても上書きせず、返された順に全て保持します。
 
-todoは実行本体を持たず、nameとmodeだけがあります。
+todoは実行本体を持たず、name・mode・origin・config・row: nullを持ちます。
 他のケースにはexpectかcallsの少なくとも一方が必要です。
 ケース名とグループ名は表示名であり、一意性を要求しません。
 結果は計画と同じ階層・順・件数で返すため、無名のグループや同名のケースも位置で対応します。
@@ -55,7 +61,7 @@ todoは実行本体を持たず、nameとmodeだけがあります。
 ## グループの階層
 
 `TestPlan` は `kind: 'test'` のSuitePlanと、`kind: 'group'` のGroupPlanのunionです。
-各ノードがその場所のsteps・mocksを保持し、子へ設定を書き込むことはありません。
+各ノードがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。
 名前のないグループも構造として残ります。
 
 ```ts
@@ -117,7 +123,7 @@ new Test()
 ```
 
 Case.expectは、このexpectコールバックへctxと記述子ビルダーを渡す `build(ctx)` を保持します。
-標準実行器ではtarget終了後に1回評価し、次の記述子を得ます。
+標準実行器では各試行のtarget終了後に1回評価し、次の記述子を得ます。
 
 | subject | 対象 | checkの例 |
 |---|---|---|
@@ -136,9 +142,10 @@ expectは静的な値だけを使う場合も遅延扱いです。
 | 処理 | 評価時点 | 計画での表現 |
 |---|---|---|
 | itのコールバック | 定義時 | ケースの構造に展開 |
+| eachの名前・本体 | 定義時に各行1回 | 行順に通常のケースへ展開 |
 | mockの振る舞いコールバック | 定義時 | behaviorに展開 |
 | expectCallsのコールバック | 定義時 | callsの記述子に展開 |
-| setupのcreate | ケース開始時、親から子へ、stepsの登録順 | kind: setupと関数参照 |
+| setupのcreate | 試行開始時、親から子へ、stepsの登録順 | kind: setupと関数参照 |
 | useのmiddleware | stepsの登録順に入り、nextで後続を実行した後、逆順に戻る | kind: middlewareとrun関数参照 |
 | argsFrom | targetの前 | kind: from-contextとbuild関数 |
 | expectのコールバック | targetの後 | kind: deferredとbuild関数 |
@@ -153,7 +160,9 @@ expectとexpectCallsのチェーン上の順序は、この評価時点を変え
 
 計画はreadonlyですが、利用者が渡した値の内部まで複製・凍結しません。
 関数のクロージャ、オブジェクト参照、Error等も保持するため、JSONでの往復は契約に含めません。
-関数名からソースファイルを特定できるとも保証しません。
+宣言位置は自動取得しますが、target関数名からその実装位置を特定する保証はありません。
 任意の関数内部の依存や分岐は、その関数を保持するだけでは構造として取得できません。
 
+宣言位置・pathによる対応・各試行と失敗の構造は[実行結果](./results.md)に記載しています。
+実行設定は[timeoutとretry](./execution-options.md)の規則で解決します。
 標準実行器の手順と結果は[実行セマンティクス](./semantics.md)を参照してください。
