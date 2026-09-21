@@ -1,7 +1,7 @@
 # 実行計画とmetadata
 
 hanamaruのmetadataは、テストの実行計画です。
-合成の階層・対象・準備・振る舞いの置き換え・引数・期待を、構造化した値として渡します。
+グループの階層・対象・準備・実行を囲む処理・振る舞いの置き換え・引数・期待を、構造化した値として渡します。
 そのデータの用途は、受け取る側に委ねます。
 
 ## 取得と実行
@@ -15,7 +15,7 @@ const result = await run(plan)
 ```
 
 `.plan()` は `TestPlan` を返し、`run()` が実行して `RunResult` を返します。
-計画を取得してもsetup・targetは呼ばず、メソッドの差し替えや記録も開始しません。
+計画を取得してもsetup・use・targetは呼ばず、メソッドの差し替えや記録も開始しません。
 対象のファイル・export名・手書きIDの追加登録は不要です。
 
 ## 計画の構造
@@ -26,11 +26,13 @@ const result = await run(plan)
 |---|---|
 | TestPlan.version / kind | 計画形式のバージョンとtest / group |
 | TestPlan.name | describeの表示名。testでは省略時に対象名、groupではnull |
-| TestPlan.setup | そのノードに登録したcreateと任意のdisposeの配列。登録順、未登録なら空配列 |
+| TestPlan.steps | そのノードのsetup・useを登録順に並べた配列。未登録なら空配列 |
+| SetupPlan | kind: setupとcreate関数 |
+| MiddlewarePlan | kind: middlewareとrun関数 |
 | TestPlan.mocks | そのノードの共通モック |
 | SuitePlan.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
 | SuitePlan.cases | 宣言順のケース |
-| GroupPlan.children | 合成した順の子。各要素はnameとplanを持つ |
+| GroupPlan.children | 追加した順の子。各要素はnameとplanを持つ |
 | GroupEntry.name | group(name, child)の説明。省略時はnull |
 | GroupEntry.plan | 子の計画。さらにグループでもよい |
 | Case.name / mode | ケース名とrun / only / skip / todo |
@@ -50,10 +52,10 @@ todoは実行本体を持たず、nameとmodeだけがあります。
 ケース名とグループ名は表示名であり、一意性を要求しません。
 結果は計画と同じ階層・順・件数で返すため、無名のグループや同名のケースも位置で対応します。
 
-## 合成した計画
+## グループの階層
 
 `TestPlan` は `kind: 'test'` のSuitePlanと、`kind: 'group'` のGroupPlanのunionです。
-各ノードがその場所のsetup・mockを保持し、子へ設定を書き込むことはありません。
+各ノードがその場所のsteps・mocksを保持し、子へ設定を書き込むことはありません。
 名前のないグループも構造として残ります。
 
 ```ts
@@ -63,7 +65,7 @@ const plan = registrations.plan()
 for (const entry of plan.children) {
   const child = entry.plan
   if (child.kind === 'group') {
-    // child.setup、child.mocks、child.childrenを取得できる。
+    // child.steps、child.mocks、child.childrenを取得できる。
   } else {
     // child.target、child.casesを取得できる。
   }
@@ -100,8 +102,8 @@ const assertion = {
 実行器はcallsから記録対象を得て、mocksと同じobject・keyなら1つのラッパーにまとめます。
 モックがなければ本物の処理、あれば指定した振る舞いを呼び、同じ記録に対して条件を照合します。
 
-この段階ではsetupは未実行です。呼び出し対象と期待する引数は定義時に渡せる値を使います。
-setupで初めて得る参照や値を、呼び出し条件に使うAPIは現時点では含みません。
+この段階ではsetup・useは未実行です。呼び出し対象と期待する引数は定義時に渡せる値を使います。
+setup・useで初めて得る参照や値を、呼び出し条件に使うAPIは現時点では含みません。
 
 ## 結果・例外の期待はctxから組み立てる
 
@@ -136,13 +138,15 @@ expectは静的な値だけを使う場合も遅延扱いです。
 | itのコールバック | 定義時 | ケースの構造に展開 |
 | mockの振る舞いコールバック | 定義時 | behaviorに展開 |
 | expectCallsのコールバック | 定義時 | callsの記述子に展開 |
-| setup.create | ケース開始時、親から子へ、同じ階層では登録順 | ctxから追加フィールドを作る関数参照 |
+| setupのcreate | ケース開始時、親から子へ、stepsの登録順 | kind: setupと関数参照 |
+| useのmiddleware | stepsの登録順に入り、nextで後続を実行した後、逆順に戻る | kind: middlewareとrun関数参照 |
 | argsFrom | targetの前 | kind: from-contextとbuild関数 |
 | expectのコールバック | targetの後 | kind: deferredとbuild関数 |
 | callsFakeの関数 | 対象メソッドの呼び出し時 | 関数参照 |
 | toSatisfyの述語 | アサーション評価時 | 記述子内の関数参照 |
-| setup.dispose | 成功済みsetupの逆順で後始末 | 対応するcreate直後のctxを受ける関数参照 |
 
+setupとuseは共通のsteps配列に保持するため、混ぜて登録した順序も失いません。
+middlewareはctxとnextを受ける関数として保持します。前処理・後処理を別の関数へ分解したり、試しに実行してctxを取り出したりはしません。
 expectとexpectCallsのチェーン上の順序は、この評価時点を変えません。
 
 ## 参照を保持する意味

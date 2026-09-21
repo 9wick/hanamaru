@@ -19,7 +19,7 @@
 ## args / argsFrom
 
 `.args(...args)` は対象の引数をそのまま受け取ります。
-`.argsFrom(ctx => [...args])` はそのケースの親から子までのsetupで用意したctxから引数タプルを作ります。
+`.argsFrom(ctx => [...args])` はそのケースの親から子までのsetup・useで用意したctxから引数タプルを作ります。
 
 ```ts
 .args(1, 2)
@@ -28,7 +28,7 @@
 
 上記は二者択一です。引数は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
 引数のない関数にも `.args()` を書きます。
-argsFromは実行時、setupの後・targetの前に1回評価します。
+argsFromは実行時、setup・useの前処理の後・targetの前に1回評価します。
 
 ## mock
 
@@ -71,13 +71,13 @@ expectCallsのコールバックは定義時に1回評価します。
 それを計画へ保持するため、実行器はtargetを呼ぶ前に記録対象を確定できます。
 mockやspyの事前登録は不要で、別途importする補助関数もありません。
 
-この段階ではsetupは未実行です。callにctxはなく、対象参照と期待する引数は定義時に渡せる値を使います。
+この段階ではsetup・useは未実行です。callにctxはなく、対象参照と期待する引数は定義時に渡せる値を使います。
 実行時のctxを使う引数や結果の期待には、argsFromとexpectを使います。
 
 ## 結果の期待を組み立てる時点
 
 expectのコールバックはtarget終了後に1回評価します。
-`e.ctx` はsetupを順に反映したctxで、`e.result` と `e.error` は記述子を作るためのマッチャです。
+`e.ctx` はsetup・useで渡した値を順に反映したctxで、`e.result` と `e.error` は記述子を作るためのマッチャです。
 対象が例外を投げた場合もresultの記述子は作れますが、実際の終了と合わなければ失敗します。
 コールバック自体のthrowはテストの失敗であり、targetに期待した例外として扱いません。
 

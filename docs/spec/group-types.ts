@@ -10,9 +10,6 @@ const child = new Test<{ seed: number }>()
   .setup(ctx => {
     expectType<number>(ctx.seed)
     return { expected: ctx.seed + 1 }
-  }, ctx => {
-    expectType<number>(ctx.seed)
-    expectType<number>(ctx.expected)
   })
   .target(add)
   .it('親のctxから準備する', t => t.argsFrom(ctx => [ctx.seed, 1])
@@ -64,9 +61,9 @@ run(new Test<{ seed: number }>().setup(() => ({ seed: 1 })).target(add).todo('�
 // @ts-expect-error extracted child nodes cannot be run outside their context.
 run(parent.plan().children[0].plan)
 
-// @ts-expect-error setup is fixed after composition starts.
+// @ts-expect-error setup is fixed after the first group.
 parent.setup(() => ({ seed: 4 }))
-// @ts-expect-error mock scope is fixed after composition starts.
+// @ts-expect-error mock scope is fixed after the first group.
 parent.mock(mailService, 'send', m => m.resolves(undefined))
 // @ts-expect-error descriptions are also fixed after the first group.
 parent.describe('変更')
@@ -87,16 +84,8 @@ parent.plan().children.push({ name: null, plan: independent.plan() })
 
 // Each setup receives the accumulated context; later fields replace earlier ones.
 new Test()
-  .setup(() => ({ seed: 2, value: 1 }), ctx => {
-    expectType<number>(ctx.value)
-    // @ts-expect-error earlier cleanup cannot see a later setup's fields.
-    ctx.expected
-  })
-  .setup(async ctx => ({ value: String(ctx.value), expected: ctx.seed + 1 }), ctx => {
-    expectType<string>(ctx.value)
-    expectType<number>(ctx.seed)
-    expectType<number>(ctx.expected)
-  })
+  .setup(() => ({ seed: 2, value: 1 }))
+  .setup(async ctx => ({ value: String(ctx.value), expected: ctx.seed + 1 }))
   .target(add)
   .it('ctxを順に拡張する', t => t.argsFrom(ctx => {
     expectType<string>(ctx.value)
@@ -113,10 +102,6 @@ new Test().setup(() => ({ seed: 2 })).setup(ctx => {
   // @ts-expect-error fields must be added through a return value.
   ctx.seed = 3
   return { next: ctx.seed + 1 }
-})
-new Test().setup(() => ({ seed: 2 }), ctx => {
-  // @ts-expect-error cleanup sees readonly context fields.
-  ctx.seed = 3
 })
 new Test().target(add).setup(() => ({ seed: 2 }))
   .it('期待のctxも同じ', t => t.args(1, 2).expect(e => {

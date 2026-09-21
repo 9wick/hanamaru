@@ -8,7 +8,7 @@
 `new Test()` のチェーンは、it・mock・expectCallsの定義コールバックを評価して計画を組み立てます。
 expectのコールバックは保存し、この時点では呼びません。
 `.plan()` は計画を取得し、`run()` が実行します。
-setup・target・argsFrom・fake・述語は、計画取得だけでは呼びません。
+setup・use・target・argsFrom・fake・述語は、計画取得だけでは呼びません。
 定義中はメソッドを差し替えず、呼び出しの記録も開始しません。
 テストモジュールのトップレベルコードは通常のimportと同様に動きます。
 
@@ -31,31 +31,64 @@ const results = await run([first.plan(), second.plan()])
 skip/todoも結果に残すため、名前がなくても、重複していても配列の位置で対応します。
 
 version・計画構造・呼び出し条件の妥当性を階層全体について実行前に検査します。
-循環、空のchildren/cases、不正なsetup・mock等も受付エラーです。同じ子を別の経路から参照することは循環ではありません。
+循環、空のchildren/cases、不正なsteps・mock等も受付エラーです。同じ子を別の経路から参照することは循環ではありません。
 空の計画配列や、同一プロセスでのrunの重複実行は受付エラーです。
-受付エラーではsetupを開始せずPromiseをrejectします。ケース中の失敗は結果に残し、他のケースを続けます。
+受付エラーではsetup・useを開始せずPromiseをrejectします。ケース中の失敗は結果に残し、他のケースを続けます。
 
 ## 1ケースの手順
 
-1. **setup**: 新しい `{}` から、そのケースに至る親→子のsetupを登録順に実行する。各createに直前のctxを渡し、awaitした戻り値のフィールドでctxを拡張する。
+1. **準備**: 新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。setupは戻り値をawaitしてctxを拡張し、次へ進む。useは直前のctxとnextを受け取り、nextで後続のstepsとケース本体を実行する。
 2. **instrumentation**: 経路上の共通mockとケースのmockを解決し、callsと参照・キーでまとめる。元のdescriptorを保存して差し替えと記録を設定する。
 3. **args**: 静的な引数を使うか、argsFromにctxを渡して引数タプルを得る。
 4. **target**: 対象を呼び、Promise/thenableならawaitする。戻り値か例外をタグ付きで保持する。
 5. **expect**: 設定があれば、ctxと記述子ビルダーで結果の期待を組み立てて検査する。
 6. **assertion**: 期待する終了を照合し、結果の条件、呼び出しの条件の順に、各配列の順で検証する。
-7. **cleanup**: finallyで差し替えを逆順に復元し、成功済みsetupのdisposeを逆順に呼んでawaitする。各disposeには対応するcreate直後のctxを渡す。
+7. **cleanup**: finallyで差し替えを逆順に復元する。その後、内側から外側へuseのnextが完了し、各middlewareの後処理をawaitする。
 
-ctxの拡張は、直前のctxとcreateの戻り値の列挙可能なownフィールドを新しいオブジェクトへ浅くコピーします。
+ctxの拡張は、直前のctxとsetupの戻り値またはnextに渡した値の列挙可能なownフィールドを新しいオブジェクトへ浅くコピーします。
 同名のフィールドは後の値を優先します。入れ物のフィールドは変更不可とし、参照先の値は複製・凍結しません。
-argsFromとexpectは同じ最終ctxを受け、disposeは各段階のctxを受けます。
+argsFromとexpectは同じ最終ctxを受けます。middlewareが受け取ったctxは、その呼び出し時点のままです。
 新しく追加したフィールドだけを返せばよく、親のctxを手動でspreadする必要はありません。
-setupの戻り値はフィールドを持つplain objectとし、null・プリミティブ・配列・クラスインスタンス等はsetupの失敗です。
-DBなどの資源は `{ db }` のようにフィールドへ入れます。戻り値のprototypeは通常のObjectかnullを受け付けます。
+setupの戻り値とnextの追加フィールドはplain objectとし、null・プリミティブ・配列・クラスインスタンス等はそれぞれsetup・middlewareの失敗です。
+DBなどの資源は `{ db }` のようにフィールドへ入れます。prototypeは通常のObjectかnullを受け付けます。
 
-親のsetupも、グループ全体で1回ではなく、実行する各ケースで呼びます。
-setup中にはモックも記録用のラッパーも適用しません。
+親のsetup・useも、グループ全体で1回ではなく、実行する各ケースで呼びます。
+setupとuseの前処理・後処理にはモックも記録用のラッパーも適用しません。
 記録は全ラッパーの適用後からtargetの終了までです。argsFromでの呼び出しも含まれるため、argsFromは引数を作る処理に留めます。
 expect・述語・後始末中の呼び出しは記録に含めません。
+
+## middlewareとnext
+
+`use((ctx, next) => ...)` はケースの実行を囲むmiddlewareです。
+`next(fields)` はctxを拡張して後続を呼び、`next()` は現在のctxをそのまま渡します。
+後続はnextを呼んだ非同期コンテキスト内で実行するため、AsyncLocalStorageやコールバック型トランザクションで囲めます。
+setupとuseを混ぜた場合も登録順を保ちます。
+
+```text
+親useの前処理
+  親setup
+    子useの前処理
+      子setup → 差し替え → args → target → 期待の検証 → 復元
+    子useの後処理
+親useの後処理
+```
+
+middlewareはnextを1回呼び、その呼び出しが返す完了値を返します。
+後始末には `try { return await next({ db }) } finally { await db.close() }` を使います。
+`return next(...)` ではfinallyが下流の完了前に動くため、この形ではawaitが必要です。
+
+下流でケースの失敗が確定した場合、失敗を結果へ記録した上でnextをrejectします。外側のfinallyは引き続き実行します。
+targetのthrowは先に期待と照合するため、期待どおりの例外ではnextをrejectしません。
+middlewareがnextの失敗をcatchしても、記録済みの失敗は取り消しません。
+後処理自体の失敗はmiddleware段階で追加し、同じ下流の失敗を外側へ伝えるだけでは重複記録しません。
+
+nextの未呼び出し・複数回呼び出し、その呼び出し以外の完了値の返却はmiddlewareの失敗です。
+nextの完了前にmiddlewareが終了した場合も失敗とし、開始済みの下流処理と後始末を待ってから次のケースへ進みます。
+不正な再呼び出しから下流を再実行することはありません。middleware終了後のnextもrejectし、下流を開始しません。
+ケース結果の確定後に発生した呼び出しまで、確定済みの結果へ遡って反映する保証はありません。
+nextの省略でケースを成功扱いにはしません。
+nextの回数・待機の正しさは型だけでは保証できないため、実行時に検査します。
+middlewareがnextより前にthrowした場合は、その失敗を記録して下流を開始しません。
 
 ## 呼び出し記録とモック
 
@@ -101,18 +134,19 @@ expectの構築・妥当性検査や結果の照合が失敗しても、取得�
 
 | 失敗した段階 | 扱い |
 |---|---|
-| setup | targetを呼ばない。失敗したsetupのdisposeは呼ばず、成功済みsetupのdisposeを逆順に呼ぶ |
-| 差し替え・記録の設定 | targetを呼ばず、適用済みラッパーの復元とdisposeを行う |
-| args | targetを呼ばず、復元とdisposeを行う |
+| setup | 下流を開始せず、外側のmiddlewareのfinallyへ戻る |
+| middleware | 未開始の下流は実行せず、開始済みなら完了・後始末を待つ。外側のfinallyへ戻る |
+| 差し替え・記録の設定 | targetを呼ばず、適用済みラッパーを復元し、middlewareのfinallyへ戻る |
+| args | targetを呼ばず、復元してmiddlewareのfinallyへ戻る |
 | target | 戻り値 / 例外として保持し、期待と照合する |
 | expect | ケースを失敗にし、呼び出し条件を検証して後始末する |
 | assertion | 失敗を記録し、後続を検証して後始末する |
-| cleanup | 元の失敗も残し、残りの復元とdisposeを試みる |
+| cleanup | 元の失敗も残し、残りの復元を試み、middlewareのfinallyへ戻る |
 
-setup・差し替え設定・argsの失敗では対象を呼んでいないため、アサーションを評価しません。
+準備・差し替え設定・argsの失敗で対象を呼んでいない場合、アサーションを評価しません。
 これを「0回だったのでnotCalledに成功した」とは扱いません。
 target以外の段階の失敗は、targetに対するerrorの期待を満たしません。
-setupの途中で取得した資源は、create自身で後始末します。
+資源の取得と解放はuseの同じスコープに書き、取得途中で失敗した場合の後始末もそこで扱います。
 
 ## 適用と復元
 
@@ -131,15 +165,15 @@ setupの途中で取得した資源は、create自身で後始末します。
 
 ## ケース間の状態
 
-ケースごとに経路上の全setupを呼び、呼び出し記録を作り直します。同じ計画の再実行でも同様です。
+ケースごとに経路上のsetup・useを呼び、呼び出し記録を作り直します。同じ計画の再実行でも同様です。
 静的に渡したオブジェクトや、factoryが返した共有値まで複製はしません。
-独立性が必要な値はsetupやargsFromで毎回生成してください。
+独立性が必要な値はsetup・use・argsFromで毎回生成してください。
 
 ## only / skip / todo
 
 runに渡された全ルートとその子孫のどこかにonlyがあれば、onlyだけを実行します。
 他のrunケースはskipped、明示skipはskipped、todoはtodoとして結果に残します。
-実行しないケースではsetup・target・差し替え・記録を開始しません。
+実行しないケースではsetup・use・target・差し替え・記録を開始しません。
 定義時のケース・mock・expectCallsコールバックは、skipでも計画を組み立てるために評価します。
 
 `run(plans, { forbidOnly: true })` はonlyを受付エラーにします。
@@ -149,7 +183,7 @@ CLIの `--ci` はこの設定を使います。通常実行ではskip/todoだけ
 
 `RunResult` は計画順のtestsを持ち、各要素はkindでtestとgroupを区別します。
 TestResultのcasesにはケース名・状態・所要時間・失敗一覧が入ります。
-GroupResultのchildrenには合成箇所のnameと子のresultが入り、無名ならnameはnullです。
+GroupResultのchildrenにはgroupで指定したnameと子のresultが入り、無名ならnameはnullです。
 グループは配下に1件でも失敗があればfailed、それ以外はpassedです。skip/todoだけの配下もpassedです。
 失敗には発生段階を記録します。アサーション番号は、結果の期待に呼び出しの期待を続けた評価順の0始まりの位置です。
 expectの構築に失敗した場合は結果の期待を0件として番号を付け、構築の失敗はexpect段階で別に記録します。

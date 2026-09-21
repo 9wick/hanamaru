@@ -130,7 +130,7 @@ export const addition = new Test()
 ```
 
 setupはケースごとに実行します。戻り値の型が `argsFrom` と `e.ctx` に伝わります。
-非同期setupも使えます。後始末は `.setup(create, dispose)` の第2引数に渡します。
+非同期setupも使えます。準備と後始末を同じ場所に書く場合は、[useのmiddleware](./middleware.md)でケースを囲みます。
 共通設定は最初のケース・groupの前に書き、追加した後の変更は型で防ぎます。
 
 ## 実行環境とコマンド
@@ -173,4 +173,4 @@ setupはケースごとに実行します。戻り値の型が `argsFrom` と `e
 上記のインストール・CLI実行は、公開パッケージがまだないため未検証です。
 リポジトリ内の例は `tsc -p docs/spec/tsconfig.json` で検証できます。
 
-次は[テストの合成とスコープ](./composition.md)と[実行計画とmetadata](./metadata.md)を参照してください。
+次は[テストをグループにまとめる](./grouping.md)と[実行計画とmetadata](./metadata.md)を参照してください。

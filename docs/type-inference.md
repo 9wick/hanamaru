@@ -8,7 +8,7 @@
 | 型 | 決まるところ | 使うところ |
 |---|---|---|
 | F: 対象の関数型 | target | args、argsFrom、result |
-| C: その段階のコンテキスト型 | 親への要求型とsetupの戻り値 | 次のsetup、argsFrom、e.ctx、dispose |
+| C: その段階のコンテキスト型 | 親への要求型、setupの戻り値、useでnextへ渡す値 | 次のsetup / use、argsFrom、e.ctx |
 | R: 親に要求するコンテキスト型 | new Test<R>()。省略時は{} | groupの供給チェック、runのルートチェック |
 
 引数は `Parameters<F>`、結果の期待値は `Awaited<ReturnType<F>>` です。
@@ -24,6 +24,29 @@ new Test()
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
+## middlewareから型を伝える
+
+```ts
+new Test()
+  .use(async (_, next) => {
+    const db = await createDatabase()
+    try {
+      return await next({ db, expected: 3 })
+    } finally {
+      await db.close()
+    }
+  })
+  .target(countUsers)
+  .it('型が伝わる', t => t.argsFrom(ctx => [ctx.db])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
+```
+
+nextは渡されたフィールド型Sを保持する `Promise<MiddlewareResult<S>>` を返します。
+useはmiddlewareの戻り値からSを推論し、後続のCへ追加します。
+ブランド付きの完了値なので、return忘れや通常のオブジェクトの返却は型エラーです。
+`next()` はフィールドを追加せずCを保ちます。setupと同様に、同名フィールドは置き換えます。
+親のuseで供給したフィールドも、groupで子が要求する型と照合します。
+
 ## 設定とケース追加を分ける
 
 ```text
@@ -31,10 +54,10 @@ Test<R> → target → TestBuilder<F, C, R> → it → Suite<F, C, R>
         → group → GroupSuite<C, R>
 ```
 
-TestBuilderはsetup・mockとケース追加を持ち、Suiteはケース追加とplanだけを持ちます。
+TestBuilderはsetup・use・mockとケース追加を持ち、Suiteはケース追加とplanだけを持ちます。
 グループも最初のgroupで設定を固定し、GroupSuiteはgroupとplanだけを持ちます。
 既存ケースを書いた後のtargetやctxの変更を型で防ぎ、対象を選んだ後のtargetの再指定も禁止します。
-元のTestBuilderはイミュータブルなので、そこから別のsetupやmockを選ぶ派生は作れます。
+元のTestBuilderはイミュータブルなので、そこから別のsetup・use・mockを選ぶ派生は作れます。
 
 ケースはargs / argsFromで引数を確定した後、expectとexpectCallsをそれぞれ一度だけ設定できます。
 一方でも完成したケースですが、もう一方を追加できます。両方を設定したら終端です。
@@ -50,7 +73,7 @@ TestBuilderはsetup・mockとケース追加を持ち、Suiteはケース追加�
 
 これにより、return忘れ、検証を書いていないケース、期待の二重定義を防ぎます。
 
-## 合成時のctx
+## グループ内のctx
 
 ```ts
 const child = new Test<{ a: number }>()
@@ -70,7 +93,7 @@ childは親に `{ a: number }` を要求します。親に余分なフィール�
 子が型パラメータを省略すれば、親ctxへの要求はありません。
 
 Rは子の定義を作っている間ずっと親への要求として保持します。
-子自身のsetupで同名のフィールドを返しても、そのsetupより前のコードがRを利用し得るので要求は消しません。
+子自身のsetup・useで同名のフィールドを供給しても、それより前のコードがRを利用し得るので要求は消しません。
 間のグループも `new Test<R>()` で必要なctxを宣言し、さらに外側の親から受け取れます。
 
 planは親への要求を型として保持します。runへ渡せるのは `{}` から実行できるルートだけです。
@@ -123,10 +146,10 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 
 - 対象と引数・期待値の型の一致
 - モックの戻り値と、呼び出し条件のメソッドキー・引数の型
-- setupなしのctxプロパティ参照、非同期setupのawait後の型
+- 未供給のctxプロパティ参照、setup・useの非同期処理から伝わる型
 - ケース・group追加後の共通設定変更
-- 合成先によるctxの供給、要求が残る計画の単独実行
-- setupを重ねたときのctxの型と、各disposeへ渡る時点の型
+- グループの親によるctxの供給、要求が残る計画の単独実行
+- setup・useを重ねたときのctxの型、middlewareのreturn忘れ
 - 引数の確定と期待の順序、未完了のケース、期待の二重定義
 - result/errorの混在、空配列、マッチャの呼び忘れ、非同期predicate
 
@@ -141,7 +164,9 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 テストが意図した参照を選んでいるかどうかは、型だけでは検査できません。
 
 anyや型アサーションで型検査を回避した値、プロパティの差し替え可否は実行時検査が必要です。
-setupの戻り値がplain objectかどうかも、構造的な型だけでは判定できないため実行時に検査します。
+setupの戻り値やnextへの追加フィールドがplain objectかどうかは、実行時に検査します。
+nextを1回呼んでその完了を待つこと、返した完了値がその呼び出しのものかは、型だけでは保証できません。
+finallyがあるときに `return next(...)` で早く片付けてしまう誤りも型では防げないため、`return await next(...)` と書きます。
 省略可能なメソッドは、存在を保証する型へ絞ってから渡します。
 オーバーロードやジェネリック関数では、Parameters/ReturnTypeだけで全ての関係を保持できない場合があります。
 必要ならテストしたい具体的なシグネチャの関数で包みます。
@@ -153,5 +178,5 @@ tsc -p docs/spec/tsconfig.json
 ```
 
 このコマンドはサンプルの型チェックと、`@ts-expect-error` を付けた誤操作が型エラーになることを検証します。
-合成・ctxの正例と負例は[group-types.ts](./spec/group-types.ts)にあります。
+グループ・ctxの検証は[group-types.ts](./spec/group-types.ts)、middlewareの検証は[middleware-types.ts](./spec/middleware-types.ts)にあります。
 APIの実装を実行するものではありません。ランナー自体も型チェックはせず、通常のtest scriptからtscを呼ぶ想定です。

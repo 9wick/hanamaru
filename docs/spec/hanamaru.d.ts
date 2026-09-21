@@ -10,6 +10,7 @@ declare const doneBrand: unique symbol
 declare const definitionBrand: unique symbol
 declare const behaviorBrand: unique symbol
 declare const planBrand: unique symbol
+declare const middlewareBrand: unique symbol
 export interface ItDone { readonly [doneBrand]: true }
 export interface TestDefinition<R extends object = {}> {
   /** 親に要求するctx。関数プロパティで反変にし、供給できない合成を防ぐ。 */
@@ -19,6 +20,16 @@ export type ExtendContext<C, S> = C extends unknown
   ? S extends unknown ? Omit<C, keyof S> & S : never
   : never
 type SetupReturn<S> = S & (Awaited<S> extends object ? unknown : never)
+/** nextの完了値。追加フィールドの型をmiddlewareの戻り値まで伝える。 */
+export interface MiddlewareResult<S extends object> {
+  readonly [middlewareBrand]: S
+}
+export interface Next {
+  (): Promise<MiddlewareResult<{}>>
+  <S extends object>(fields: S): Promise<MiddlewareResult<S>>
+}
+export type Middleware<C, S extends object> =
+  (ctx: Readonly<C>, next: Next) => Promise<MiddlewareResult<S>>
 export type Behavior<F extends AnyFn> = BehaviorPlan & {
   readonly [behaviorBrand]: (fn: F) => F
 }
@@ -86,7 +97,8 @@ export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMe
 }
 export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R> {
   describe(name: string): TestBuilder<F, C, R>
-  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>, dispose?: (ctx: Readonly<ExtendContext<C, Awaited<S>>>) => void | Promise<void>): TestBuilder<F, ExtendContext<C, Awaited<S>>, R>
+  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TestBuilder<F, ExtendContext<C, Awaited<S>>, R>
+  use<S extends object>(middleware: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
 export interface GroupMethods<C extends object, R extends object = {}> {
@@ -98,14 +110,16 @@ export interface GroupSuite<C extends object, R extends object = {}> extends Gro
 }
 export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R> {
   describe(name: string): TargetStage<C, R>
-  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>, dispose?: (ctx: Readonly<ExtendContext<C, Awaited<S>>>) => void | Promise<void>): TargetStage<ExtendContext<C, Awaited<S>>, R>
+  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TargetStage<ExtendContext<C, Awaited<S>>, R>
+  use<S extends object>(middleware: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
 }
 export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   describe(name: string): TargetStage<R, R>
-  setup<S>(create: (ctx: Readonly<R>) => SetupReturn<S>, dispose?: (ctx: Readonly<ExtendContext<R, Awaited<S>>>) => void | Promise<void>): TargetStage<ExtendContext<R, Awaited<S>>, R>
+  setup<S>(create: (ctx: Readonly<R>) => SetupReturn<S>): TargetStage<ExtendContext<R, Awaited<S>>, R>
+  use<S extends object>(middleware: Middleware<R, S>): TargetStage<ExtendContext<R, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<R, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, R, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
@@ -121,9 +135,14 @@ export type TargetPlan<F extends AnyFn> =
   | { readonly kind: 'function'; readonly fn: F }
   | { readonly kind: 'method'; readonly object: object; readonly key: string; readonly fn: F }
 export interface SetupPlan<C = any, S extends object = any> {
+  readonly kind: 'setup'
   readonly create: (ctx: Readonly<C>) => S | Promise<S>
-  readonly dispose?: (ctx: Readonly<ExtendContext<C, S>>) => void | Promise<void>
 }
+export interface MiddlewarePlan<C = any, S extends object = any> {
+  readonly kind: 'middleware'
+  readonly run: Middleware<C, S>
+}
+export type StepPlan = SetupPlan | MiddlewarePlan
 export type BehaviorPlan =
   | { readonly kind: 'returns' | 'resolves'; readonly value: unknown }
   | { readonly kind: 'throws' | 'rejects'; readonly error: unknown }
@@ -186,7 +205,7 @@ export interface TodoCase {
 export interface PlanBase<R extends object> {
   readonly [planBrand]: (ctx: R) => void
   readonly version: 1
-  readonly setup: readonly SetupPlan[]
+  readonly steps: readonly StepPlan[]
   readonly mocks: readonly MockPlan[]
 }
 export interface SuitePlan<F extends AnyFn = AnyFn, C = any, R extends object = {}> extends PlanBase<R> {
@@ -207,7 +226,7 @@ export interface GroupEntry {
 }
 export type TestPlan<R extends object = {}> = SuitePlan<AnyFn, any, R> | GroupPlan<R>
 export interface Failure {
-  readonly phase: 'setup' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
+  readonly phase: 'setup' | 'middleware' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
   readonly message: string
   readonly assertionIndex?: number
 }

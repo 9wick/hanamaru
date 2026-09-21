@@ -21,15 +21,15 @@ const users = new Test()
 
 | 段階 | 使える操作 |
 |---|---|
-| 対象・子を追加する前 | describe、setup、mock、target、group |
-| 対象を決めた後、ケースの前 | describe、setup、mock、it / only / skip / todo |
+| 対象・子を追加する前 | describe、setup、use、mock、target、group |
+| 対象を決めた後、ケースの前 | describe、setup、use、mock、it / only / skip / todo |
 | 最初のケースを追加した後 | it / only / skip / todo、plan |
 | 最初のgroupを追加した後 | group、plan |
 
 対象は一度決めたら固定します。最初のケース・group以降は共通設定も固定します。
 対象を持つテストと、子を持つグループのどちらも `new Test()` から作れます。
 グループ自体は対象・ケースを持たず、子ごとに異なる対象をまとめられます。
-setupを先に書く場合は `.setup(create, dispose).target(fn)` の順にも書けます。
+setupやuseはtargetの前後どちらにも書けます。
 各メソッドは新しいビルダーを返すため、元のビルダーから別の派生を作れます。
 
 ```ts
@@ -71,13 +71,14 @@ const tests = new Test()
   .group('退会', deletionTests)
 ```
 
-完成済みのテストまたはグループを合成します。名前は任意で、一意性も要求しません。
-`group(name, child)` の名前はその合成箇所の説明であり、元の子のdescribeを変更しません。
-親のmock・setupは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
+関連するテストをまとめ、共通設定の範囲を作ります。完成済みのテストまたはグループを渡します。
+名前は任意で、一意性も要求しません。
+`group(name, child)` の名前はその場所の見出しであり、元の子のdescribeを変更しません。
+親のmock・setup・useは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
 同じ子を別の親や同じ親の複数箇所へ合成することもでき、それぞれ独立した実行箇所になります。
 
 子は元のctxの型を保ちます。親のctxが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
-親がその型を満たさない合成は型エラーです。詳しくは[テストの合成とスコープ](./composition.md)を参照してください。
+親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](./grouping.md)を参照してください。
 
 ## setup
 
@@ -90,7 +91,7 @@ new Test()
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-`setup(create, dispose?)` のcreateは、それまでのctxを受け取り、追加するフィールドを持つplain objectを返します。
+`setup(create)` のcreateは、それまでのctxを受け取り、追加するフィールドを持つplain objectを返します。
 DB等の資源は `{ db }` のようにフィールドへ入れます。
 Promiseならawaitした戻り値を使います。引数が不要なら、上の例のように省略できます。
 複数のsetupは登録順に実行し、戻り値のフィールドを順に引き継ぎます。同名のフィールドは後の値・型を優先します。
@@ -105,13 +106,39 @@ new Test()
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-各ケースは新しい `{}` から始め、親から子の順にsetupを実行します。
-最終的なctxがargsFromとe.ctxに渡ります。setup・mockは最初のケース・groupより前ならどちらの順でも書けます。
+各ケースは新しい `{}` から始め、親から子の順にsetup・useを実行します。
+最終的なctxがargsFromとe.ctxに渡ります。setup・use・mockは最初のケース・groupより前に登録します。
 ctxのフィールドは読み取り専用ですが、フィールドが参照するオブジェクト自体は共有します。
 
-成功したsetupのdisposeは、ケースが失敗しても逆順に呼びます。
-各disposeには対応するcreate直後のctxを渡し、後のsetupで追加・上書きしたフィールドは見せません。
-[実行セマンティクス](./semantics.md)に失敗時を含む手順を定めます。
+準備と後始末を同じスコープに書く場合はuseを使います。setupにdispose引数はありません。
+
+## use
+
+```ts
+new Test()
+  .use(async (_, next) => {
+    const db = await createDatabase()
+    try {
+      return await next({ db, expected: 3 })
+    } finally {
+      await db.close()
+    }
+  })
+  .target(countUsers)
+  .it('ユーザー数を取得する', t => t
+    .argsFrom(ctx => [ctx.db])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
+```
+
+ケースの実行を囲むmiddlewareを登録します。定義時には実行しません。
+nextに渡したフィールドの型が、middlewareから返す完了値を通じて後続のctxへ伝わります。
+追加がなければ `return await next()` と書けます。値を渡すだけならsetupも使えます。
+
+setupとuseは登録順に実行し、nextは後続の準備・対象・期待の検証・復元を囲みます。
+グループでも各ケースごとに呼び、後処理は内側から外側へ戻ります。
+finallyで後始末する場合は `return await next(...)` として、完了を待ってから片付けます。
+nextの未呼び出し・複数回・待機漏れは実行時に検査します。
+詳しくは[middleware](./middleware.md)と[実行セマンティクス](./semantics.md)を参照してください。
 
 ## mock
 
@@ -138,7 +165,7 @@ expectとexpectCallsはそれぞれ1回ずつ、どちらの順でも書けま�
 todoは名前だけを受け取ります。名前の一意性は要求しません。
 ケース内で追加・上書きしたモックは次のケースに漏れません。
 
-実行器に渡す計画全体にonlyがあればonlyだけを実行します。skipとtodoではsetup・targetを呼びません。
+実行器に渡す計画全体にonlyがあればonlyだけを実行します。skipとtodoではsetup・use・targetを呼びません。
 詳細は[it ビルダー](./api-it.md)と[実行セマンティクス](./semantics.md)を参照してください。
 
 ## plan
@@ -149,6 +176,6 @@ const plan = users.plan()
 
 1ケース以上あるテスト、または完成済みの子を1つ以上持つグループから、読み取り専用の実行計画を取得します。
 todoだけの定義も含みます。
-setupやtargetは実行しません。戻り値の構造は[実行計画とmetadata](./metadata.md)を参照してください。
+setup・use・targetは実行しません。戻り値の構造は[実行計画とmetadata](./metadata.md)を参照してください。
 親ctxを要求する定義でも計画は取得できますが、そのままrunへ渡すと型エラーです。
 CLIに収集させるファイルでは、必要なctxを用意したルートをexportします。

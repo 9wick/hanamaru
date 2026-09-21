@@ -1,18 +1,25 @@
 import { Test } from 'hanamaru'
-import { userRepository, mailService } from './user.ts'
-import { userCases } from './user-cases.ts'
-
-const alice = new Test()
-  .setup(() => ({ input: { name: 'Alice' }, expectedId: 'u1' }))
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .group(userCases)
-
-const bob = new Test()
-  .setup(() => ({ input: { name: 'Bob' }, expectedId: 'u2' }))
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u2' }))
-  .group(userCases)
+import { createUser, userRepository, mailService } from './user.ts'
 
 export const registrations = new Test()
+  .describe('ユーザー')
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group(alice)
-  .group('Bobの登録', bob)
+  .group('作成', new Test()
+    .target(createUser)
+    .mock(userRepository, 'save', m => m.resolves({ id: 'mock-user' }))
+    .it('保存して通知する', t => t
+      .args({ name: 'Alice' })
+      .expect(e => [e.result.toEqual({ id: 'mock-user' })])
+      .expectCalls(call => [
+        call(mailService, 'send').calledOnceWith({ id: 'mock-user' }),
+      ]))
+    .it('保存に失敗したら通知しない', t => t
+      .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
+      .args({ name: 'Alice' })
+      .expect(e => [e.error.toThrow('save failed')])
+      .expectCalls(call => [call(mailService, 'send').notCalled()])))
+  .group(new Test()
+    .target(userRepository, 'save')
+    .it('ユーザーを保存する', t => t
+      .args({ name: 'Alice' })
+      .expect(e => [e.result.toEqual({ id: 'u1' })])))

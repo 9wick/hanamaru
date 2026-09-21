@@ -114,7 +114,7 @@ ready.it('期待未設定', t => t.args(1, 2))
 // Context and mock replacement retain their original spelling.
 new Test().target(createUser)
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .setup(async () => ({ input: { name: 'Alice' }, expected: { id: 'u1' } }), ctx => { ctx.input.name.toUpperCase() })
+  .setup(async () => ({ input: { name: 'Alice' }, expected: { id: 'u1' } }))
   .it('ctxから引数と期待値', t => t.argsFrom(ctx => [ctx.input]).expect(e => [
     e.result.toEqual(e.ctx.expected),
     e.result.toSatisfy(user => user.id === e.ctx.expected.id),
