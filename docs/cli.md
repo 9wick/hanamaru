@@ -88,12 +88,12 @@ createUser
 `calledOnceWith({ id: 'u1' })` の失敗は次のように示す。
 
 ```text
-mock(send).calledOnceWith
+call(send).calledOnceWith
   expected: 合計1回、引数 [{ id: 'u1' }]
   actual:   合計1回、引数 [{ id: 'u2' }]
 ```
 
-表示のsendは登録したメソッドのキーであり、利用者が付けた別名ではない。
+表示のsendはexpectCallsで指定したメソッドのキーであり、利用者が付けた別名ではない。
 一致しなかった呼び出しを0回と表示しない。
 同じケースの複数の失敗はまとめて表示する。
 TTYでない出力、または `NO_COLOR` が設定された環境では色を無効にする。

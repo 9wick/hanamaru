@@ -1,7 +1,7 @@
 # モック
 
 オブジェクトのメソッドを、そのケースで使う振る舞いに置き換えます。
-登録と参照には同じオブジェクトとメソッド名を使います。
+振る舞いを変えたい依存に対して、オブジェクトとメソッド名を指定します。
 
 ```ts
 .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
@@ -34,14 +34,13 @@ resolves/rejectsは同期関数には使えません。returnsに渡したPromis
 new Test()
   .target(createUser)
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .it('保存に失敗したら通知しない', t => t
     .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
     .args({ name: 'Alice' })
     .expect(e => [
       e.error.toBeInstanceOf(Error),
-      e.mock(mailService, 'send').notCalled(),
-    ]))
+    ])
+    .expectCalls(call => [call(mailService, 'send').notCalled()]))
 ```
 
 同じオブジェクト参照・同じキーへの登録は、共通設定を含めて最後に書いたものが有効です。
@@ -55,16 +54,17 @@ new Test()
 ```ts
 .expect(e => [
   e.result.toEqual({ id: 'u1' }),
-  e.mock(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
-  e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
+])
+.expectCalls(call => [
+  call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
+  call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
 
-参照できるキーは、そのケースの共通登録と追加登録から型で絞り込みます。
-呼び出し引数も元のメソッドの型に従います。[マッチャ](./api-expect.md)を参照してください。
-
-TypeScriptは同じ構造の別オブジェクトを型で区別できません。
-実行時はオブジェクト参照とキーの一致を検査し、未登録なら失敗します。[型の限界](./type-inference.md)を参照してください。
+呼び出しを検証するためのmock登録は不要です。expectCallsは任意のメソッドを指定でき、引数は元のメソッドの型に従います。
+モックを設定したメソッドならその振る舞いを使い、設定していなければ本物を呼びます。
+同じオブジェクト・キーに対する差し替えと記録は1つにまとめ、二重には記録しません。
+[マッチャ](./api-expect.md)を参照してください。
 
 ## 差し替えの範囲
 

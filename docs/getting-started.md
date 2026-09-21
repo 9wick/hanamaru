@@ -64,14 +64,15 @@ import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
   .target(createUser)
-  // 以降のケースで使う共通設定。対象と振る舞いを一緒に決める。
+  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .it('保存して通知する', t => t
     .args({ name: 'Alice' })
     .expect(e => [
       e.result.toEqual({ id: 'u1' }),
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ])
   )
   .it('保存に失敗したら通知しない', t => t
@@ -80,16 +81,39 @@ export const users = new Test()
     .args({ name: 'Alice' })
     .expect(e => [
       e.error.toBeInstanceOf(Error),
-      e.mock(mailService, 'send').notCalled(),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').notCalled(),
     ])
   )
 ```
 
-最初の2つの `.mock()` は全ケース共通です。2つ目のケースではsaveだけがrejectする振る舞いに置き換わります。
-登録にはオブジェクトとメソッド名を使い、検証でも同じ組を参照します。
+saveの `.mock()` は全ケース共通です。2つ目のケースではrejectする振る舞いに置き換わります。
+sendにはモックを設定していません。expectCallsに指定するだけで、本物のsendを呼びながら記録・検証します。
+振る舞いも置き換えたい場合は `.mock(mailService, 'send', m => m.resolves(undefined))` を共通設定に追加できます。
 
 `e.result` は正常終了、`e.error` はthrow / rejectを期待します。
-同じ配列に両方を入れると型エラーです。モックの検証だけを返した場合は正常終了を期待します。
+同じ配列に両方を入れると型エラーです。expectCallsだけで呼び出しを検証する場合も、正常終了を期待します。
+
+## モックもspyも登録せずに検証する
+
+```ts
+import { Test } from 'hanamaru'
+import { createUser, userRepository, mailService } from './user.ts'
+
+// モックを設定せず、本物の処理がどう呼ばれるかを検証する。
+export const calls = new Test()
+  .target(createUser)
+  .it('保存して通知する', t => t
+    .args({ name: 'Alice' })
+    .expectCalls(call => [
+      call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ]))
+```
+
+`call` はexpectCallsのコールバック引数です。追加の関数をimportする必要はありません。
+コールバックが返す配列から、実行前にどのメソッドを記録するかを決められます。
 
 ## setupから値を渡す
 

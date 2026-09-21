@@ -9,14 +9,15 @@ import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
   .target(createUser)
-  // 以降のケースで使う共通設定。対象と振る舞いを一緒に決める。
+  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .it('保存して通知する', t => t
     .args({ name: 'Alice' })
     .expect(e => [
       e.result.toEqual({ id: 'u1' }),
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ])
   )
   .it('保存に失敗したら通知しない', t => t
@@ -25,14 +26,17 @@ export const users = new Test()
     .args({ name: 'Alice' })
     .expect(e => [
       e.error.toBeInstanceOf(Error),
-      e.mock(mailService, 'send').notCalled(),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').notCalled(),
     ])
   )
 ```
 
-`.target()` から引数と戻り値の型が決まり、登録したモックを `.expect()` から参照できます。
-共通のモックを変えたいケースでは、同じ `.mock(obj, key, ...)` を書くだけです。
-正常終了も例外も、期待する内容を同じ `.expect()` に並べます。
+`.target()` から引数と戻り値の型が決まります。
+戻り値・例外は `.expect()`、呼ばれ方は `.expectCalls()` に条件を並べます。
+呼び出しの記録は自動で設定するので、検証のためにmockやspyを登録する必要はありません。
+振る舞いを変えたい依存だけ `.mock(obj, key, ...)` で設定し、ケース内の同じmockで上書きできます。
 
 ## 小さく始める
 
@@ -49,6 +53,25 @@ export const addition = new Test()
   ]))
 ```
 
+## モックなしでも呼び出しを検証する
+
+```ts
+import { Test } from 'hanamaru'
+import { createUser, userRepository, mailService } from './user.ts'
+
+// モックを設定せず、本物の処理がどう呼ばれるかを検証する。
+export const calls = new Test()
+  .target(createUser)
+  .it('保存して通知する', t => t
+    .args({ name: 'Alice' })
+    .expectCalls(call => [
+      call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ]))
+```
+
+この例ではsaveとsendの本物の処理を呼び、その呼ばれ方を検証します。
+
 ## 定義は実行計画になる
 
 ```ts
@@ -59,7 +82,7 @@ const plan = users.plan()
 const result = await run(plan)
 ```
 
-`.plan()` はテストを実行せず、対象、準備、ケースごとのモック、引数、期待の組み立て方を返します。
+`.plan()` はテストを実行せず、対象、準備、ケースごとのモック、引数、呼び出し条件、結果の期待の組み立て方を返します。
 この実行計画がmetadataです。定義することと、実行することを分離します。
 テストを書くために、識別子やソース位置を別途登録する必要はありません。
 

@@ -4,8 +4,6 @@ export type FnKeys<O> = Extract<{
   [K in keyof O]-?: O[K] extends AnyFn ? K : never
 }[keyof O], string>
 export type MethodOf<O, K extends keyof O> = Extract<O[K], AnyFn>
-export type MockEntry = { readonly obj: object; readonly key: string }
-export type RegKey<M extends readonly MockEntry[], O> = Extract<M[number], { obj: O }>['key']
 
 declare const assertionBrand: unique symbol
 declare const doneBrand: unique symbol
@@ -37,49 +35,61 @@ export interface ErrorAssertions {
   toMatchObject(value: Record<string, unknown>): ErrorAssertion
   toSatisfy(predicate: (error: unknown) => boolean): ErrorAssertion
 }
-export interface MockAssertions<F extends AnyFn> {
-  calledTimes(count: number): MockAssertion
-  notCalled(): MockAssertion
-  calledWith(...args: Parameters<F>): MockAssertion
-  calledOnceWith(...args: Parameters<F>): MockAssertion
+export interface CallMatchers<F extends AnyFn> {
+  calledTimes(count: number): CallAssertion
+  notCalled(): CallAssertion
+  calledWith(...args: Parameters<F>): CallAssertion
+  calledOnceWith(...args: Parameters<F>): CallAssertion
 }
-export interface Expect<F extends AnyFn, M extends readonly MockEntry[], C> {
+/** 呼び出しは行わず、メソッドの呼び出し条件を記述する。 */
+export interface CallBuilder {
+  <O extends object, K extends FnKeys<O>>(obj: O, key: K): CallMatchers<MethodOf<O, K>>
+}
+export interface Expect<F extends AnyFn, C> {
   readonly result: ValueAssertions<Awaited<ReturnType<F>>>
   readonly error: ErrorAssertions
   readonly ctx: C
-  mock<O extends object, K extends FnKeys<O> & RegKey<M, NoInfer<O>>>(obj: O, key: K): MockAssertions<MethodOf<O, K>>
 }
-export interface ItBuilder<F extends AnyFn, M extends readonly MockEntry[], C> {
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, [...M, { obj: O; key: K }], C>
-  args(...args: Parameters<F>): ItArgs<F, M, C>
-  argsFrom(build: (ctx: C) => Parameters<F>): ItArgs<F, M, C>
+export type CallExpectations = readonly [CallAssertion, ...CallAssertion[]]
+export type CallsBuilder = (call: CallBuilder) => CallExpectations
+export interface ItBuilder<F extends AnyFn, C> {
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, C>
+  args(...args: Parameters<F>): ItArgs<F, C>
+  argsFrom(build: (ctx: C) => Parameters<F>): ItArgs<F, C>
 }
-export interface ItArgs<F extends AnyFn, M extends readonly MockEntry[], C> {
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItArgs<F, [...M, { obj: O; key: K }], C>
-  expect(build: (e: Expect<F, M, C>) => Assertions): ItDone
+export interface ItArgs<F extends AnyFn, C> {
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItArgs<F, C>
+  expect(build: (e: Expect<F, C>) => Assertions): ItExpected
+  expectCalls(build: CallsBuilder): ItCalls<F, C>
 }
-export interface CaseMethods<F extends AnyFn, M extends readonly MockEntry[], C> {
-  it(name: string, body: (t: ItBuilder<F, M, C>) => ItDone): Suite<F, M, C>
-  only(name: string, body: (t: ItBuilder<F, M, C>) => ItDone): Suite<F, M, C>
-  skip(name: string, body: (t: ItBuilder<F, M, C>) => ItDone): Suite<F, M, C>
-  todo(name: string): Suite<F, M, C>
+export interface ItExpected extends ItDone {
+  expectCalls(build: CallsBuilder): ItDone
 }
-export interface Suite<F extends AnyFn, M extends readonly MockEntry[], C> extends CaseMethods<F, M, C>, TestDefinition {
+export interface ItCalls<F extends AnyFn, C> extends ItDone {
+  expect(build: (e: Expect<F, C>) => Assertions): ItDone
+}
+export interface CaseMethods<F extends AnyFn, C> {
+  it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C>
+  only(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C>
+  skip(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C>
+  todo(name: string): Suite<F, C>
+}
+export interface Suite<F extends AnyFn, C> extends CaseMethods<F, C>, TestDefinition {
   plan(): TestPlan<F, C>
 }
-export interface TestBuilder<F extends AnyFn, M extends readonly MockEntry[], C> extends CaseMethods<F, M, C> {
-  describe(name: string): TestBuilder<F, M, C>
-  setup<S>(create: () => S, dispose?: (ctx: Awaited<S>) => void | Promise<void>): TestBuilder<F, M, Awaited<S>>
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, [...M, { obj: O; key: K }], C>
+export interface TestBuilder<F extends AnyFn, C> extends CaseMethods<F, C> {
+  describe(name: string): TestBuilder<F, C>
+  setup<S>(create: () => S, dispose?: (ctx: Awaited<S>) => void | Promise<void>): TestBuilder<F, Awaited<S>>
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C>
 }
 export interface TargetStage<C> {
-  target<F extends AnyFn>(fn: F): TestBuilder<F, [], C>
-  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, [], C>
+  target<F extends AnyFn>(fn: F): TestBuilder<F, C>
+  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C>
 }
 export declare class Test implements TargetStage<{}> {
   setup<S>(create: () => S, dispose?: (ctx: Awaited<S>) => void | Promise<void>): TargetStage<Awaited<S>>
-  target<F extends AnyFn>(fn: F): TestBuilder<F, [], {}>
-  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, [], {}>
+  target<F extends AnyFn>(fn: F): TestBuilder<F, {}>
+  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, {}>
 }
 
 /** 実行計画は値・参照・遅延評価する関数を保持する。 */
@@ -120,9 +130,9 @@ export type ErrorAssertion = {
     | { readonly matcher: 'toMatchObject'; readonly expected: Record<string, unknown> }
     | { readonly matcher: 'toSatisfy'; readonly predicate: (error: unknown) => boolean }
 }
-export type MockAssertion = {
+export type CallAssertion = {
   readonly [assertionBrand]: true
-  readonly subject: 'mock'
+  readonly subject: 'call'
   readonly object: object
   readonly key: string
   readonly check:
@@ -130,22 +140,24 @@ export type MockAssertion = {
     | { readonly matcher: 'notCalled' }
     | { readonly matcher: 'calledWith' | 'calledOnceWith'; readonly args: readonly unknown[] }
 }
-export type Assertion = ResultAssertion | ErrorAssertion | MockAssertion
+export type Assertion = ResultAssertion | ErrorAssertion
 export type Assertions =
-  | readonly [ResultAssertion | MockAssertion, ...(ResultAssertion | MockAssertion)[]]
-  | readonly [ErrorAssertion | MockAssertion, ...(ErrorAssertion | MockAssertion)[]]
+  | readonly [ResultAssertion, ...ResultAssertion[]]
+  | readonly [ErrorAssertion, ...ErrorAssertion[]]
 export interface ExpectationPlan<C> {
   readonly kind: 'deferred'
   /** 元のexpectコールバックにctxと記述子ビルダーを渡す処理。targetの後に評価する。 */
   readonly build: (ctx: C) => Assertions
 }
-export interface ExecutableCase<F extends AnyFn, C> {
+export type ExecutableCase<F extends AnyFn, C> = {
   readonly name: string
   readonly mode: 'run' | 'only' | 'skip'
   readonly mocks: readonly MockPlan[]
   readonly args: ValuePlan<Parameters<F>, C>
-  readonly expect: ExpectationPlan<C>
-}
+} & (
+  | { readonly expect: ExpectationPlan<C>; readonly calls: readonly CallAssertion[] }
+  | { readonly expect: null; readonly calls: CallExpectations }
+)
 export interface TodoCase {
   readonly name: string
   readonly mode: 'todo'
@@ -159,7 +171,7 @@ export interface TestPlan<F extends AnyFn = AnyFn, C = any> {
   readonly cases: readonly (ExecutableCase<F, C> | TodoCase)[]
 }
 export interface Failure {
-  readonly phase: 'setup' | 'mock' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
+  readonly phase: 'setup' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
   readonly message: string
   readonly assertionIndex?: number
 }

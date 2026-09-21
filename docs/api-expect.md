@@ -1,7 +1,7 @@
 # マッチャ
 
-`.expect(e => [...])` に検証したい条件を並べます。
-`e.result`、`e.error`、`e.mock(obj, key)` はアサーションを作る入口で、`e.ctx` はsetupが返した値です。
+`.expect(e => [...])` に戻り値・例外の条件を、`.expectCalls(call => [...])` に呼び出しの条件を並べます。
+`e.result`、`e.error`、`call(obj, key)` は記述子を作る入口で、`e.ctx` はsetupが返した値です。
 
 ## result
 
@@ -41,7 +41,9 @@ errorを含む配列は、対象がthrowまたはrejectすることを期待し�
 .expect(e => [
   e.error.toBeInstanceOf(Error),
   e.error.toThrow('save failed'),
-  e.mock(mailService, 'send').notCalled(),
+])
+.expectCalls(call => [
+  call(mailService, 'send').notCalled(),
 ])
 ```
 
@@ -49,7 +51,7 @@ toThrowはErrorでない値には一致しません。文字列やundefinedをth
 RegExpのlastIndexを検証結果へ影響させず、検証後も元の値を変更しません。
 resultとerrorを同じ配列へ入れることは型で防ぎます。
 
-## mock
+## 呼び出し
 
 | マッチャ | 意味 |
 |---|---|
@@ -59,12 +61,14 @@ resultとerrorを同じ配列へ入れることは型で防ぎます。
 | `calledOnceWith(...args)` | 合計1回だけ呼ばれ、その引数が深く一致する |
 
 ```ts
-.expect(e => [
-  e.mock(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
+.expectCalls(call => [
+  call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
 ])
 ```
 
-mockだけを返した場合も正常終了を期待します。途中で予期しない例外が起きれば失敗です。
+expectCallsだけでも正常終了を期待します。途中で予期しない例外が起きれば失敗です。
+記録は実行器が自動設定し、mockがなければ本物のメソッドを呼びます。
+同じメソッドへの複数条件は同じ呼び出し記録に対して検証します。
 calledTimesは0以上の安全な整数を受け取り、それ以外は不正な期待として失敗します。
 引数は記録時の参照を保持し、深く複製しません。targetが後から値を変更した場合は検証時の状態を比較します。
 
@@ -93,7 +97,7 @@ Dateは時刻、RegExpはsourceとflags、Map/Setは順序によらない深い�
 toMatchObjectでは指定したキーが存在することを要求し、その値を比較します。
 これらは実装・検証対象の契約であり、Vitest/Jestの全マッチャとの互換性を意味しません。
 
-全アサーションを配列順に評価し、最初の不一致で打ち切りません。
-終了の種類が合わない場合、対応するresult/errorの述語は呼ばず、モックの検証は続けます。
+結果の期待、呼び出しの期待の順に、それぞれ配列順で評価し、最初の不一致で打ち切りません。
+終了の種類が合わない場合、対応するresult/errorの述語は呼ばず、呼び出しの検証は続けます。
 コールバックのthrowや述語のthrowも失敗として報告します。
 計画上の表現は[metadata](./metadata.md)、実行手順は[実行セマンティクス](./semantics.md)を参照してください。

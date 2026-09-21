@@ -93,11 +93,11 @@ const base = new Test()
 
 export const alice = base.it('Aliceを保存する', t => t
   .args({ name: 'Alice' })
-  .expect(e => [e.mock(userRepository, 'save').calledOnceWith({ name: 'Alice' })]))
+  .expectCalls(call => [call(userRepository, 'save').calledOnceWith({ name: 'Alice' })]))
 
 export const bob = base.it('Bobを保存する', t => t
   .args({ name: 'Bob' })
-  .expect(e => [e.mock(userRepository, 'save').calledOnceWith({ name: 'Bob' })]))
+  .expectCalls(call => [call(userRepository, 'save').calledOnceWith({ name: 'Bob' })]))
 ```
 
 baseは変わらず、aliceとbobはそれぞれ1ケースを持つ定義です。

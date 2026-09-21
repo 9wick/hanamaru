@@ -32,15 +32,11 @@ ready.it('空配列', t => t.args(1, 2).expect(() => []))
 ready.it('未完了', t => t.args(1, 2).expect(e => [e.result]))
 // @ts-expect-error the expectation callback is required.
 ready.it('検証なし', t => t.args(1, 2).expect())
-// @ts-expect-error cannot continue after the terminal value.
+// @ts-expect-error arguments stay fixed after expectations begin.
 ready.it('終端後', t => t.args(1, 2).expect(e => [e.result.toBe(3)]).args(1, 2))
 // @ts-expect-error no property is available without setup.
 ready.it('ctx', t => t.args(1, 2).expect(e => [e.result.toBe(e.ctx.n)]))
-// @ts-expect-error unregistered mocks are unavailable.
-ready.it('未登録', t => t.args(1, 2).expect(e => [e.mock(userRepository, 'save').notCalled()]))
 const mocked = ready.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-// @ts-expect-error a different unregistered method is unavailable.
-mocked.it('未登録メソッド', t => t.args(1, 2).expect(e => [e.mock(mailService, 'send').notCalled()]))
 // @ts-expect-error async behavior is unavailable for synchronous return types.
 ready.mock({ add }, 'add', m => m.resolves(3))
 // @ts-expect-error a missing optional function is not callable.
@@ -56,13 +52,9 @@ ready.it('期待値型', t => t.args(1, 2).expect(e => [e.result.toBe('3')]))
 // @ts-expect-error mock return values follow the original method.
 ready.mock(userRepository, 'save', m => m.resolves({ id: 1 }))
 // @ts-expect-error call assertion arguments follow the original method.
-mocked.it('呼出引数型', t => t.args(1, 2).expect(e => [e.mock(userRepository, 'save').calledWith(123)]))
+mocked.it('呼出引数型', t => t.args(1, 2).expectCalls(call => [call(userRepository, 'save').calledWith(123)]))
 // @ts-expect-error a case replacement must preserve the original method's type.
 mocked.it('上書き型', t => t.mock(userRepository, 'save', m => m.resolves({ id: 1 })).args(1, 2).expect(e => [e.result.toBe(3)]))
-ready.it('ローカル登録', t => t.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .args(1, 2).expect(e => [e.mock(userRepository, 'save').notCalled()]))
-// @ts-expect-error a local registration does not leak into the next case.
-  .it('登録の漏出', t => t.args(1, 2).expect(e => [e.mock(userRepository, 'save').notCalled()]))
 // @ts-expect-error all case methods freeze common configuration.
 ready.todo('未実装').setup(() => ({ n: 1 }))
 // @ts-expect-error skip also freezes common configuration.
@@ -73,39 +65,95 @@ const plan = suite.plan()
 // @ts-expect-error the plan structure is readonly.
 plan.cases.push({})
 
-// Positive controls retain the original DSL and its ordering.
+// Call expectations have no mock-registration prerequisite.
+ready.it('登録なし', t => t.args(1, 2).expectCalls(call => [
+  call(userRepository, 'save').notCalled(), call(mailService, 'send').notCalled(),
+]))
+ready.it('結果と呼び出し', t => t.args(1, 2)
+  .expect(e => [e.result.toBe(3)])
+  .expectCalls(call => [call(mailService, 'send').notCalled()]))
+ready.it('順序を入れ替える', t => t.args(1, 2)
+  .expectCalls(call => [call(mailService, 'send').notCalled()])
+  .expect(e => [e.result.toBe(3)]))
+mocked.it('同じメソッドに複数条件', t => t.args(1, 2).expectCalls(call => [
+  call(userRepository, 'save').calledTimes(0), call(userRepository, 'save').notCalled(),
+]))
+// @ts-expect-error a non-function property is not observable.
+ready.it('非メソッド', t => t.args(1, 2).expectCalls(call => [call({ label: 'a' }, 'label').notCalled()]))
+// @ts-expect-error nonexistent keys are unavailable.
+ready.it('キー違い', t => t.args(1, 2).expectCalls(call => [call(mailService, 'save').notCalled()]))
+// @ts-expect-error call arguments follow the original method.
+ready.it('引数型', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').calledOnceWith({ id: 1 })]))
+// @ts-expect-error observation cannot omit its matcher.
+ready.it('呼び忘れ', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send')]))
+// @ts-expect-error at least one call assertion is required.
+ready.it('空の呼び出し期待', t => t.args(1, 2).expectCalls(() => []))
+// @ts-expect-error the call callback must return descriptors synchronously.
+ready.it('非同期の定義', t => t.args(1, 2).expectCalls(async call => [call(mailService, 'send').notCalled()]))
+// @ts-expect-error assertions are not arbitrary booleans.
+ready.it('boolean', t => t.args(1, 2).expectCalls(() => [true]))
+// @ts-expect-error arguments must precede call expectations.
+ready.it('引数未定', t => t.expectCalls(call => [call(mailService, 'send').notCalled()]))
+// @ts-expect-error calls are declared through their own builder.
+ready.it('旧API', t => t.args(1, 2).expect(e => [e.mock(mailService, 'send').notCalled()]))
+// @ts-expect-error call builders are not outcome matchers.
+ready.it('結果の混入', t => t.args(1, 2).expectCalls(call => [call.result.toBe(3)]))
+// @ts-expect-error setup has not run when call assertions are defined.
+ready.it('実行時ctx', t => t.args(1, 2).expectCalls(call => [call(call.ctx.mail, 'send').notCalled()]))
+// @ts-expect-error outcome expectations are selected once.
+ready.it('結果の二重定義', t => t.args(1, 2).expect(e => [e.result.toBe(3)]).expect(e => [e.error.toThrow('bad')]))
+// @ts-expect-error call expectations are selected once.
+ready.it('呼び出しの二重定義', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').notCalled()]).expectCalls(() => []))
+// @ts-expect-error adding the other expectation must not reopen an existing one.
+ready.it('終端の再定義', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').notCalled()]).expect(e => [e.result.toBe(3)]).expect(e => [e.result.toBe(3)]))
+// @ts-expect-error input is fixed once expectations begin.
+ready.it('検証後の設定', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').notCalled()]).mock(userRepository, 'save', m => m.resolves({ id: 'u1' })))
+// @ts-expect-error an incomplete case is not a finished test.
+ready.it('期待未設定', t => t.args(1, 2))
+
+// Context and mock replacement retain their original spelling.
 new Test().target(createUser)
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .setup(async () => ({ input: { name: 'Alice' }, expected: { id: 'u1' } }), ctx => { ctx.input.name.toUpperCase() })
   .it('ctxから引数と期待値', t => t.argsFrom(ctx => [ctx.input]).expect(e => [
     e.result.toEqual(e.ctx.expected),
     e.result.toSatisfy(user => user.id === e.ctx.expected.id),
-    e.mock(mailService, 'send').calledOnceWith(e.ctx.expected),
-  ]))
+  ]).expectCalls(call => [call(mailService, 'send').calledOnceWith({ id: 'u1' })]))
   .it('ケース内で上書き', t => t
     .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' }).expect(e => [
-      e.error.toBeInstanceOf(Error), e.mock(mailService, 'send').notCalled(),
-    ]))
-  .it('モックだけなら正常終了を期待', t => t.args({ name: 'Alice' }).expect(e => [
-    e.mock(mailService, 'send').calledTimes(1),
-  ]))
+    .args({ name: 'Alice' }).expect(e => [e.error.toBeInstanceOf(Error)])
+    .expectCalls(call => [call(mailService, 'send').notCalled()]))
+  .it('呼び出しだけなら正常終了を期待', t => t.args({ name: 'Alice' })
+    .expectCalls(call => [call(mailService, 'send').calledTimes(1)]))
 new Test().setup(() => ({ a: 1 })).target(add)
   .it('setupを先に書ける', t => t.argsFrom(ctx => [ctx.a, 2]).expect(e => [e.result.toBe(3)]))
 ready.setup(() => ({ obsolete: 1 })).setup(() => ({ expected: 3 }))
   .it('ケース追加前に設定を選ぶ', t => t.args(1, 2).expect(e => [e.result.toBe(e.ctx.expected)]))
 ready.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
   .mock(userRepository, 'save', m => m.resolves({ id: 'u2' }))
-  .it('同じ登録先は後勝ち', t => t.args(1, 2).expect(e => [e.mock(userRepository, 'save').notCalled()]))
+  .it('同じ登録先は後勝ち', t => t.args(1, 2).expectCalls(call => [call(userRepository, 'save').notCalled()]))
 ready.it('argsの後にもmockを書ける', t => t.args(1, 2)
   .mock(userRepository, 'save', m => m.callsFake(async () => ({ id: 'u1' })))
-  .expect(e => [e.result.toBe(3), e.mock(userRepository, 'save').notCalled()]))
+  .expect(e => [e.result.toBe(3)])
+  .expectCalls(call => [call(userRepository, 'save').notCalled()]))
 ready.it('例外も同じexpect', t => t.args(1, 2).expect(e => [e.error.toThrow('bad')]))
 run(plan)
 
-// Structural typing cannot distinguish a different object with the same shape.
+// A different object is an independent observation, even with the same type.
 const shadowRepository: typeof userRepository = { async save() { return { id: 'shadow' } } }
-mocked.it('参照の同一性は実行時に検査', t => t.args(1, 2).expect(e => [
-  e.mock(shadowRepository, 'save').notCalled(),
+mocked.it('別参照を記録する', t => t.args(1, 2).expectCalls(call => [
+  call(shadowRepository, 'save').notCalled(),
 ]))
+const observed = ready.it('計画に記述子がある', t => t.args(1, 2)
+  .expectCalls(call => [call(mailService, 'send').notCalled()])).plan()
+for (const c of observed.cases) {
+  if (c.mode === 'todo') continue
+  for (const a of c.calls) {
+    const subject: 'call' = a.subject
+    const target: object = a.object
+    const key: string = a.key
+    void [subject, target, key]
+  }
+  // @ts-expect-error call descriptors are readonly.
+  c.calls.push({})
+}

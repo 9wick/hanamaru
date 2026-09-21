@@ -7,12 +7,13 @@
 const users = new Test()
   .target(createUser)
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .it('保存して通知する', t => t
     .args({ name: 'Alice' })
     .expect(e => [
       e.result.toEqual({ id: 'u1' }),
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ]))
 ```
 
@@ -93,7 +94,8 @@ createが成功した後は、ケースの失敗時にもdisposeを呼ぶ契約�
 .todo('送信失敗時の扱い')
 ```
 
-it / only / skipは、ケース名と `.expect()` まで到達した終端値を返すコールバックを受け取ります。
+it / only / skipは、ケース名と、expectまたはexpectCallsを1つ以上設定したケースを返すコールバックを受け取ります。
+expectとexpectCallsはそれぞれ1回ずつ、どちらの順でも書けます。
 todoは名前だけを受け取ります。名前の一意性は要求しません。
 ケース内で追加・上書きしたモックは次のケースに漏れません。
 
