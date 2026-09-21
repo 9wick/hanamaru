@@ -1,168 +1,139 @@
 # hanamaru
 
-型安全・宣言的・ゼロ依存の TypeScript テストフレームワーク。自前のランナー CLI を持つ。
-
-一行で言うと、テストを「手続き」ではなく**値**として書く。`new Test()` はテストを実行しない。実行可能なデータ構造を組み立てて返すだけ。Hono が `export default app` でアプリを値として扱うのと同じ構造。
-
-## 何が違うのか
-
-### 1. 宣言的なモック
-
-`.mock()` で依存の挙動を宣言し、`.expect()` で呼ばれ方を検証する。「モックを作る」「呼び出しを記録する」「後から記録を読む」という手続きを書かない。
+Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
+対象・モック・引数・期待を書けば、その定義が構造化された実行計画になります。
 
 ```ts
-.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-.expect(e => [
-  e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
-])
-```
-
-### 2. 型による未登録検出
-
-`.mock()` していないモックを `.expect()` で参照すると、実行前にコンパイルエラーになる。
-
-```ts
-new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('...', t => t.args({ name: 'Alice' }).expect(e => [
-    e.mock(mailService, 'send').calledTimes(1),
-    //     ^^^^^^^^^^^ 型エラー: このオブジェクトは .mock() されていない
-  ]))
-```
-
-`.mock()` を呼ぶたびに登録エントリが型パラメータにタプルとして積み上がり、`e.mock()` の引数の制約になる。仕組みは [型推論](docs/type-inference.md) を参照。
-
-### 3. ゼロ依存
-
-**実行時依存パッケージが 0**。`node_modules` に入るのは hanamaru 自身だけ。必要な機能はすべて Node の標準 API で賄っている。
-
-| 用途 | API |
-|---|---|
-| `.ts` の実行 | ネイティブ type stripping |
-| モジュール解決の介入 | `node:module` の `registerHooks`（Node のみ。Bun はランタイムが解決する） |
-| ファイル探索 | `node:fs` の `globSync` |
-| CLI 引数 | `node:util` の `parseArgs` |
-| 色付け | `node:util` の `styleText` |
-| 深い等価比較 | `node:util` の `isDeepStrictEqual` |
-| 差分表示 | `node:assert` の `deepStrictEqual` が投げる `AssertionError.message` |
-
-最後の1つが効いている。ゼロ依存で一番作るのが面倒な「見やすい diff」を、Node が完成品で持っている。
-
-## 最小の例
-
-テスト対象のコード。
-
-```ts
-// src/user.ts
-export interface User { id: string }
-export interface CreateUserInput { name: string }
-
-export const userRepository = {
-  async save(input: CreateUserInput): Promise<User> { /* ... */ },
-  async find(id: string): Promise<User | null> { /* ... */ },
-}
-
-export const mailService = {
-  async send(user: User): Promise<void> { /* ... */ },
-}
-
-export async function createUser(input: CreateUserInput): Promise<User> {
-  const user = await userRepository.save(input)
-  await mailService.send(user)
-  return user
-}
-```
-
-テスト。
-
-```ts
-// src/user.test.ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
   .target(createUser)
+  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .it('保存して通知する', t => t
     .args({ name: 'Alice' })
     .expect(e => [
       e.result.toEqual({ id: 'u1' }),
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ])
   )
   .it('保存に失敗したら通知しない', t => t
+    // このケースだけ、共通設定を上書きする。
     .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
     .args({ name: 'Alice' })
     .expect(e => [
       e.error.toBeInstanceOf(Error),
-      e.mock(mailService, 'send').notCalled(),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').notCalled(),
     ])
   )
 ```
 
-`export` した `Test` インスタンスだけが実行される。export していない `Test` は実行されない。すべてのメソッドはイミュータブルで新しいビルダーを返すため、別ファイルから import して派生を作れる。
+`.target()` から引数と戻り値の型が決まります。
+戻り値・例外は `.expect()`、呼ばれ方は `.expectCalls()` に条件を並べます。
+呼び出しの記録は自動で設定するので、検証のためにmockやspyを登録する必要はありません。
+振る舞いを変えたい依存だけ `.mock(obj, key, ...)` で設定し、ケース内の同じmockで上書きできます。
 
-## 実行する
+## 小さく始める
 
-```console
-$ npx hanamaru
+純粋関数なら、対象・引数・期待だけで書けます。
+
+```ts
+import { Test } from 'hanamaru'
+import { add } from './math.ts'
+
+export const addition = new Test()
+  .target(add)
+  .it('2つの数を足す', t => t.args(1, 2).expect(e => [
+    e.result.toBe(3),
+  ]))
 ```
 
-アサーションは1つ落ちても後続を評価し、失敗をまとめて報告する。「結果も違うし通知も飛んでいない」が一度の実行で分かる。
+## モックなしでも呼び出しを検証する
 
-```console
-✗ 保存して通知する
+```ts
+import { Test } from 'hanamaru'
+import { createUser, userRepository, mailService } from './user.ts'
 
-  2 件のアサーションが失敗しました
-
-  [1] result.toEqual
-      - expected: { id: 'u1' }
-      + actual:   { id: 'u2' }
-
-  [2] mock(mailService.send).calledOnceWith
-      expected: 1 回 { id: 'u1' } で呼ばれること
-      actual:   0 回
+// モックを設定せず、本物の処理がどう呼ばれるかを検証する。
+export const calls = new Test()
+  .target(createUser)
+  .it('保存して通知する', t => t
+    .args({ name: 'Alice' })
+    .expectCalls(call => [
+      call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ]))
 ```
 
-## インストール
+この例ではsaveとsendの本物の処理を呼び、その呼ばれ方を検証します。
 
-```console
-$ npm i -D hanamaru
+## 関連するテストをまとめる
+
+```ts
+const tests = new Test()
+  .mock(mailService, 'send', m => m.resolves(undefined))
+  .group(userTests)
+  .group('退会', deletionTests)
 ```
 
-```console
-$ pnpm add -D hanamaru
+groupで関連するテストをまとめ、配下へ共通のmock・setup・useを適用できます。
+名前は任意です。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
+グループ化と共通設定の範囲は[テストをグループにまとめる](./docs/grouping.md)を参照してください。
+
+## 準備と後始末を同じ場所に書く
+
+```ts
+.use(async (_, next) => {
+  const db = await createDatabase()
+  try {
+    return await next({ db })
+  } finally {
+    await db.close()
+  }
+})
 ```
 
-```console
-$ bun add -d hanamaru
+nextへ渡した値の型は、後続のargsFromやe.ctxへ伝わります。
+値を用意するだけなら `.setup(() => ({ expected: 3 }))` も使えます。
+詳しくは[middleware](./docs/middleware.md)を参照してください。
+
+## 定義は実行計画になる
+
+```ts
+import { run } from 'hanamaru'
+import { users } from './user.test.ts'
+
+const plan = users.plan()
+const result = await run(plan)
 ```
 
-## 動作要件
-
-| 項目 | 値 | 理由 |
-|---|---|---|
-| Node.js | **22.18.0 以上** | type stripping の無フラグ化（22.18.0）と `module.registerHooks`（22.15.0）の両方を満たす最小バージョン |
-| Bun | 1.3 以上 | ネイティブ TS 変換 |
-| TypeScript | **5.4 以上** | `NoInfer` を使うため |
-
-Node のネイティブ type stripping を使うため、テストファイルで使えない TypeScript 構文がある（`enum`、デコレータ、parameter properties など）。**これらは Bun では動いてしまう**ので、CI が Node なら tsconfig に `erasableSyntaxOnly: true` を設定すること。詳細は [制約](docs/limitations.md) を参照。
+`.plan()` はテストを実行せず、グループの階層、対象、準備やmiddleware、各スコープのモック、引数、呼び出し条件、結果の期待の組み立て方を返します。
+この実行計画がmetadataです。定義することと、実行することを分離します。
+テストを書くために、識別子やソース位置を別途登録する必要はありません。
 
 ## ドキュメント
 
-- [はじめる](docs/getting-started.md) — インストールから最初の1テストが通るまで
-- [考え方](docs/concepts.md) — テストを値として扱う設計と、内部アーキテクチャ
-- [`Test` ビルダー](docs/api-test.md) — `.target()` / `.describe()` / `.setup()` / `.only()` / `.skip()` / `.todo()`
-- [`.it()` ビルダー](docs/api-it.md) — ケース内の `.args()` / `.argsFrom()` と組み立ての順序
-- [`.mock()`](docs/api-mock.md) — モックの宣言と5つの振る舞い
-- [`.expect()`](docs/api-expect.md) — アサーションの記述とマッチャ一覧
-- [型推論](docs/type-inference.md) — 型で防げること、その仕組み、そして型の限界
-- [実行セマンティクス](docs/semantics.md) — 1ケースの実行手順、`only` の扱い、終了コード
-- [CLI](docs/cli.md) — コマンドラインオプションと設定ファイル
-- [制約](docs/limitations.md) — 使えない構文、初版のスコープ外
+- [はじめる](./docs/getting-started.md)
+- [設計思想](./docs/concepts.md)
+- [Test ビルダー](./docs/api-test.md) / [it ビルダー](./docs/api-it.md)
+- [モック](./docs/api-mock.md) / [マッチャ](./docs/api-expect.md)
+- [テストをグループにまとめる](./docs/grouping.md) / [middleware](./docs/middleware.md)
+- [実行計画とmetadata](./docs/metadata.md)
+- [実行セマンティクス](./docs/semantics.md) / [CLI](./docs/cli.md)
+- [型推論](./docs/type-inference.md) / [制約と実装状況](./docs/limitations.md)
 
-## ライセンス
+## 現在の状態
 
-MIT
+公開APIを設計している段階です。ビルダー・ランナー・CLIは未実装です。
+このリポジトリでは、[型契約](./docs/spec/hanamaru.d.ts)と[サンプル](./docs/examples/)を次のコマンドで検証できます。
+
+```console
+tsc -p docs/spec/tsconfig.json
+```
+
+実行時依存0を目標とし、型チェックにはTypeScriptを使います。

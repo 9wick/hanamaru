@@ -1,564 +1,181 @@
 # Test ビルダー
 
-`Test` は hanamaru のエントリポイントです。
-`new Test()` はテストを実行せず、実行可能なデータ構造を組み立てて返します。
-なぜこの形なのかは [設計思想](./concepts.md) を参照してください。
-
-## 概観
+`new Test()` から対象・共通設定・ケースをつないで定義します。
+ここではテストを実行しません。
 
 ```ts
-import { Test } from 'hanamaru'
-
-new Test()
-  .target(fn)                              // 関数をテスト対象にする
-  .target(obj, 'method')                   // オブジェクトのメソッドをテスト対象にする
-  .describe(name)                          // 見出しの上書き（省略時は target 名から自動導出）
-  .setup(() => ctx, ctx => cleanup(ctx))   // フィクスチャ。戻り値が後続に型付きで伝播。第2引数は後始末
-  .mock(obj, 'method', m => behavior)      // 全ケース共通のモック
-  .it(name, t => ...)                      // テストケース
-  .only(name, t => ...)                    // このケースだけ実行
-  .skip(name, t => ...)                    // スキップ
-  .todo(name)                              // 未実装（コールバックなし）
-```
-
-このページで使う対象コードは次のものです。
-
-```ts
-// src/user.ts
-export interface User { id: string }
-export interface CreateUserInput { name: string }
-
-export const userRepository = {
-  async save(input: CreateUserInput): Promise<User> { /* ... */ },
-  async find(id: string): Promise<User | null> { /* ... */ },
-}
-
-export const mailService = {
-  async send(user: User): Promise<void> { /* ... */ },
-}
-
-export async function createUser(input: CreateUserInput): Promise<User> {
-  const user = await userRepository.save(input)
-  await mailService.send(user)
-  return user
-}
-```
-
-## イミュータビリティ
-
-**`Test` のすべてのメソッドはイミュータブルです。新しいビルダーを返し、元のビルダーは変化しません。**
-
-これは hanamaru の中心的な性質であり、各メソッドの説明の前提になります。
-
-```ts
-const base = new Test().target(createUser)
-
-const withRepo = base.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-
-// base は .mock() を持たないまま。withRepo だけがモックを持つ
-```
-
-### 再利用と派生
-
-ビルダーが値なので、export して別のファイルから派生を作れます。
-
-```ts
-// src/user.test.ts
-export const users = new Test()
+const users = new Test()
   .target(createUser)
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .it('保存して通知する', t => t
     .args({ name: 'Alice' })
     .expect(e => [
       e.result.toEqual({ id: 'u1' }),
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ])
-  )
+    .expectCalls(call => [
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ]))
 ```
 
-```ts
-// src/user.db.test.ts
-import { users } from './user.test.ts'
+## 定義の段階
 
-export const usersWithDb = users.setup(() => ({ db: makeTestDb() }))
-```
-
-`usersWithDb` は `users` のケースをすべて引き継ぎ、そこにフィクスチャを足した別のテストです。
-`users` 側には何の影響もありません。両方 export されていれば、両方が実行されます。
-
-### export しないと実行されない
-
-CLI はテストファイルを `import()` し、**export されている値のうち `Test` インスタンス**を集めて実行します。
-export されていない `Test` は実行されません。
-
-```ts
-// 実行される
-export const users = new Test().target(createUser)./* ... */
-
-// 実行されない
-const draft = new Test().target(createUser)./* ... */
-```
-
-## `.target()`
-
-テスト対象を決めます。ここで対象が確定することで、後続の `.args()` の引数型と
-`e.result` の型が決まります。
-
-### シグネチャ
-
-```ts
-target<G extends AnyFn>(fn: G): TestBuilder<G, M, C>
-target<O, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, M, C>
-```
-
-### 2つの形
-
-```ts
-.target(createUser)              // 関数
-.target(userService, 'create')   // オブジェクトのメソッド
-```
-
-**関数を渡す形**は、そのまま関数をテスト対象にします。
-
-```ts
-new Test()
-  .target(createUser)
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })])
-  )
-```
-
-**オブジェクトとメソッド名を渡す形**では、`this` が正しく束縛されます。
-メソッドを取り出して単体で呼ぶと `this` が失われますが、この形ならその問題は起きません。
-
-```ts
-class UserService {
-  label = 'user'
-  async create(input: CreateUserInput): Promise<User> { /* this を使う */ }
-}
-const userService = new UserService()
-
-new Test()
-  .target(userService, 'create')
-  .it('作成する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })])
-  )
-```
-
-### 第2引数の制約
-
-第2引数に渡せるのは、**関数型のプロパティのキーのみ**です。
-非関数プロパティや存在しないキーは型エラーになります。
-
-```ts
-.target(userService, 'nope')    // 型エラー: 存在しないキー
-.target(userService, 'label')   // 型エラー: 非関数プロパティ
-```
-
-この制約は `FnKeys<O>` によって表現されています。詳細は [型推論](./type-inference.md) を参照してください。
-
-### target から決まるもの
-
-`.target()` で確定した対象を `F` とすると、以降の型は次のように決まります。
-
-| 決まるもの | 型 |
+| 段階 | 使える操作 |
 |---|---|
-| `.args()` の引数 | `Parameters<F>` |
-| `.argsFrom()` の戻り値 | `Parameters<F>`（タプル） |
-| `e.result` | `Awaited<ReturnType<F>>` |
+| 対象・子を追加する前 | describe、setup、use、mock、target、group |
+| 対象を決めた後、ケースの前 | describe、setup、use、mock、it / only / skip / todo |
+| 最初のケースを追加した後 | it / only / skip / todo、plan |
+| 最初のgroupを追加した後 | group、plan |
 
-target の戻り値が Promise の場合、hanamaru は await してから `e.result` に渡します。
-`.expect()` の中で await を書く必要はありません。
-
-## `.describe()`
-
-見出し（vitest の `describe` 相当）を上書きします。
-
-### シグネチャ
+対象は一度決めたら固定します。最初のケース・group以降は共通設定も固定します。
+対象を持つテストと、子を持つグループのどちらも `new Test()` から作れます。
+グループ自体は対象・ケースを持たず、子ごとに異なる対象をまとめられます。
+setupやuseはtargetの前後どちらにも書けます。
+各メソッドは新しいビルダーを返すため、元のビルダーから別の派生を作れます。
 
 ```ts
-describe(name: string): TestBuilder<F, M, C>
+const base = new Test().target(add)
+const tests = base.it('足す', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
+
+// tests.setup(...) は型エラー。既存ケースのctxを後から変えられない。
+// base.setup(...) は可能。ケースを含まない別の派生になる。
 ```
 
-### 省略時の自動導出
-
-`.describe()` は省略できます。省略した場合、見出しは `.target()` の内容から自動導出されます。
-
-| target の書き方 | 導出される見出し |
-|---|---|
-| `.target(createUser)` | `createUser` |
-| `.target(userService, 'create')` | `UserService.create` |
-
-オブジェクトのメソッドを対象にした場合は、**コンストラクタ名 + メソッド名**になります。
-
-### 上書きする
-
-自動導出で十分でない場合に上書きします。
+## target
 
 ```ts
-new Test()
-  .target(createUser)
-  .describe('ユーザー作成')
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })]))
+new Test().target(createUser)
+new Test().target(userService, 'create')
 ```
 
-## `.setup()`
+関数、またはオブジェクトとメソッド名を渡します。
+後者は `this` をそのオブジェクトに束縛します。非関数のキーや省略可能なメソッドは型エラーです。
+関数の型から、argsの `Parameters<F>` とresultの `Awaited<ReturnType<F>>` が決まります。
+追加の名前やソース情報は不要です。
 
-フィクスチャを組み立てます。戻り値が後続の `.argsFrom()` と `.expect()` に
-コンテキストとして型付きで渡ります。
-
-### シグネチャ
+## describe
 
 ```ts
-setup<S>(fn: () => S, dispose?: (ctx: S) => void | Promise<void>): TestBuilder<F, M, S>
+new Test().target(createUser).describe('ユーザー作成')
 ```
 
-### 基本形
+任意の表示名です。省略時は関数名、メソッド形式ではメソッド名を使います。
+名前のない関数には `anonymous` を使います。表示名をソース上の識別情報とは扱いません。
+グループにも設定できます。グループでは省略時に名前を補わず、計画のnameをnullにします。
+
+## group
 
 ```ts
-.setup(() => ({ db: makeTestDb() }))
-```
-
-これで `.argsFrom()` の引数と `e.ctx` の型が、`.setup()` の戻り値の型になります。
-
-```ts
-new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
+const tests = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .setup(() => ({ input: { name: 'Alice' }, expected: { id: 'u1' } }))
-  .it('保存して通知する', t => t
-    .argsFrom(ctx => [ctx.input])
-    .expect(e => [e.result.toEqual(e.ctx.expected)])
-  )
+  .group(userTests)
+  .group('退会', deletionTests)
 ```
 
-### 後始末が必要な場合
+関連するテストをまとめ、共通設定の範囲を作ります。完成済みのテストまたはグループを渡します。
+名前は任意で、一意性も要求しません。
+`group(name, child)` の名前はその場所の見出しであり、元の子のdescribeを変更しません。
+親のmock・setup・useは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
+同じ子を別の親や同じ親の複数箇所へ合成することもでき、それぞれ独立した実行箇所になります。
 
-第2引数に後始末の関数を渡します。
+子は元のctxの型を保ちます。親のctxが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
+親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](./grouping.md)を参照してください。
 
-```ts
-.setup(() => ({ db: makeTestDb() }), ctx => ctx.db.close())
-```
-
-第2引数の関数は、第1引数が返したコンテキストを**型付きで**受け取ります。
-上の例で `ctx` の型は `{ db: TestDb }` になるので、`ctx.db.close()` は補完が効き、
-存在しないメソッドを呼べば型エラーになります。
-
-```ts
-.setup(() => ({ db: makeTestDb() }), ctx => ctx.db.close2())
-//                                              ^^^^^^ 型エラー: close2 は存在しない
-```
-
-戻り値は `void` でも `Promise<void>` でもかまいません。非同期の後始末はそのまま await されます。
-
-```ts
-.setup(() => ({ db: makeTestDb() }), async ctx => { await ctx.db.disconnect() })
-```
-
-この関数はケースの実行が終わったあとに呼ばれます。
-target の呼び出しやアサーションの評価が失敗した場合でも、`finally` で必ず呼ばれます。
-実行順序の詳細は [実行セマンティクス](./semantics.md) を参照してください。
-
-### 各ケースごとに1回実行される
-
-**`.setup()` は各テストケースごとに1回実行されます。ケース間で値は共有されません。**
+## setup
 
 ```ts
 new Test()
-  .target(createUser)
-  .setup(() => ({ db: makeTestDb() }))
-  // 次の .it() で makeTestDb() が1回
-  .it('ケース1', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })]))
-  // ここでもう1回。ケース1とは別の db になる
-  .it('ケース2', t => t
-    .args({ name: 'Bob' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })]))
+  .target(add)
+  .setup(async () => ({ a: 1, expected: 3 }))
+  .it('準備した値を使う', t => t
+    .argsFrom(ctx => [ctx.a, 2])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-ケース1で `db` に書き込んだ内容がケース2に見えることはありません。
-逆に、重い初期化を1度だけ行って全ケースで共有する、という使い方はできません。
-
-### 呼ばなかった場合
-
-`.setup()` を呼ばなかった場合、コンテキストは `{}` になります。
-存在しないプロパティへのアクセスは型エラーです。
+`setup(create)` のcreateは、それまでのctxを受け取り、追加するフィールドを持つplain objectを返します。
+DB等の資源は `{ db }` のようにフィールドへ入れます。
+Promiseならawaitした戻り値を使います。引数が不要なら、上の例のように省略できます。
+複数のsetupは登録順に実行し、戻り値のフィールドを順に引き継ぎます。同名のフィールドは後の値・型を優先します。
 
 ```ts
 new Test()
-  .target(createUser)
-  .it('...', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.result.toSatisfy(() => e.ctx.db !== undefined),
-      //                          ^^ 型エラー: e.ctx は {} なので db は存在しない
-    ])
-  )
+  .setup(() => ({ a: 1 }))
+  .setup(ctx => ({ expected: ctx.a + 2 }))
+  .target(add)
+  .it('準備を積み重ねる', t => t
+    .argsFrom(ctx => [ctx.a, 2])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-## `.mock()`
+各ケースは新しい `{}` から始め、親から子の順にsetup・useを実行します。
+最終的なctxがargsFromとe.ctxに渡ります。setup・use・mockは最初のケース・groupより前に登録します。
+ctxのフィールドは読み取り専用ですが、フィールドが参照するオブジェクト自体は共有します。
 
-依存オブジェクトのメソッドを差し替えます。ここで登録したモックは**全ケース共通**です。
+準備と後始末を同じスコープに書く場合はuseを使います。setupにdispose引数はありません。
 
-### シグネチャ
+## use
 
 ```ts
-mock<O, K extends FnKeys<O>>(
-  obj: O,
-  key: K,
-  def: MockDef<O, K>
-): TestBuilder<F, [...M, { obj: O; key: K }], C>
+new Test()
+  .use(async (_, next) => {
+    const db = await createDatabase()
+    try {
+      return await next({ db, expected: 3 })
+    } finally {
+      await db.close()
+    }
+  })
+  .target(countUsers)
+  .it('ユーザー数を取得する', t => t
+    .argsFrom(ctx => [ctx.db])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-### 使い方
+ケースの実行を囲むmiddlewareを登録します。定義時には実行しません。
+nextに渡したフィールドの型が、middlewareから返す完了値を通じて後続のctxへ伝わります。
+追加がなければ `return await next()` と書けます。値を渡すだけならsetupも使えます。
+
+setupとuseは登録順に実行し、nextは後続の準備・対象・期待の検証・復元を囲みます。
+グループでも各ケースごとに呼び、後処理は内側から外側へ戻ります。
+finallyで後始末する場合は `return await next(...)` として、完了を待ってから片付けます。
+nextの未呼び出し・複数回・待機漏れは実行時に検査します。
+詳しくは[middleware](./middleware.md)と[実行セマンティクス](./semantics.md)を参照してください。
+
+## mock
 
 ```ts
 .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
 ```
 
-| 引数 | 意味 |
-|---|---|
-| `obj` | 差し替える対象のオブジェクト |
-| `key` | 差し替えるメソッド名。関数型のプロパティのキーのみ |
-| `def` | 振る舞いを返すコールバック |
+配下のケースに共通するモックを定義します。対象と振る舞いを一緒に指定します。
+同じオブジェクトの同じキーへの登録は、同一スコープ内では後勝ち、階層間では内側を優先します。
+ケース内の同じ `.mock()` で、そのケースだけ上書きできます。
+モックは[モックAPI](./api-mock.md)に詳しく記載しています。
 
-第3引数のコールバックが返せる振る舞いは次の5つです。
-
-| 記法 | 意味 |
-|---|---|
-| `m.returns(v)` | 同期的に `v` を返す |
-| `m.resolves(v)` | `Promise.resolve(v)` を返す |
-| `m.throws(e)` | 同期的に `e` を投げる |
-| `m.rejects(e)` | `Promise.reject(e)` を返す |
-| `m.callsFake(fn)` | `fn` を代わりに呼ぶ |
-
-各振る舞いの詳細、型の縛られ方、使い分けは [モック](./api-mock.md) を参照してください。
-
-### 登録が型に積み上がる
-
-`.mock()` を呼ぶたびに、登録エントリが型パラメータ `M` にタプルとして積み上がります。
-
-```text
-TestBuilder<F, [], C>
-  .mock(userRepository, 'save', ...)  →  TestBuilder<F, [{obj: UserRepository, key: 'save'}], C>
-  .mock(mailService, 'send', ...)     →  TestBuilder<F, [{...}, {obj: MailService, key: 'send'}], C>
-```
-
-`e.mock(obj, key)` は、この `M` から登録済みのキーを引いて制約にします。
-登録していないものを参照すると型エラーになります。
+## it / only / skip / todo
 
 ```ts
-new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('...', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.mock(userRepository, 'save').calledOnceWith({ name: 'Alice' }),  // OK
-      e.mock(userRepository, 'find').calledTimes(1),   // 型エラー: 未登録キー
-      e.mock(mailService, 'send').notCalled(),         // 型エラー: 未登録オブジェクト
-    ])
-  )
+.it('保存する', t => t.args({ name: 'Alice' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
+.only('集中して確認する', t => t.args({ name: 'Bob' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
+.skip('修正待ち', t => t.args({ name: 'Carol' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
+.todo('送信失敗時の扱い')
 ```
 
-### `it` レベルのモックとの関係
+it / only / skipは、ケース名と、expectまたはexpectCallsを1つ以上設定したケースを返すコールバックを受け取ります。
+expectとexpectCallsはそれぞれ1回ずつ、どちらの順でも書けます。
+todoは名前だけを受け取ります。名前の一意性は要求しません。
+ケース内で追加・上書きしたモックは次のケースに漏れません。
 
-`.it()` の中でも `.mock()` を呼べます。同じ `(obj, key)` に対する登録は**後勝ち**で、
-`Test` レベルのモックを `it` レベルが上書きします。
+実行器に渡す計画全体にonlyがあればonlyだけを実行します。skipとtodoではsetup・use・targetを呼びません。
+詳細は[it ビルダー](./api-it.md)と[実行セマンティクス](./semantics.md)を参照してください。
+
+## plan
 
 ```ts
-new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('保存に失敗したら通知しない', t => t
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [e.error.toBeInstanceOf(Error)])
-  )
+const plan = users.plan()
 ```
 
-`it` レベルの追加は他のケースに漏れません。型の上でも漏れません。
-詳細は [it ビルダー](./api-it.md) を参照してください。
-
-### 制約
-
-hanamaru のモックは**オブジェクトのメソッドの差し替え**だけです。
-モジュールモック（vitest の `vi.mock` 相当）はありません。
-
-差し替えたい依存は、テストから参照できるオブジェクトとして存在している必要があります。
-この設計上の立場については [設計思想](./concepts.md) を参照してください。
-
-## `.it()`
-
-テストケースを追加します。
-
-### シグネチャ
-
-```ts
-it(name: string, body: (t: ItBuilder<F, M, C>) => ItDone): TestBuilder<F, M, C>
-```
-
-### 使い方
-
-```ts
-.it('保存して通知する', t => t
-  .args({ name: 'Alice' })
-  .expect(e => [
-    e.result.toEqual({ id: 'u1' }),
-    e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
-  ])
-)
-```
-
-| 引数 | 意味 |
-|---|---|
-| `name` | ケース名。レポータに出力され、`--filter` の対象になる |
-| `body` | `t` を受け取り、`.expect()` まで到達した終端値を返すコールバック |
-
-`body` は必ず `.expect()` を呼んで終端値を返す必要があります。
-`.args()` を呼ばずに `.expect()` を呼ぶことはできません（型エラー）。
-
-`t` の中で使えるメソッド（`.mock()` / `.args()` / `.argsFrom()` / `.expect()`）の仕様は
-[it ビルダー](./api-it.md)、`e` のマッチャは [マッチャ](./api-expect.md) を参照してください。
-
-### `M` を伸ばさずに返す
-
-`.it()` は `M`（モック登録）を伸ばさずに `TestBuilder<F, M, C>` を返します。
-つまり、`it` の中で追加したモックはそのケースのスコープに閉じ、次の `.it()` には見えません。
-
-```ts
-new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('it 内で追加', t => t
-    .mock(mailService, 'send', m => m.rejects(new Error('smtp')))
-    .args({ name: 'a' })
-    .expect(e => [
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),   // OK
-    ]))
-  .it('他の it には漏れない', t => t
-    .args({ name: 'b' })
-    .expect(e => [
-      e.mock(mailService, 'send').calledTimes(1),
-      //       ^^^^^^^^^^^ 型エラー: 前のケースで追加したモックは見えない
-    ]))
-```
-
-## `.only()`
-
-そのケースだけを実行します。
-
-### シグネチャ
-
-```ts
-only(name: string, body: (t: ItBuilder<F, M, C>) => ItDone): TestBuilder<F, M, C>
-```
-
-### 挙動
-
-`.it()` と書き方は同じですが、実行対象の絞り込みが起きます。
-
-**どこか1箇所でも `.only()` があれば、全ファイル横断で only のついたケースだけが実行されます。**
-他のケースは skip として報告されます。
-
-```ts
-export const users = new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .only('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })])
-  )
-  // only があるため、このケースは skip として報告されます
-  .it('保存に失敗したら通知しない', t => t
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [e.error.toBeInstanceOf(Error)]))
-```
-
-この絞り込みは、このファイルの中だけの話ではありません。
-別のファイルにある `.it()` も同じように skip されます。
-`.only()` を消し忘れたまま CI を回すと、ほとんどのテストが skip された状態で
-終了コード 0 になります。
-
-特定のケースだけを名前で絞り込みたい場合は、コードを変えずに CLI の `--filter` を使えます。
-[CLI](./cli.md) を参照してください。
-
-## `.skip()`
-
-そのケースを実行せず、skip として報告します。
-
-### シグネチャ
-
-```ts
-skip(name: string, body: (t: ItBuilder<F, M, C>) => ItDone): TestBuilder<F, M, C>
-```
-
-### 挙動
-
-コールバックの中身はそのまま残りますが、そのケースは実行されません。
-
-```ts
-.skip('まだ直っていない', t => t
-  .args({ name: 'Alice' })
-  .expect(e => [e.result.toEqual({ id: 'u1' })])
-)
-```
-
-skip だけで構成されたテストは失敗ではありません。終了コードは 0 になります。
-
-## `.todo()`
-
-未実装のケースを記録します。コールバックを取りません。
-
-### シグネチャ
-
-```ts
-todo(name: string): TestBuilder<F, M, C>
-```
-
-### 挙動
-
-```ts
-.todo('メール送信に失敗したときの扱いを決める')
-```
-
-名前だけを登録し、todo として報告します。
-`.skip()` と違い、本体を書く必要がありません。書くことが決まっていない段階で使います。
-
-todo だけの場合も終了コードは 0 です。
-
-## 型で防げること
-
-`Test` ビルダーに関係するもののうち、コンパイル時に検出できる誤りは次のとおりです。
-
-| 誤り | 結果 |
-|---|---|
-| `.target(userService, 'nope')`（存在しないキー） | 型エラー |
-| `.target(userService, 'label')`（非関数プロパティ） | 型エラー |
-| `m.resolves({ nope: 1 })`（モック戻り値型違い） | 型エラー |
-| `e.mock(userRepository, 'find')`（未登録キー） | 型エラー |
-| `e.mock(mailService, 'send')`（未登録オブジェクト） | 型エラー |
-| `.setup()` なしで `e.ctx.db` | 型エラー |
-
-`it` の中で防げるもの（`.args()` の typo、`.args()` を呼ばずに `.expect()` など）は
-[it ビルダー](./api-it.md)、型システムの限界は [型推論](./type-inference.md) を参照してください。
-
-なお、hanamaru は型チェックを一切行いません。テストを実行するだけです。
-型エラーは `tsc --noEmit` で別途検出してください。
-
-## 関連ドキュメント
-
-- [it ビルダー](./api-it.md) — `.it()` の中で使う `.args()` / `.argsFrom()` / `.expect()`
-- [モック](./api-mock.md) — `m.returns` / `m.resolves` / `m.throws` / `m.rejects` / `m.callsFake`
-- [マッチャ](./api-expect.md) — `e.result` / `e.error` / `e.ctx` / `e.mock()`
-- [型推論](./type-inference.md) — 型パラメータの仕組みと限界
-- [実行セマンティクス](./semantics.md) — 1ケースの実行順序、only の扱い、終了コード
-- [設計思想](./concepts.md) — なぜこの形なのか
+1ケース以上あるテスト、または完成済みの子を1つ以上持つグループから、読み取り専用の実行計画を取得します。
+todoだけの定義も含みます。
+setup・use・targetは実行しません。戻り値の構造は[実行計画とmetadata](./metadata.md)を参照してください。
+親ctxを要求する定義でも計画は取得できますが、そのままrunへ渡すと型エラーです。
+CLIに収集させるファイルでは、必要なctxを用意したルートをexportします。

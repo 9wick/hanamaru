@@ -1,159 +1,58 @@
-# CLI と設定ファイル
+# CLIと設定ファイル
 
-hanamaru は自前のランナー CLI を持ちます。実行時依存パッケージは 0 です。
+CLIは、テストファイルの読込・計画の収集・実行・結果表示を行う入口である。
+ここに記載するコマンドは設計仕様。ランナー実装はまだない。
 
 ```text
 hanamaru [files...] [options]
 ```
 
-関連: [実行セマンティクス](./semantics.md) / [はじめに](./getting-started.md)
-
-## 基本の使い方
-
-インストールせずに実行できます。
+## 実行
 
 ```console
-$ npx hanamaru
+npx hanamaru
+npx hanamaru src/math.test.ts
 ```
 
-Bun を使っている場合はこちらです。
+引数なしなら設定のincludeに一致するファイルを読む。
+ファイルを指定した場合は、そのファイルを対象とする。
 
-```console
-$ bunx hanamaru
-```
+CLIは次の手順を取る。
 
-### 引数なしで実行したとき
+1. パスを正規化して重複ファイルを除き、パス順でimportする。
+2. export名順で完成済みのテストまたはグループをルートとして収集し、それぞれ `.plan()` を呼ぶ。
+3. 計画を一括して `run()` へ渡す。
+4. `RunResult` を整形して表示し、終了コードを返す。
 
-対象ファイルを設定ファイルの `include` から決めます。設定ファイルがない場合、あるいは
-`include` を書いていない場合の既定値は `**/*.test.ts` です。
+関数等の通常のexportは無視する。設定途中のTestビルダーがexportされていたら読込エラーにする。
+同じ定義を複数のexport名や再exportからルートとして収集した場合、重複定義エラーにする。
+groupの内部で同じ子を複数箇所に合成することは許可し、それぞれを独立した実行箇所として扱う。
+子をルートとしてもexportすると、合成先とは別に収集される。子の定義は探索対象外のファイルに置き、実行するルートだけをテストファイルからexportする。
 
-```console
-$ npx hanamaru
-```
+親ctxを要求する子は単独では実行しない。例えば `user-cases.ts` の子を、ctxを用意した親へ追加し、その親をテストファイルからexportする。
+CLIは型引数を実行時に検査できないため、このexportの条件は利用者が守る。
+`group` とライブラリの `run` ではctxの供給を型検査する。[型の限界](./type-inference.md#型の限界)を参照。
 
-集めたファイルを `import()` し、export されている `Test` インスタンスを実行します。
-どのテストが実行対象になるかの詳細は [実行セマンティクス](./semantics.md) を参照してください。
+## オプション
 
-### ファイルを指定したとき
-
-ファイルを引数に渡すと、設定ファイルの `include` ではなく、指定したファイルだけを実行します。
-
-```console
-$ npx hanamaru src/user.test.ts
-```
-
-## オプション一覧
-
-| オプション | 短縮 | 意味 |
+| オプション | 短縮 | 内容 |
 |---|---|---|
-| `--filter <pattern>` | `-t` | テスト名で絞り込み |
-| `--reporter <name>` | `-r` | `pretty`（既定） / `json` |
-| `--config <path>` | `-c` | 設定ファイルのパス |
-| `--no-color` | | 色を無効化 |
+| `--filter <text>` | `-t` | ケース名の部分一致 |
+| `--reporter <name>` | `-r` | `pretty` / `json` |
+| `--config <path>` | `-c` | 設定ファイル |
+| `--ci` | | onlyをエラーにする |
+| `--no-color` | | 色を無効化する |
 | `--help` | `-h` | ヘルプ |
 | `--version` | `-v` | バージョン |
 
-### `--filter` / `-t`
+filterは正規表現ではない。階層内のケース名に文字列を含むものを残し、その計画を実行する。
+ケースを残すときは祖先のsetup・use・mockと階層も保持する。ケースが0件になった枝は取り除く。
+`--ci` のonly検査はfilter前の収集結果全体に対して行い、絞り込みでonlyの残存を隠さない。
+通常実行のonlyは、filter後に実行器へ渡した計画全体に対して作用する。
 
-テスト名で実行するケースを絞り込みます。
+## 設定
 
-[実行セマンティクス](./semantics.md) で使っているテスト定義には
-「保存して通知する」「保存に失敗したら通知しない」の 2 ケースがあります。
-「保存」で絞り込むと、どちらも名前に「保存」を含むため両方が実行対象になります。
-
-```console
-$ npx hanamaru -t '保存'
-```
-
-ファイル指定と組み合わせられます。
-
-```console
-$ npx hanamaru src/user.test.ts -t '保存に失敗'
-```
-
-### `--reporter` / `-r`
-
-出力形式を選びます。既定は `pretty` です。
-
-```console
-$ npx hanamaru -r pretty
-$ npx hanamaru -r json
-```
-
-`pretty` は人間が読むための形式です。成功したときの出力はこうなります。
-
-```console
-$ npx hanamaru src/user.test.ts
-
-createUser
-  ✓ 保存して通知する
-  ✓ 保存に失敗したら通知しない
-```
-
-失敗したときは、失敗したアサーションをまとめて表示します。
-
-```console
-✗ 保存して通知する
-
-  2 件のアサーションが失敗しました
-
-  [1] result.toEqual
-      - expected: { id: 'u1' }
-      + actual:   { id: 'u2' }
-
-  [2] mock(mailService.send).calledOnceWith
-      expected: 1 回 { id: 'u1' } で呼ばれること
-      actual:   0 回
-```
-
-1つのアサーションが落ちても後続は評価されるため、失敗は一度にすべて出ます。
-この挙動については [アサーションは全部評価する](./semantics.md#アサーションは全部評価する) を参照してください。
-
-`json` は結果を JSON 形式で出力します。CI での機械処理を想定した形式です。
-
-### `--config` / `-c`
-
-設定ファイルのパスを指定します。
-
-```console
-$ npx hanamaru --config ./config/hanamaru.config.ts
-```
-
-### `--no-color`
-
-出力の色付けを無効にします。
-
-```console
-$ npx hanamaru --no-color
-```
-
-このオプションを付けなくても、次の場合は色付けが**自動的に無効になります**。
-
-- 出力先が TTY でないとき（パイプやファイルへのリダイレクト、多くの CI 環境）
-- `NO_COLOR` 環境変数があるとき
-
-明示的に `--no-color` を付ける必要があるのは、TTY に出力しているが色を出したくない場合だけです。
-
-### `--help` / `-h`
-
-使い方を表示します。
-
-```console
-$ npx hanamaru --help
-```
-
-### `--version` / `-v`
-
-バージョンを表示します。
-
-```console
-$ npx hanamaru --version
-```
-
-## 設定ファイル
-
-設定は `hanamaru.config.ts` に書きます。**設定ファイルも TypeScript で書けます。**
-hanamaru は `.ts` をそのまま実行できるため、設定のためにビルド手順を足す必要はありません。
+`hanamaru.config.ts`。
 
 ```ts
 import { defineConfig } from 'hanamaru'
@@ -165,96 +64,71 @@ export default defineConfig({
 })
 ```
 
-`defineConfig` は hanamaru が export するヘルパーです。設定オブジェクトに型が付くため、
-キーの typo や値の型違いがエディタ上で分かります。
+CLI引数は設定値を上書きする。明示ファイルはinclude/excludeによる探索を行わず、指定順ではなくパス順に正規化する。
+設定ファイルも通常のTypeScriptモジュールとして読む。
 
-### 設定項目
-
-| 項目 | 既定値 | 意味 |
-|---|---|---|
-| `include` | `['**/*.test.ts']` | テストファイルを集める glob パターン |
-| `exclude` | `['**/node_modules/**', '**/dist/**']` | 除外する glob パターン |
-| `reporter` | `'pretty'` | 出力形式（`'pretty'` / `'json'`） |
-
-`exclude` の既定に `**/node_modules/**` が入っているのは、単に不要だからではありません。
-Node は `node_modules` 配下の `.ts` の実行を拒否するため、そこを集めてしまうと必ず失敗します。
-`exclude` を上書きするときも `**/node_modules/**` は残してください。
-
-### コマンドライン引数と設定ファイルの優先順位
-
-**コマンドライン引数が設定ファイルより優先されます。** 例外はありません。
-
-- ファイルを引数で指定すると、`include` は使われません
-- `--reporter` を指定すると、設定ファイルの `reporter` は使われません
-
-設定ファイルはプロジェクトの既定値を決めるもので、コマンドライン引数はその場限りの上書きである、
-という関係です。
-
-## 実行例
-
-```console
-$ npx hanamaru
-```
-設定ファイルの `include`（既定 `**/*.test.ts`）に一致するすべてのテストを実行します。
-
-```console
-$ npx hanamaru src/user.test.ts
-```
-`src/user.test.ts` だけを実行します。
-
-```console
-$ npx hanamaru -t '保存' -r json
-```
-名前に「保存」を含むケースだけを実行し、結果を JSON 形式で出力します。
-
-```console
-$ bunx hanamaru --config ./config/hanamaru.config.ts
-```
-Bun で、既定の場所ではない設定ファイルを指定して実行します。
-
-## package.json への組み込み
-
-`scripts` に足しておくと、`npm test` で実行できます。
+## 型チェックを含む通常の入口
 
 ```json
 {
   "scripts": {
-    "test": "hanamaru"
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && hanamaru",
+    "test:ci": "tsc --noEmit && hanamaru --ci"
   }
 }
 ```
 
-hanamaru は型チェックを行いません。テストを実行するだけです。
-型エラーは `tsc --noEmit` で別途検出してください。
+型チェックはTypeScript、実行はhanamaruが担当する。
+`npx hanamaru` 単独では型チェックを行わない。
 
-```json
-{
-  "scripts": {
-    "test": "hanamaru",
-    "typecheck": "tsc --noEmit"
-  }
-}
+## 表示
+
+```text
+createUser
+  ✓ 保存して通知する
+  ✓ 保存に失敗したら通知しない
 ```
 
-## CI での使い方
+例えばsendが実際には `{ id: 'u2' }` で1回呼ばれたとき、
+`calledOnceWith({ id: 'u1' })` の失敗は次のように示す。
 
-CI では終了コードで成否を判定します。
+```text
+call(send).calledOnceWith
+  expected: 合計1回、引数 [{ id: 'u1' }]
+  actual:   合計1回、引数 [{ id: 'u2' }]
+```
+
+表示のsendはexpectCallsで指定したメソッドのキーであり、利用者が付けた別名ではない。
+一致しなかった呼び出しを0回と表示しない。
+グループは名前があれば見出しとして表示し、無名なら名前を補わず子を表示する。
+group(name, child)の名前はその場所の見出しとして使う。名前がなくても計画とJSON結果の階層は保持する。
+同じケースの複数の失敗はまとめて表示する。
+TTYでない出力、または `NO_COLOR` が設定された環境では色を無効にする。
+
+`--reporter json` は [RunResult](./spec/hanamaru.d.ts) を1つのJSON値としてstdoutへ出す。
+これは実行結果の形式であり、TestPlanをJSON化したものではない。
+診断・テスト中のconsole出力はJSONへ混ぜずstderrへ送る。stdoutへの直接書き込みは利用者が避ける。
+
+## 終了コード
 
 | コード | 意味 |
 |---|---|
-| 0 | 全て成功（skip / todo のみでも 0） |
-| 1 | テストが1つ以上失敗 |
-| 2 | 設定エラー・ファイル読み込みエラー |
+| 0 | 実行対象に失敗なし。skip/todoだけの場合を含む |
+| 1 | ケースの失敗が1件以上 |
+| 2 | 引数・設定・読込・定義・計画受付のエラー |
 
-テストの失敗（1）と、設定エラー・ファイル読み込みエラー（2）が区別されるため、
-「テストが落ちた」のか「そもそも実行できなかった」のかを終了コードだけで切り分けられます。
-詳しくは [終了コード](./semantics.md#終了コード) を参照してください。
+一致ファイルなし、完成済みテストなし、filter後0件はコード2にする。
+export漏れや絞り込み間違いを、テスト成功として報告しない。
 
-結果を機械的に処理したい場合は `--reporter json` を使います。
+## ライブラリから実行する
 
-```console
-$ npx hanamaru --reporter json > result.json
+```ts
+import { run } from 'hanamaru'
+import { users } from './user.test.ts'
+
+const result = await run(users.plan())
 ```
 
-CI 環境では出力先が TTY でないことが多いため、色付けは自動的に無効になります。
-`--no-color` を明示する必要は通常ありません。
+ライブラリAPIはprocessを終了せず、結果を返す。
+計画の受付エラーはPromiseのreject、ケースの失敗は結果の `status: 'failed'` で表す。
