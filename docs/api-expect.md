@@ -1,111 +1,99 @@
-# アサーション
+# マッチャ
 
-アサーションは、対象と検証方法を持つ計画の要素である。
-マッチャの呼び出しは記述を作り、比較は `run()` が行う。
+`.expect(e => [...])` に検証したい条件を並べます。
+`e.result`、`e.error`、`e.mock(obj, key)` はアサーションを作る入口で、`e.ctx` はsetupが返した値です。
 
-## 正常系と例外系
+## result
 
-| 終端 | 期待 | コールバックにあるもの |
-|---|---|---|
-| `.expect()` | 正常終了（Promiseならresolve） | `e.result` / `e.mock(name)` |
-| `.expectError()` | 例外送出（Promiseならreject） | `e.error` / `e.mock(name)` |
-
-コールバックなしなら、終了の種類だけを検証する。
-コールバックを渡す場合は1件以上のアサーションが必要。
-
-`e.result` と `e.error` は、実際の戻り値や例外オブジェクトではない。
-記述を作るためのマッチャ群である。`e.result.id` のようなプロパティアクセスはできない。
-
-## `e.result`
-
-期待値の型は `Awaited<ReturnType<F>>` に対応する。
+resultの期待値は、対象の `Awaited<ReturnType<F>>` から型推論します。
+同期・非同期で書き方を変える必要はありません。
 
 | マッチャ | 意味 |
 |---|---|
-| `toBe(value)` | `Object.is` による一致 |
-| `toEqual(value)` | 深い厳密な等価 |
-| `toMatchObject(partial)` | 指定したトップレベルのキーの値が深く等しい |
-| `toSatisfy(label, predicate)` | 述語がtrueを返す |
-| `toBeFrom(label, get)` | コンテキストから期待値を得て `toBe` |
-| `toEqualFrom(label, get)` | コンテキストから期待値を得て `toEqual` |
+| `toBe(value)` | Object.isで一致 |
+| `toEqual(value)` | 深い一致 |
+| `toMatchObject(partial)` | 指定したプロパティが部分一致 |
+| `toSatisfy(predicate)` | predicateがtrueを返す |
 
 ```ts
 .expect(e => [
-  e.result.toEqual({ id: 'u1', name: 'Alice' }),
-  e.result.toMatchObject({ id: 'u1' }),
-  e.result.toSatisfy('IDはuから始まる', user => user.id.startsWith('u')),
+  e.result.toEqual({ id: 'u1' }),
+  e.result.toSatisfy(user => user.id.startsWith('u')),
 ])
 ```
 
-`toBe` は参照の同一性も検証する。別々に作ったオブジェクト同士は、中身が同じでも一致しない。
-`toEqual` は返り値の型全体を要求する。キーの一部を指定したい場合は `toMatchObject` を使う。
+toMatchObjectの期待値型は `Partial<V>` です。ネストした値の型まで再帰的なPartialにはしません。
+predicateには実際の結果を渡し、真偽値を同期的に返すことを要求します。
 
-`toMatchObject` の型は `Partial<V>`。指定した各キーの値は深い等価で比べ、ネストした部分一致ではない。
-必須の子プロパティを省いたり、戻り値にないキーを指定したりはできない。
-プリミティブ値には使用できない。
+## error
 
-## コンテキストから期待を作る
-
-```ts
-new Test()
-  .setup(() => ({ expected: 3 }))
-  .target(add)
-  .it('期待値と等しい', t => t.args(1, 2).expect(e => [
-    e.result.toEqualFrom('fixtureの期待値', ctx => ctx.expected),
-    e.result.toSatisfy('期待値以上', (actual, ctx) => actual >= ctx.expected),
-  ]))
-```
-
-`e.ctx` は提供しない。定義時にはsetupの値がまだ存在しないためである。
-`*From` の関数と `toSatisfy` の述語は計画に保持し、実行時のアサーション評価で呼ぶ。
-それらが読むctxはtarget実行後の同じコンテキストなので、変更される値はその時点の状態になる。
-実行前の値を期待するならsetup時に別のフィールドへ保存しておく。
-
-`toSatisfy` は `(actual, ctx) => boolean`。同期述語に限定し、Promiseを返す関数は型エラーにする。
-述語の説明labelも計画に残る。関数本体を解析して条件を推測することはない。
-
-## `e.error`
-
-TypeScriptはthrowされる値の型を関数シグネチャに持たない。
-述語が受け取る例外は `unknown` として扱う。
+errorを含む配列は、対象がthrowまたはrejectすることを期待します。
+例外の値はunknownです。
 
 | マッチャ | 意味 |
 |---|---|
-| `toBeInstanceOf(Ctor)` | `instanceof` が成立する |
-| `toThrow(string \| RegExp)` | Errorのmessageが文字列を含む、または正規表現に一致する |
-| `toMatchObject(partial)` | 指定したキーが例外にあり、その値が深く等しい |
-| `toSatisfy(label, predicate)` | 例外とctxを受け取る述語がtrueを返す |
+| `toBeInstanceOf(ctor)` | instanceof ctor |
+| `toThrow(message)` | Error.messageが文字列を含む、または正規表現に一致 |
+| `toMatchObject(partial)` | 例外オブジェクトの指定プロパティが部分一致 |
+| `toSatisfy(predicate)` | unknownを受けるpredicateがtrueを返す |
 
 ```ts
-.expectError(e => [
+.expect(e => [
   e.error.toBeInstanceOf(Error),
-  e.error.toThrow(/^save/),
-  e.error.toSatisfy('空でないエラーメッセージ', err =>
-    err instanceof Error && err.message.length > 0),
+  e.error.toThrow('save failed'),
+  e.mock(mailService, 'send').notCalled(),
 ])
 ```
 
-`toThrow` の文字列は部分一致。正規表現は評価ごとに `lastIndex` に依存しない形で比較する。
-Error以外の値がthrowされた場合、`toThrow` は不一致になる。
-`throw undefined` も例外送出であり、正常に `undefined` を返すこととは区別する。
+toThrowはErrorでない値には一致しません。文字列やundefinedをthrowする対象にはtoSatisfyを使えます。
+RegExpのlastIndexを検証結果へ影響させず、検証後も元の値を変更しません。
+resultとerrorを同じ配列へ入れることは型で防ぎます。
 
-## `e.mock(name)`
+## mock
 
-登録名から呼び出しの検証を記述する。正常系・例外系の両方にある。
+| マッチャ | 意味 |
+|---|---|
+| `calledTimes(n)` | 合計n回呼ばれた |
+| `notCalled()` | 一度も呼ばれていない |
+| `calledWith(...args)` | 深く一致する引数の呼び出しが1回以上ある |
+| `calledOnceWith(...args)` | 合計1回だけ呼ばれ、その引数が深く一致する |
 
 ```ts
-.expect(e => [e.mock('send').calledOnceWith({ id: 'u1', name: 'Alice' })])
+.expect(e => [
+  e.mock(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
+])
 ```
 
-回数・引数の規則とコンテキスト由来の引数は[モック](./api-mock.md)を参照。
+mockだけを返した場合も正常終了を期待します。途中で予期しない例外が起きれば失敗です。
+calledTimesは0以上の安全な整数を受け取り、それ以外は不正な期待として失敗します。
+引数は記録時の参照を保持し、深く複製しません。targetが後から値を変更した場合は検証時の状態を比較します。
 
-## 失敗をまとめる
+## ctx
 
-期待した終了の種類と実際の結果を先に照合し、その後にアサーションを評価する。
-対象の結果が存在しないアサーションは「評価不能」と報告し、残りのモックの検証は続ける。
-述語や期待値の生成がthrowした場合もそのアサーションの失敗として残し、後続へ進む。
+```ts
+new Test()
+  .target(add)
+  .setup(() => ({ input: [1, 2] as const, expected: 3 }))
+  .it('ctxを使う', t => t
+    .argsFrom(ctx => [...ctx.input])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
+```
 
-`toSatisfy` の中に複数条件を書くと、それらは1つのアサーションになる。
-別々に失敗を報告したい条件は、配列の別要素として書く。
+ctxにはsetupが返した値がそのまま入ります。対象が変更した状態も見えます。
+expectのコールバックはtarget終了後に呼ぶため、コールバックで参照した値もその時点の値です。
+predicateもctxをクロージャで参照できます。追加のラベルや専用マッチャは不要です。
 
-正確な実行順は[実行セマンティクス](./semantics.md)を参照。
+## 深い一致と評価
+
+toEqualと呼び出し引数の比較では、プリミティブはObject.is、配列は長さと要素、通常オブジェクトはown enumerableなキーと値を比較します。
+Symbolキーも含め、配列の穴とundefined、欠けたキーとundefinedのキーを区別します。
+Dateは時刻、RegExpはsourceとflags、Map/Setは順序によらない深い一致で比較します。
+クラスインスタンスは同じprototypeと列挙プロパティ、関数・Promise・WeakMap/WeakSetは参照一致とします。
+循環参照では無限再帰せず、Errorはname・message・causeと列挙プロパティを比較し、stackは比較しません。
+toMatchObjectでは指定したキーが存在することを要求し、その値を比較します。
+これらは実装・検証対象の契約であり、Vitest/Jestの全マッチャとの互換性を意味しません。
+
+全アサーションを配列順に評価し、最初の不一致で打ち切りません。
+終了の種類が合わない場合、対応するresult/errorの述語は呼ばず、モックの検証は続けます。
+コールバックのthrowや述語のthrowも失敗として報告します。
+計画上の表現は[metadata](./metadata.md)、実行手順は[実行セマンティクス](./semantics.md)を参照してください。

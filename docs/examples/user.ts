@@ -1,9 +1,9 @@
-export interface User { id: string; name: string }
+export interface User { id: string }
 export interface CreateUserInput { name: string }
 
 export const userRepository = {
-  async save(input: CreateUserInput): Promise<User> {
-    return { id: 'u1', name: input.name }
+  async save(_input: CreateUserInput): Promise<User> {
+    return { id: 'u1' }
   },
 }
 export const mailService = {

@@ -1,215 +1,100 @@
 # 実行計画とmetadata
 
-**metadataは、テストがどういうものかを構造化した実行計画 `TestPlan` である。**
-計画を作る処理と、計画を実行する処理を分離する。
-この契約は計画の利用目的を規定しない。
+hanamaruのmetadataは、テストの実行計画です。
+「何を対象に、どう準備し、どの振る舞いに置き換え、何を渡し、何を検証するか」を構造化した値として渡します。
+そのデータの用途は、受け取る側に委ねます。
+
+## 取得と実行
 
 ```ts
 import { run } from 'hanamaru'
 import { users } from './user.test.ts'
 
-const plan = users.plan() // 計画を取得する
-const result = await run(plan) // 計画を実行する
+const plan = users.plan()
+const result = await run(plan)
 ```
 
-計画の構造だけを必要とするコードは `run()` を呼ぶ必要がない。
-実行器も公開された計画を入力にし、ビルダーの非公開状態から追加の実行情報を引き出さない。
+`.plan()` は `TestPlan` を返します。setup・target・期待のコールバックを実行しません。
+`run()` は計画を受け取って実行し、別の値である `RunResult` を返します。
+定義のために関数やメソッドを渡せば、必要な参照は計画に残ります。
+対象のファイル・export名・手書きIDの追加登録は必要ありません。
 
-## 計画の全体
+## 計画の構造
 
-公開型の正本は [hanamaru.d.ts](./spec/hanamaru.d.ts)。概形は次のとおり。
+完全な型契約は[hanamaru.d.ts](./spec/hanamaru.d.ts)を参照してください。
+次の表は、その読み方です。
+
+| 構造 | 保持するもの |
+|---|---|
+| TestPlan.version | 計画形式のバージョン |
+| TestPlan.name | describeの表示名。省略時は対象名 |
+| TestPlan.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
+| TestPlan.setup | createと任意のdispose。省略時はnull |
+| TestPlan.cases | 宣言順のケース |
+| Case.name / mode | ケース名とrun / only / skip / todo |
+| Case.mocks | 共通設定とケース上書きの解決後のモック |
+| Case.args | 引数タプル、またはctxから組み立てる関数 |
+| Case.expect | ctxを使ってアサーションを組み立てる遅延した処理 |
+
+各モックにはobject・key・behaviorがあります。
+behaviorはreturns / resolvesと値、throws / rejectsと例外、callsFakeと関数のいずれかです。
+同じobject・keyは1件に解決します。別の参照なら、同じ構造のオブジェクトでも別の登録です。
+todoには実行本体がないため、nameとmodeだけがあります。
+
+ケース名は表示のためのもので、一意性は要求しません。
+実行結果の配列は入力した計画・ケースと同じ順・同じ件数を保ちます。
+
+## 定義時に確定するものと、実行時に組み立てるもの
 
 ```ts
-interface TestPlan<F, C> {
-  version: 1
-  name: string
-  target: TargetPlan<F, C>
-  setup: SetupPlan<C> | null
-  cases: readonly CasePlan<F, C>[]
-}
+new Test()
+  .target(add)
+  .setup(() => ({ a: 1, expected: 3 }))
+  .it('準備した値を使う', t => t
+    .argsFrom(ctx => [ctx.a, 2])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-上記は説明用の概形。実際の型ではFの制約、readonly、生成済み計画を表すブランドを持ち、
-`CasePlan` に相当する部分は `ExecutableCase | TodoCase` というunionである。
-ブランドは計画の出自を型で区別するもので、関数を外部レジストリから引くためのIDではない。
+この定義では、対象、setup関数、ケース名、引数を組み立てる関数、期待を組み立てる関数が計画にあります。
+ctxや、ctxから取り出した期待値は、setupを実行するまで値として確定しません。
 
-| 要素 | 保持するもの |
-|---|---|
-| `version` | 計画構造のバージョン |
-| `name` | テスト全体の名前 |
-| `target` | 呼び出す対象とその取得方法 |
-| `setup` | ケースの準備と後始末。省略時はnull |
-| `cases` | 宣言順のケース。入力・実効モック・期待を含む |
-
-`.plan()` の前後でtarget・setup・モック・遅延値を実行しない。
-`.plan()` はビルダーの定義済み情報を公開構造へ変換する。
-同じ定義から得た計画は同じ意味を持ち、取得回数によってケースやコールバックが増えない。
-
-## 対象
-
-`target.kind` は3種類。
-
-| kind | フィールド | 意味 |
+| 処理 | 評価時点 | 計画での表現 |
 |---|---|---|
-| `function` | `fn` | 関数を呼ぶ |
-| `method` | `object`, `key`, `fn` | 保持したメソッドを、そのobjectをthisにして呼ぶ |
-| `factory` | `get` | setup後にctxを渡して対象関数を得る |
+| itのコールバック | 定義時 | ケースの構造に展開 |
+| mockの振る舞いコールバック | 定義時 | behaviorに展開 |
+| setup.create | ケース開始時 | 関数参照 |
+| argsFrom | targetの前 | kind: from-contextとbuild関数 |
+| expectのコールバック | targetの後 | kind: deferredとbuild関数 |
+| callsFakeの関数 | 対象メソッドの呼び出し時 | 関数参照 |
+| toSatisfyの述語 | アサーション評価時 | アサーション内の関数参照 |
+| setup.dispose | ケースの後始末 | 関数参照 |
 
-任意の `name` と `source` も保持する。`source` は宣言元について利用者が付ける注釈であり、
-実行時の関数・オブジェクト参照と別に扱う。注釈から関数をロードし直すことはない。
+expectは静的な値だけを使っていても、同じ遅延の扱いです。
+`.plan()` の時点では、expect内部のマッチャ一覧や正常・例外の期待が展開済みとはしません。
+コールバックを試しに実行したり、架空のctxを渡したりして抽出しません。
+この境界は、元の `e.ctx` を使う書き方と、定義時にテストを動かさない性質を保つためのものです。
 
-対象は単一の関数でも、複数の操作を包んだ関数でもよい。
-後者の関数本体を展開して内部の呼び出し一覧を生成することはしない。
+## アサーションの構造
 
-## 準備と後始末
+計画の `expect.build(ctx)` は、元のexpectコールバックへctxと記述子ビルダーを渡す処理です。
+結果に実際の戻り値や例外は含めず、検証内容の記述子を返します。
+標準実行器ではtarget終了後に呼び、次の構造を使って検証します。
 
-```ts
-setup: {
-  create: () => fixture,
-  dispose: fixture => fixture.close(),
-}
-```
+| subject | 対象 | checkの例 |
+|---|---|---|
+| result | targetの戻り値 | matcher: toEqual、expected: 値 |
+| error | targetの例外 | matcher: toBeInstanceOf、ctor: Error |
+| mock | object・keyで指定した呼び出し記録 | matcher: calledOnceWith、args: 引数タプル |
 
-これは関数への参照を含む構造の例。
-createはケースごとに評価し、Promiseなら解決した値をctxとする。
-disposeは同じctxを受け取る。後始末が不要なら省略する。
+期待する終了は返された配列から決まります。errorを含めば例外、含まなければ正常終了です。
+resultとerrorの混在、空配列、不正なモック参照は不正な期待です。
+記述子を作る処理と、実際の結果へ照合する処理も分かれています。
 
-ctxの実体や生成したDB接続等は、実行前の計画には存在しない。
-計画に入るのは、それを得る方法である。
+## 参照を保持する意味
 
-## ケース
+計画はreadonlyな構造ですが、利用者が渡した値の内部まで複製・凍結しません。
+関数のクロージャ、オブジェクト参照、Error等も保持するため、JSONでの往復は契約に含めません。
+関数名からソースファイルを特定できるとも保証しません。
+任意の関数内部の依存や分岐は、その関数を保持するだけでは構造として取得できません。
 
-実行本体があるケースは次を持つ。
-
-```ts
-{
-  id: 'save-and-notify',
-  name: '保存して通知する',
-  mode: 'run', // 'only' / 'skip' も同じ構造
-  mocks: [/* 名前・登録先・振る舞い */],
-  args: { kind: 'value', value: [{ name: 'Alice' }] },
-  outcome: { kind: 'return', assertions: [/* 条件 */] },
-}
-```
-
-IDは1つのTestPlan内で一意。明示しなければケース名を使う。
-異なる計画間でIDが同じでもよく、計画をまたぐ同一性を暗黙に主張しない。
-任意の `source: { file, line, column }` はケース宣言位置の注釈。
-
-`todo` は `id`, `name`, `mode: 'todo'`, 任意のsourceだけを持つ。
-存在しない本体を空の正常終了ケースへ変換しない。
-`skip` は実行しないという指定と、定義済みの本体の両方を保持する。
-
-## 値と、値を得る方法
-
-```ts
-type ValuePlan<V, C> =
-  | { kind: 'value'; value: V }
-  | { kind: 'from-context'; label: string; get: (ctx: C) => V }
-```
-
-`.args(1, 2)` は `{ kind: 'value', value: [1, 2] }` になる。
-`.argsFrom('fixtureの入力', ctx => [ctx.input])` は `from-context` と関数を保持する。
-実行前に結果を推測した値で埋めない。
-
-期待値の `toEqualFrom` や、振る舞いの `resolvesFrom` も同じ表現を使う。
-同じ表現でも評価時点は置かれた場所に従う。[実行タイミング](#評価タイミング)を参照。
-
-labelは遅延した定義を説明する文字列で、関数を置き換えるものではない。
-
-## モック
-
-```ts
-{
-  name: 'save',
-  binding: { kind: 'method', object: userRepository, key: 'save' },
-  behavior: {
-    kind: 'resolves',
-    value: { kind: 'value', value: { id: 'u1', name: 'Alice' } },
-  },
-}
-```
-
-モックは登録名に加えて、対象と振る舞いをそのまま保持する。
-名前だけ、文字列化したオブジェクト名だけに置き換えない。
-`mockFrom` の登録先は `{ kind: 'from-context', getObject, key }` になる。
-
-| behavior.kind | 内容 |
-|---|---|
-| `returns` / `resolves` | `value: ValuePlan` |
-| `throws` / `rejects` | throw / rejectする `error` |
-| `callsFake` | 説明の `label` と `fn: ValuePlan` |
-
-各ケースの `mocks` は共通登録・ケース追加・overrideを解決済みの一覧。
-同じ登録名は1回だけ現れ、実行器が適用するものと一致する。
-共通登録順を保ち、overrideはその位置で振る舞いを置き換え、ケース内の追加は末尾へ並ぶ。
-
-参照が同じオブジェクトは計画の中でも同じ参照として保持する。
-文脈から生成するオブジェクトの実体はまだないため、計画にはselectorを保持する。
-
-## 終了の期待とアサーション
-
-```ts
-outcome: {
-  kind: 'return',
-  assertions: [
-    {
-      subject: 'result',
-      check: {
-        matcher: 'toEqual',
-        expected: { kind: 'value', value: { id: 'u1', name: 'Alice' } },
-      },
-    },
-    {
-      subject: 'mock',
-      name: 'send',
-      check: { matcher: 'calledTimes', count: 1 },
-    },
-  ],
-}
-```
-
-`outcome.kind` は `return` または `throw`。追加アサーションがなくても必ず存在する。
-`return` にはresultとmockの検証、`throw` にはerrorとmockの検証だけが入る。
-`expect()` / `expectError()` を引数なしで呼んだ場合、assertionsは空である。
-
-各アサーションはsubjectとcheckを持つ。checkはmatcherごとのdiscriminated union。
-比較値、コンストラクタ、正規表現、述語の参照も保持する。
-`toSatisfy` はlabelとpredicateを持ち、結果とctxを受け取る関数として保存する。
-
-引数の型やモックの名前はビルダーで検証する。
-公開計画では異なるモック関数の型を一つの配列へ格納するため、一部の値の型を `unknown` へまとめる。
-型がまとめられても、値や実行に必要な参照は失わない。
-
-## 評価タイミング
-
-| 処理 | 定義時 | plan取得時 | ケース実行時 |
-|---|---|---|---|
-| it / expect / mockの記述コールバック | 1回評価 | 再評価しない | 再評価しない |
-| setup.create | 保持 | 保持 | 最初に評価・await |
-| targetFrom / mockFrom / 振る舞いの*From | 保持 | 保持 | setup後に評価 |
-| argsFrom | 保持 | 保持 | モック適用後、target前に評価 |
-| target | 保持 | 保持 | 引数確定後に呼ぶ |
-| 期待値の*From / toSatisfy | 保持 | 保持 | target終了後に評価 |
-| setup.dispose | 保持 | 保持 | finallyで評価・await |
-
-## イミュータビリティと参照
-
-計画の構造はreadonlyで、実装では計画自身が作るコンテナを凍結する。
-ユーザーが渡したオブジェクト、関数、期待値の内部まで凍結・複製しない。
-`toBe` の参照同一性や、モック対象の同一性を維持するためである。
-
-定義後に静的な引数や期待値を外部から書き換えると、計画が参照する値も変わる。
-独立した値が必要なケースはsetupと `*From` を使う。
-
-## 公開形式とシリアライズ
-
-`TestPlan` はJavaScriptの構造化された値であり、JSON互換を保証する形式ではない。
-関数・循環参照・オブジェクトの同一性を含み得る。
-`JSON.stringify(plan)` では実行に必要な情報が欠落し、復元できない。
-
-外部形式への変換が必要なら、受け取る側が保存できる要素と保存できない要素の扱いを決める。
-そのために計画の構造を公開するが、特定の変換形式をmetadataの意味には含めない。
-
-`version: 1` はこの構造と意味を識別する。
-実行器は対応していないversionを実行前にエラーにし、不明な要素を黙って無視しない。
+標準実行器の手順と結果は[実行セマンティクス](./semantics.md)を参照してください。

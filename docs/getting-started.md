@@ -1,52 +1,10 @@
 # はじめる
 
-最初に、純粋関数のテストで「定義する・計画を得る・実行する」をたどる。
-このページは実装するAPIの使用例。現在のリポジトリでは型契約の検証まで可能で、hanamaru自体の実行はまだできない。
+このページは実装予定のAPIを使った入門例です。現在は型契約とサンプルを検証でき、ランナーは未実装です。
 
-## プロジェクトの設定
+## 最初のテスト
 
-配布後のインストール手順は次のとおり。
-
-```console
-npm install --save-dev hanamaru typescript
-```
-
-Node.js 22.18以上、TypeScript 5.8以上を対応目標とする。既存の `package.json` に次を追加する。
-
-```json
-{
-  "type": "module",
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit && hanamaru"
-  }
-}
-```
-
-`tsconfig.json` の最小例。
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "erasableSyntaxOnly": true
-  },
-  "include": ["src/**/*.ts"]
-}
-```
-
-相対importは `.ts` まで書き、型のimportには `import type` を使う。
-ここではNodeが直接解決できる書き方を使う。ランタイム・構文の条件は[制約](./limitations.md)を参照。
-
-## 対象を書く
-
-`src/math.ts`。省略した実装はない。
+対象の `math.ts`。
 
 ```ts
 export function add(a: number, b: number): number {
@@ -54,78 +12,38 @@ export function add(a: number, b: number): number {
 }
 ```
 
-## テストを書く
-
-`src/math.test.ts`。
+同じディレクトリの `math.test.ts`。
 
 ```ts
 import { Test } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
-  .target(add, { source: { file: 'src/math.ts', exportName: 'add' } })
+  .target(add)
   .it('2つの数を足す', t => t.args(1, 2).expect(e => [
     e.result.toBe(3),
-  ]), { id: 'adds-two-numbers' })
+  ]))
 ```
 
-- `.target(add)` で対象を固定する。`source` は任意の宣言元情報で、省略しても実行できる。
-- `.args(1, 2)` は `add` の引数に対応する。
-- `.expect()` は正常終了を要求し、配列に書いた条件をすべて検証する。
-- 第3引数の `id` は任意。省略時はケース名をそのままケースIDにする。
-- exportされた完成済みのテストをCLIが実行する。
+1. `.target(add)` で対象を渡すと、引数と期待値の型が決まります。
+2. `.it()` にケース名を書き、`.args()` に対象の引数を渡します。
+3. `.expect()` で期待する条件の配列を返します。
+4. 完成した定義をexportすると、CLIの実行対象になります。
 
-`.args('1', 2)` や `e.result.toBe('3')` は型エラーになる。
-型チェックと実行をまとめて行う通常の入口は `npm test` とする。
+`.args('1', 2)` や `e.result.toBe('3')` は型エラーです。
+ケースの識別子や対象ファイルの情報を書く必要はありません。
 
-## 実行前の計画を見る
+## モックを使う
+
+`user.ts`。依存の実装は、例を自己完結させるための小さなスタブです。
 
 ```ts
-const plan = addition.plan()
-
-plan.target               // 対象の種類と関数への参照
-plan.cases[0]             // 入力・モック・期待を持つケース
-```
-
-`.plan()` はtargetもsetupも呼ばない。テストの構造をそのまま取得する。
-詳しくは[実行計画とmetadata](./metadata.md)を参照。
-
-## 実行する
-
-```console
-npm test
-```
-
-期待する表示例。
-
-```text
-add
-  ✓ 2つの数を足す
-```
-
-ライブラリとして実行する場合は、計画を明示的に渡す。
-
-```ts
-import { run } from 'hanamaru'
-import { addition } from './math.test.ts'
-
-const result = await run(addition.plan())
-```
-
-期待値を `4` にするとテストは失敗する。表示では期待値4と実際の値3を区別する。
-型チェックの失敗は実行前に、値の不一致は実行時に検出される。
-
-## モックと例外期待を書く
-
-`src/user.ts`。外部サービスの代わりに、小さな実装を持つ例を使う。
-
-```ts
-export interface User { id: string; name: string }
+export interface User { id: string }
 export interface CreateUserInput { name: string }
 
 export const userRepository = {
-  async save(input: CreateUserInput): Promise<User> {
-    return { id: 'u1', name: input.name }
+  async save(_input: CreateUserInput): Promise<User> {
+    return { id: 'u1' }
   },
 }
 export const mailService = {
@@ -138,45 +56,97 @@ export async function createUser(input: CreateUserInput): Promise<User> {
 }
 ```
 
-`src/user.test.ts`。
+`user.test.ts`。
 
 ```ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
-  .target(createUser, { source: { file: 'src/user.ts', exportName: 'createUser' } })
-  .mock('save', userRepository, 'save', m => m.resolves({ id: 'u1', name: 'Alice' }))
-  .mock('send', mailService, 'send', m => m.resolves(undefined))
+  .target(createUser)
+  // 以降のケースで使う共通設定。対象と振る舞いを一緒に決める。
+  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
+  .mock(mailService, 'send', m => m.resolves(undefined))
   .it('保存して通知する', t => t
     .args({ name: 'Alice' })
     .expect(e => [
-      e.result.toEqual({ id: 'u1', name: 'Alice' }),
-      e.mock('save').calledOnceWith({ name: 'Alice' }),
-      e.mock('send').calledOnceWith({ id: 'u1', name: 'Alice' }),
-    ]), { id: 'save-and-notify' })
+      e.result.toEqual({ id: 'u1' }),
+      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ])
+  )
   .it('保存に失敗したら通知しない', t => t
-    .override('save', m => m.rejects(new Error('save failed')))
+    // このケースだけ、共通設定を上書きする。
+    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
     .args({ name: 'Alice' })
-    .expectError(e => [
-      e.error.toThrow('save failed'),
-      e.mock('send').notCalled(),
-    ]), { id: 'save-failure' })
+    .expect(e => [
+      e.error.toBeInstanceOf(Error),
+      e.mock(mailService, 'send').notCalled(),
+    ])
+  )
 ```
 
-`expectError` はtargetの例外送出・Promiseのrejectを要求する。
-setupなど準備段階の失敗は、期待したtargetの例外とは扱わない。
-正常系の `expect` では `e.result`、例外系では `e.error` だけが使える。
+最初の2つの `.mock()` は全ケース共通です。2つ目のケースではsaveだけがrejectする振る舞いに置き換わります。
+登録にはオブジェクトとメソッド名を使い、検証でも同じ組を参照します。
 
-[ケースビルダー](./api-it.md)、[再利用](./reuse.md)へ進むと、コンテキストと依存の組み立て方が分かる。
+`e.result` は正常終了、`e.error` はthrow / rejectを期待します。
+同じ配列に両方を入れると型エラーです。モックの検証だけを返した場合は正常終了を期待します。
 
-## このリポジトリで確認できる範囲
+## setupから値を渡す
 
-掲載例の実ファイルは [examples](./examples/math.test.ts) にある。
-公開APIの型契約を参照して、次のコマンドでコンパイルできる。
+```ts
+import { Test } from 'hanamaru'
+import { add } from './math.ts'
 
-```console
-tsc -p docs/spec/tsconfig.json
+export const addition = new Test()
+  .target(add)
+  .setup(() => ({ a: 1, b: 2, expected: 3 }))
+  .it('準備した値を使う', t => t
+    .argsFrom(ctx => [ctx.a, ctx.b])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-これはAPIの型と例の整合性を検証する。ランナーの実行結果を検証するものではない。
+setupはケースごとに実行します。戻り値の型が `argsFrom` と `e.ctx` に伝わります。
+非同期setupも使えます。後始末は `.setup(create, dispose)` の第2引数に渡します。
+共通設定は最初のケースの前に書き、ケースを追加した後の変更は型で防ぎます。
+
+## 実行環境とコマンド
+
+実装後の利用では、JavaScriptと型定義を含むhanamaruパッケージとTypeScriptを開発依存に追加します。
+初版の対応目標はNode.js 22.18以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
+
+`package.json` の設定例。
+
+```json
+{
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && hanamaru"
+  }
+}
+```
+
+`tsconfig.json` の設定例。
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*.ts"]
+}
+```
+
+この例ではソースとテストを `src` 以下に置き、importに `.ts` 拡張子を付けます。
+ランナー単独では型チェックしないため、通常のtest scriptで両方を実行します。
+上記のインストール・CLI実行は、公開パッケージがまだないため未検証です。
+リポジトリ内の例は `tsc -p docs/spec/tsconfig.json` で検証できます。
+
+次は[テストの再利用](./reuse.md)と[実行計画とmetadata](./metadata.md)を参照してください。

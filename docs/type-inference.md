@@ -1,120 +1,103 @@
-# 型の契約
+# 型推論
 
-型は、テストの実行計画を矛盾なく組み立てるために使う。
-実行結果が期待どおりかどうかは、計画を実行して検証する。
+型パラメータはチェーンから推論します。利用者が手書きする必要はありません。
+型の契約は[hanamaru.d.ts](./spec/hanamaru.d.ts)、型エラーの検証は[type-errors.ts](./spec/type-errors.ts)にあります。
 
-公開APIの設計用型定義は [spec/hanamaru.d.ts](./spec/hanamaru.d.ts) を正本とする。
-実装・配布用の型定義ではなく、仕様をコンパイル可能な形で記述したもの。
+## 積み上がる3つの型
 
-## 段階を型にする
-
-| 型 | 保持するもの | 次にできること |
+| 型 | 決まるところ | 使うところ |
 |---|---|---|
-| `Test` | 初期状態 | setup、target選択 |
-| `TargetStage<C>` | コンテキスト型 | target選択 |
-| `TestBuilder<F, M, C>` | 関数型・登録モック・コンテキスト | 共通設定、ケース追加 |
-| `Suite<F, M, C>` | 設定済みのケース群 | ケース追加、plan取得 |
-| `ItBuilder<F, M, C>` | ケースの前提 | モック設定、引数指定 |
-| `ItArgs<F, M, C>` | 引数指定済みのケース | モック設定、終了の期待 |
-| `ItDone` | 完了したケース | 後続操作なし |
+| F: 対象の関数型 | target | args、argsFrom、result |
+| M: モック登録のタプル | mock | e.mockの参照可能なキー |
+| C: コンテキスト型 | setup | argsFrom、e.ctx、dispose |
 
-setupを選ぶとTestに戻らず、targetを選ぶとTargetStageに戻らない。
-ケースを追加するとTestBuilderに戻らない。
-このため、古い型で記述したケースへ新しい設定を後付けすることはできない。
-
-## 関数型から引数・結果を得る
-
-- 引数: `Parameters<F>`
-- 結果の期待値: `Awaited<ReturnType<F>>`
-- メソッド形式の対象: `O[K]` から関数型を取り出す
-
-`FnKeys<O>` は存在が保証された関数型の文字列キーだけを拾う。
-省略可能なメソッドのundefinedを取り除いて「必ず呼べる」ことにはしない。
-
-## setupは解決後の型を伝える
+引数は `Parameters<F>`、結果の期待値は `Awaited<ReturnType<F>>` です。
+非同期setupでは `Awaited<S>` がCになり、Promise自体をctxにはしません。
 
 ```ts
-setup<S>(create: () => S, dispose?: (ctx: Awaited<S>) => void | Promise<void>): TargetStage<Awaited<S>>
+new Test()
+  .target(add)
+  .setup(async () => ({ a: 1, expected: 3 }))
+  .it('型が伝わる', t => t
+    .argsFrom(ctx => [ctx.a, 2])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-async setupでPromiseの型がctxへ漏れない。
-`targetFrom` / `mockFrom` / `argsFrom` / 期待値factory / 述語 / disposeは、同じ `C` を使う。
-
-## 登録名からモック型を得る
-
-`M` は登録名から関数型への対応表。
+## 設定とケース追加を分ける
 
 ```text
-{}
-  → mock('save', repository, 'save', ...)
-  → { save: typeof repository.save }
-  → mock('send', mailService, 'send', ...)
-  → { save: typeof repository.save; send: typeof mailService.send }
+Test → target → TestBuilder<F, M, C> → it → Suite<F, M, C>
 ```
 
-`e.mock(name)` は `keyof M` の名前だけを受け付ける。
-呼び出し引数はその名前に対応する関数の `Parameters` になる。
-`override` も同じ対応を使い、対象の型を変えずに振る舞いを置き換える。
+TestBuilderはsetup・mockとケース追加を持ち、Suiteはケース追加とplanだけを持ちます。
+これにより、既存ケースを書いた後のtargetやctxの変更を型で防ぎます。
+対象を選んだ後のtargetの再指定もできません。
+元のTestBuilderはイミュータブルなので、そこから別のsetupやmockを選ぶ派生は作れます。
 
-登録名は単一の文字列リテラルに限定する。
-`string` や複数候補のunionを登録名にすると、実際には1つだけ登録した名前を型が複数登録と見なすため受け付けない。
+ケース内部も `ItBuilder → args / argsFrom → ItArgs → expect → ItDone` と分かれます。
+argsの二度書き、argsなしのexpect、expect後の操作、itコールバックのreturn忘れを防ぎます。
 
-`mockFrom` のselectorから型を推論するときは、キー・振る舞いからの逆向きの推論を `NoInfer` で止める。
-ケース内の追加は、そのケースのMだけを伸ばす。次のケースに登録が漏れない。
-
-## 正常系と例外系の型
-
-`SuccessExpect` はresultとmockを持ち、`FailureExpect` はerrorとmockを持つ。
-各終端から生成する計画も、`outcome.kind` に応じたアサーションだけを持つ。
+## オブジェクトとキーによるモックの推論
 
 ```ts
-expect(build?: (e: SuccessExpect<F, M, C>) => Assertions): ItDone
-expectError(build?: (e: FailureExpect<M, C>) => Assertions): ItDone
+export type MockEntry = { readonly obj: object; readonly key: string }
+export type RegKey<M extends readonly MockEntry[], O> =
+  Extract<M[number], { obj: O }>['key']
 ```
 
-`Assertions` は `readonly [Assertion, ...Assertion[]]`。
-コールバックの空配列・真偽値・マッチャ呼び忘れを防ぐ。
-`Assertion` と `ItDone` はそれぞれ固有のブランドを持つ。
+`.mock(obj, key, def)` のたびに `M` に `{ obj: O; key: K }` を追加します。
+`e.mock(obj, key)` はMから登録済みのキーを求め、さらに関数型のプロパティであることを要求します。
+`NoInfer<O>` は、この照合側からオブジェクトの推論が広がることを防ぎます。
 
-## 検証する誤操作
+モックの振る舞いは元メソッドのReturnType、呼び出し検証はParametersに従います。
+ケース内の登録はそのケースのMだけに追加し、次のケースには渡しません。
+同じ組を複数回登録しても、実行時の実効モックは最後の振る舞い1つに解決します。
 
-[型の負例](./spec/type-errors.ts)には `@ts-expect-error` を置き、誤操作が通ってしまった場合も検証を失敗させる。
+## 同じexpectで、矛盾した期待を防ぐ
 
-| 誤操作 | 保護 |
-|---|---|
-| targetの再指定、target後のsetup | 段階型 |
-| setupの再指定、ケース後の共通mock追加 | 段階型 |
-| targetなしのケース追加、未完成のplan取得 | 段階型 |
-| 引数の型違い、引数の二度指定、引数なしのexpect | 関数型と段階型 |
-| 正常系でerror、例外系でresultを参照 | 期待の型の分離 |
-| 空のアサーション配列、マッチャ呼び忘れ | 非空タプルとブランド |
-| 終端後の操作、ケース終端のreturn忘れ | 終端型 |
-| 未登録モック参照、名前の再登録、未登録override | 登録名の型 |
-| 同期メソッドへのresolves/rejects | 戻り値型 |
-| 定義中のe.ctx参照 | 生のctxを公開しない |
-| 省略可能なメソッドをtargetに指定 | FnKeys |
+マッチャが返す記述子はresult / error / mockのsubjectとブランドを持ちます。
+expectの戻り値は次のunionです。
 
-正常な入門例、再利用例、async setup、mockFrom、文脈由来の期待値も同時に型チェックする。
+```ts
+export type Assertions =
+  | readonly [ResultAssertion | MockAssertion, ...(ResultAssertion | MockAssertion)[]]
+  | readonly [ErrorAssertion | MockAssertion, ...(ErrorAssertion | MockAssertion)[]]
+```
+
+配列にresultとerrorの両方を入れると、どちらの型にも一致しません。
+通常の `.expect(e => [...])` のままで検査でき、型注釈や `as const` は不要です。
+先頭要素を必須にして空配列を防ぎ、ブランドで素のbooleanやマッチャの呼び忘れも防ぎます。
+
+モックだけの配列は正常終了を期待する契約です。型はそのデータを受け入れ、実行器が終了を照合します。
+TypeScriptの型だけで対象のthrowを推論することはしません。
+
+## 型で検査すること
+
+- 対象と引数・期待値の型の一致
+- メソッドキー、モックの戻り値・呼び出し引数の型
+- 登録の型に存在しないモックへの参照、ケース間の登録漏出
+- setupなしのctxプロパティ参照、非同期setupのawait後の型
+- ケース追加後の共通設定変更
+- 引数の確定とexpectの順序、未完了のケース
+- result/errorの混在、空の期待、非同期predicate
+
+## 型の限界
+
+TypeScriptの構造的型付けでは、同じ形の別オブジェクトを区別できません。
+実際のモック登録は参照とキーで照合するため、型が通っても未登録の別参照は実行時に失敗します。
+これを避けるための別名やブランド付けを、利用者に要求しません。
+unionや広い型のキーを使う場合も、実際にどのメソッドを登録したかは実行時の値で確かめます。
+
+anyや型アサーションで型検査を回避した値、プロパティの差し替え可否も実行時検査が必要です。
+省略可能なメソッドは、存在を保証する型へ絞ってから渡します。
+オーバーロードやジェネリック関数では、Parameters/ReturnTypeだけで全ての引数と戻り値の関係を保持できない場合があります。
+必要ならテストしたい具体的なシグネチャの関数で包みます。
+
+## 検証
 
 ```console
 tsc -p docs/spec/tsconfig.json
 ```
 
-## 保証の境界
-
-型で識別できないものは定義時・実行時に検査する。
-
-- 異なる名前が同じオブジェクトの同じプロパティを指すこと
-- プロパティdescriptorの書き換え可否、実体が関数かどうか
-- ケースIDの重複、空文字、不正な回数・位置
-- 別ケースから取り出した終端値を使い回すこと
-
-`any`、型アサーション、型チェックしないJavaScriptは型の制約を迂回できる。
-readonlyも、利用者が渡したオブジェクト内部の不変性を保証しない。
-
-union型の関数・メソッドキー、オーバーロード、ジェネリック関数では、`Parameters` / `ReturnType` により引数と戻り値の関係が弱くなる場合がある。
-必要なシグネチャの型付きラッパーをtargetとして渡す。
-型で捕まえられない誤りを一つに限定したり、全ての実行時エラーを防げるとはしない。
-
-このリポジトリでの型検証はTypeScript 5.8.3を使用。
-他のバージョンやエディタでのエラーメッセージは未検証。
+このコマンドはドキュメント用サンプルの型チェックと、`@ts-expect-error` を付けた誤操作が型エラーになることを検証します。
+APIの実装を実行するものではありません。ランナー自体も型チェックはせず、通常のtest scriptからtscを呼ぶ想定です。

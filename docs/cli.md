@@ -84,15 +84,16 @@ createUser
   ✓ 保存に失敗したら通知しない
 ```
 
-例えばsendが実際には `{ id: 'u2', name: 'Alice' }` で1回呼ばれたとき、
-`calledOnceWith({ id: 'u1', name: 'Alice' })` の失敗は次のように示す。
+例えばsendが実際には `{ id: 'u2' }` で1回呼ばれたとき、
+`calledOnceWith({ id: 'u1' })` の失敗は次のように示す。
 
 ```text
 mock(send).calledOnceWith
-  expected: 合計1回、引数 [{ id: 'u1', name: 'Alice' }]
-  actual:   合計1回、引数 [{ id: 'u2', name: 'Alice' }]
+  expected: 合計1回、引数 [{ id: 'u1' }]
+  actual:   合計1回、引数 [{ id: 'u2' }]
 ```
 
+表示のsendは登録したメソッドのキーであり、利用者が付けた別名ではない。
 一致しなかった呼び出しを0回と表示しない。
 同じケースの複数の失敗はまとめて表示する。
 TTYでない出力、または `NO_COLOR` が設定された環境では色を無効にする。
