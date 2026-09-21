@@ -1,6 +1,14 @@
-import { Test, run } from 'hanamaru'
+import { Test, defineConfig, run } from 'hanamaru'
 import type { AttemptResult, CaseResult, DiagnosticValue, Failure, SourceLocation } from 'hanamaru'
 import { add } from '../examples/math.ts'
+
+defineConfig({
+  include: ['**/*.test.ts'],
+  exclude: ['**/node_modules/**', '**/dist/**'],
+  reporter: 'pretty',
+  collectionTimeout: 120_000,
+  shutdownGrace: 5_000,
+})
 
 const rows = [{ a: 1, b: 2, expected: 3 }]
 const ready = new Test().retry(2).target(add).timeout(2_000).retry(1)

@@ -59,7 +59,7 @@ attemptsは実行順で、attemptは1始まりです。各試行のdurationMsも
 空のattemptsだけで未実行の理由を推測したり、skip等を架空の試行として追加したりしません。
 この組み合わせは公開型でも制約します。
 
-実行中に中断した場合は、その試行のstatusをcancelledにします。notRunは付けません。
+実行中の試行にはnotRunを付けません。timeoutや復元・後始末の失敗はfailed、失敗がないまま外部から中断された試行はcancelledです。詳細は下記の状態表で定めます。
 再試行の間で中断して次の試行を開始しなかった場合も、開始済みの試行だけを残します。ケースの成否は最後の試行から読み、runのreasonに中断を残します。
 最終以外の試行はfailedです。passed / cancelledの後へ試行を追加しません。
 
@@ -134,9 +134,40 @@ getterや利用者のtoJSONを診断のために実行しません。
 ## run全体
 
 RunResultのstatusはpassed / failed / cancelled、reasonはcompleted / timeout / interrupted / cleanup-failedです。
-timeoutはfailed、Ctrl+Cはinterruptedとなり、既にfailedのケースがあるかfailOnFlakyに該当すればfailed、なければcancelledです。
-復元・後始末の失敗で中断した場合はcleanup-failedかつfailedです。
-通常完了では上記の規則でケースの成否とflakyを求め、ケースの失敗、またはfailOnFlakyの条件に該当すればfailedです。
+
+### 終了状態の表
+
+case列は最後の試行またはnotRunから求める値であり、CaseResult.statusというフィールドは設けません。
+表は、記載した事象以外に失敗や中断がない場合の最終結果です。通常の失敗はretryを使い切った場合を示します。
+後続列は、まだ開始していない実行対象ケースの扱いです。元からskipped / todoのケースは全行でそのまま残します。
+
+| event | AttemptResult.status | case（派生値） | RunResult.status / reason | 後続 |
+|---|---|---|---|---|
+| 全検証と後始末が成功 | passed | passed | passed / completed | 続行 |
+| assertion不一致・期待しない例外・準備や検証の失敗 | failed | failed | failed / completed | 続行 |
+| 通常の失敗後、retryで成功 | failed → passed | passed（flaky） | passed / completed（failOnFlakyならfailed） | 続行 |
+| 試行のtimeout（準備・対象・検証・後始末のいずれでも） | failed | failed | failed / timeout | notRun: cancelled |
+| 復元・後始末の失敗 | failed | failed | failed / cleanup-failed | notRun: cancelled |
+| Ctrl+C（実行中の試行に失敗なし） | cancelled | cancelled | cancelled / interrupted | notRun: cancelled |
+| 失敗を記録した試行の後始末中にCtrl+C | failed | failed | failed / interrupted | notRun: cancelled |
+| 別ケースがfailed、またはfailOnFlakyに該当した後にCtrl+C | cancelled | cancelled | failed / interrupted | notRun: cancelled |
+| 失敗した試行と次のretryの間でCtrl+C | 新しい試行なし。最後はfailed | failed | failed / interrupted | notRun: cancelled |
+| 最初の試行の開始前にCtrl+C | 試行なし | cancelled（notRun） | cancelled / interrupted | notRun: cancelled |
+| Ctrl+C後の復元・後始末で失敗 | failed | failed | failed / cleanup-failed | notRun: cancelled |
+| timeout後の復元・後始末で失敗 | failed | failed | failed / timeout | notRun: cancelled |
+
+### 状態の判定と事象が重なる場合
+
+- 試行に失敗が一つでもあればfailedです。timeoutはkind: timeoutの失敗を記録し、cancelledにはしません。Ctrl+Cでも記録済みの失敗を取り消しません。
+- 失敗のない試行を外部から中断した場合はcancelledです。passedは検証と後始末が全て成功してから確定します。完了済みの試行は後から書き換えません。
+- runのreasonは、記録された事象のうちtimeout → cleanup-failed → interrupted → completedの順で決めます。例えばtimeoutとcleanup失敗が重なればreasonはtimeoutですが、両方の失敗を保持します。
+- runの中断が始まった時点で、期限に達していればtimeoutも記録します。それ以降は試行の時計による新しいtimeoutを発生させず、CLIでは終了猶予を使います。猶予切れは別のtimeoutやcleanup失敗を作りません。
+- 中断後はretry・次のケース・未開始の検証を開始しません。進行中の処理が戻れば復元・後始末へ進み、そこで実際に発生した失敗も記録します。
+- cleanupは全ての復元・後始末が成功すればcomplete、失敗や未完了があればincompleteです。必要な後始末がない場合はcompleteです。kind: timeoutのcleanupも、結果確定時の同じ値を保持します。
+
+runのstatusは、timeout・cleanup失敗・caseの派生値がfailed・failOnFlakyの条件に該当するケースのいずれかがあればfailedです。
+それらがなくinterruptedならcancelled、通常完了ならpassedです。途中で失敗してもretryで成功したケースは、failOnFlakyを指定しない限りrunを失敗にしません。
 グループ・テストは配下のfailedを優先し、次にcancelled、それ以外はpassedとします。skip/todoだけならpassedです。
 failOnFlakyはrunのstatusだけへ作用し、ケースのattemptsや各階層の結果を書き換えません。
+収集のtimeoutはrun開始前の読込エラーです。この表の試行timeoutとは区別し、RunResultや架空の試行を作りません。
 表示と終了コードは[CLI](./cli.md)、実行順は[実行セマンティクス](./semantics.md)を参照してください。

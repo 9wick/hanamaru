@@ -42,6 +42,8 @@ CLIは型引数を実行時に検査できないため、このexportの条件�
 | `--config <path>` | `-c` | 設定ファイル |
 | `--ci` | | onlyをエラーにする |
 | `--fail-on-flaky` | | 再試行後に成功したケースがあれば終了を失敗にする |
+| `--collection-timeout <ms>` | | 設定・テストファイルの読込と収集の期限 |
+| `--shutdown-grace <ms>` | | run中断後、処理と後始末を待つ猶予 |
 | `--no-color` | | 色を無効化する |
 | `--help` | `-h` | ヘルプ |
 | `--version` | `-v` | バージョン |
@@ -50,9 +52,6 @@ filterは正規表現ではない。階層内のケース名に文字列を含�
 ケースを残すときは祖先のsetup・use・mock・実行設定と階層、元のpathも保持する。ケースが0件になった枝は取り除く。
 `--ci` のonly検査はfilter前の収集結果全体に対して行い、絞り込みでonlyの残存を隠さない。
 通常実行のonlyは、filter後に実行器へ渡した計画全体に対して作用する。
-
-ファイルの読込と定義収集には、一ファイルにつき30,000msの期限を適用する。設定ファイルの読込にも同じ期限を適用する。
-超過時はファイルと収集段階を示すコード2のエラーとし、架空のケース結果は作らない。
 
 ## 設定
 
@@ -65,11 +64,41 @@ export default defineConfig({
   include: ['**/*.test.ts'],
   exclude: ['**/node_modules/**', '**/dist/**'],
   reporter: 'pretty',
+  collectionTimeout: 120_000,
+  shutdownGrace: 5_000,
 })
 ```
 
 CLI引数は設定値を上書きする。明示ファイルはinclude/excludeによる探索を行わず、指定順ではなくパス順に正規化する。
 設定ファイルも通常のTypeScriptモジュールとして読む。
+
+## 時間制限
+
+テスト一試行のtimeoutと、CLIの収集期限・終了猶予は別の設定である。
+収集や後始末に長い時間が必要なプロジェクトでは、設定ファイルまたはCLI引数で変更できる。
+
+| 設定 | CLI引数 | 既定値 | 範囲 |
+|---|---|---|---|
+| collectionTimeout | --collection-timeout | 30,000ms | 一ファイルのimport開始から、そのexportの収集・plan作成まで。依存モジュールの読込やトップレベルのawaitも含む |
+| shutdownGrace | --shutdown-grace | 1,000ms | runの中断開始から、進行中の処理・復元・後始末を待つ時間 |
+
+値はミリ秒単位の正の有限値とし、0・負数・非有限値・数値でない指定は設定エラー（コード2）にする。
+既定値 → 設定ファイル → CLI引数の順で上書きする。これらはCLIの設定であり、TestPlanやCaseResult.config、利用者のctxへ追加しない。
+
+設定ファイル自身の読込にもcollectionTimeoutを適用する。その時点では設定内容が未確定なので、CLI引数があればその値、なければ既定値を使う。
+設定ファイル内の値は、その後のテストファイルの読込から適用する。設定ファイル自身のトップレベル処理に時間が必要なら、次のようにCLIで指定する。
+
+```console
+npx hanamaru --collection-timeout 120000 --shutdown-grace 5000
+```
+
+収集期限を超過した場合は、その読込環境を終了させ、ファイル・段階・適用した期限を示すコード2のエラーにする。
+ケースはまだ実行していないのでRunResultや試行を作らない。収集の停止にはshutdownGraceを適用せず、強制終了後のfinallyや資源解放は保証しない。
+
+shutdownGraceは試行timeout・復元や後始末の失敗・Ctrl+Cによるrun中断で使う。timeoutの場合は試行の期限から、それ以外は中断開始から計る。
+途中で別の中断原因が加わっても猶予を延長しない。猶予内に終了すれば直ちに結果を返し、未完了なら実行環境を終了させる。
+猶予切れ自体では中断理由を変更せず、未完了の後始末をcleanup: incompleteとして表示する。適用した猶予も表示し、強制終了後のfinallyや資源解放は保証しない。
+同一プロセスのrun(plan)にはこの強制停止を適用しない。
 
 ## 型チェックを含む通常の入口
 
@@ -132,8 +161,9 @@ origin・path・config・各試行と失敗を保持し、任意値はDiagnostic
 一致ファイルなし、完成済みテストなし、filter後0件はコード2にする。
 export漏れや絞り込み間違いを、テスト成功として報告しない。
 
-Ctrl+Cでは完了済みの結果を保ち、実行中と未実行の実行対象をcancelledにする。
-1,000msの猶予内に停止・後始末が終わらなければ実行環境を終了させる。skip/todo等の元の状態は保つ。
+Ctrl+Cでは完了済みの結果を保ち、失敗のない実行中の試行をcancelled、未実行の実行対象をnotRun: cancelledにする。既存の失敗や中断後のcleanup失敗は[終了状態の表](./results.md#終了状態の表)に従う。
+設定したshutdownGrace内に停止・後始末が終わらなければ実行環境を終了させる。skip/todo等の元の状態は保つ。
+Ctrl+Cを受けた終了は、既存の失敗やcleanup失敗によりRunResult.statusがfailedでもコード130にする。読込・収集中のCtrl+Cも130とし、run開始前ならRunResultを作らない。
 
 ## ライブラリから実行する
 
@@ -147,4 +177,4 @@ const result = await run(users.plan())
 ライブラリAPIはprocessを終了せず、処理と後始末を待って結果を返す。
 任意コードの強制停止はできず、timeout後も対象が終了しなければ戻らない場合がある。
 標準CLIの停止保証との違いは[timeout](./execution-options.md)に記載する。
-計画の受付エラーはPromiseのreject、ケースの失敗は結果の `status: 'failed'` で表す。
+計画の受付エラーはPromiseのreject、ケースの失敗はRunResultの `status: 'failed'` で表す。

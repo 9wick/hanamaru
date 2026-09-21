@@ -370,5 +370,7 @@ export interface Config {
   readonly include?: readonly string[]
   readonly exclude?: readonly string[]
   readonly reporter?: 'pretty' | 'json'
+  readonly collectionTimeout?: number
+  readonly shutdownGrace?: number
 }
 export declare function defineConfig(config: Config): Config

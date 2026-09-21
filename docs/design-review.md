@@ -52,3 +52,9 @@ DiagnosticValueのkindで、undefined・特殊な数値・参照等をJSONでも
 CaseResult.failuresは各試行のfailuresと重複するため削除しました。status・flakyも派生値として保持しません。
 実行済みケースの結果はattemptsへ一本化し、試行がないケースにだけnotRunでskip・todo・実行前中断を記録します。
 表示とrunの集約は、同じ試行の記録から必要な値を計算します。[実行結果](./results.md)に規則を記載しています。
+
+## 中断時の状態とCLIの時間制限
+
+[終了状態の表](./results.md#終了状態の表)で、試行・ケースの派生値・run・後続ケースを定めます。
+timeoutとcleanup失敗はfailed、失敗がないまま割り込まれた試行はcancelledです。既存の失敗を消さず、複数の中断原因の優先順位も固定します。
+収集期限と終了猶予は[CLIの設定](./cli.md#時間制限)で変更可能にしました。30,000msと1,000msは未指定時の既定値であり、全プロジェクトに強制する時間ではありません。
