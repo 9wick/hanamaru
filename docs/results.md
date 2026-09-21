@@ -43,15 +43,37 @@ CLIは収集した全計画で番号を定め、filterや表示の並べ替え�
 
 ## ケースと試行
 
-CaseResultにはname・origin・path・row・適用したconfig・status・durationMs・flaky・attempts・failuresを保持します。
+CaseResultにはname・origin・path・row・適用したconfig・durationMs・attemptsを保持します。
+失敗一覧・成否・flakyは試行から求め、CaseResultに重複したフィールドを持たせません。
 通常ケースのrowはnullです。eachのrow.valueはケースの最初の試行開始前、未実行なら結果作成時に診断値へ取り込みます。eachの行番号はrow.indexに残し、表示するときだけ1始まりにします。
-statusはpassed / failed / skipped / todo / cancelledです。
 
 durationMsは最初の試行開始からケース終了・中断までの実時間で、未実行なら0です。
 attemptsは実行順で、attemptは1始まりです。各試行のdurationMsも準備開始から後始末終了・中断までを測ります。各試行に状態・時間・targetの終了・アサーションの評価・失敗・後始末の状態を残します。
-CaseResult.failuresは全試行の失敗を順に並べたものです。最後に成功しても過去の失敗を消しません。
-実行していないskip/todoや未開始のcancelledには試行を作らず、attemptsとfailuresは空です。
-実行中に中断した場合は、その試行をcancelledとして記録します。
+失敗は各試行のfailuresにだけ保持します。最後に成功しても過去の試行を消しません。
+
+### 試行の有無と未実行の理由
+
+実行済みのケースはattemptsが非空で、notRunを持ちません。
+実行していないケースはattemptsが空で、notRunにskipped / todo / cancelledのいずれかを必ず持ちます。
+明示skipとonlyによる除外はskipped、未実行予定はtodo、実行前の中断はcancelledです。
+空のattemptsだけで未実行の理由を推測したり、skip等を架空の試行として追加したりしません。
+この組み合わせは公開型でも制約します。
+
+実行中に中断した場合は、その試行のstatusをcancelledにします。notRunは付けません。
+再試行の間で中断して次の試行を開始しなかった場合も、開始済みの試行だけを残します。ケースの成否は最後の試行から読み、runのreasonに中断を残します。
+最終以外の試行はfailedです。passed / cancelledの後へ試行を追加しません。
+
+### 表示と集約で使う規則
+
+| 求める情報 | 元の情報 |
+|---|---|
+| ケースの成否・中断 | 最後の試行のstatus。試行がなければnotRun |
+| flaky | 最後の試行がpassedで、それ以前にfailedの試行がある |
+| 失敗一覧 | 各試行のfailuresを試行順に並べる |
+
+例えばfailedの後にpassedがあれば、「再試行後に成功したケース」として表示します。
+これらはreporterやrunの集約時に計算します。CaseResultにstatus・flaky・failuresの写しを追加せず、JSONにも出しません。
+名前・位置・設定・各試行だけで、どのケースをどう実行し、どの試行がどう終わったかを確認できます。
 
 正常終了はoutcome.kind: return、例外はthrowとして値を保持します。対象を呼んでいなければoutcomeはnullです。
 Promiseの完了を観測できない中断でもnullとし、成功の戻り値を推測しません。
@@ -114,7 +136,7 @@ getterや利用者のtoJSONを診断のために実行しません。
 RunResultのstatusはpassed / failed / cancelled、reasonはcompleted / timeout / interrupted / cleanup-failedです。
 timeoutはfailed、Ctrl+Cはinterruptedとなり、既にfailedのケースがあるかfailOnFlakyに該当すればfailed、なければcancelledです。
 復元・後始末の失敗で中断した場合はcleanup-failedかつfailedです。
-通常完了ではケースの失敗、またはfailOnFlakyの条件に該当すればfailedです。
+通常完了では上記の規則でケースの成否とflakyを求め、ケースの失敗、またはfailOnFlakyの条件に該当すればfailedです。
 グループ・テストは配下のfailedを優先し、次にcancelled、それ以外はpassedとします。skip/todoだけならpassedです。
-failOnFlakyはrunのstatusだけへ作用し、成功したケースや各階層の結果を書き換えません。
+failOnFlakyはrunのstatusだけへ作用し、ケースのattemptsや各階層の結果を書き換えません。
 表示と終了コードは[CLI](./cli.md)、実行順は[実行セマンティクス](./semantics.md)を参照してください。

@@ -330,18 +330,17 @@ export interface AttemptResult {
   readonly failures: readonly Failure[]
   readonly cleanup: 'complete' | 'incomplete'
 }
-export interface CaseResult {
+export type CaseResult = {
   readonly name: string
   readonly origin: SourceLocation
   readonly path: readonly number[]
   readonly row: { readonly index: number; readonly value: DiagnosticValue } | null
   readonly config: ResolvedExecutionConfig
-  readonly status: 'passed' | 'failed' | 'skipped' | 'todo' | 'cancelled'
   readonly durationMs: number
-  readonly flaky: boolean
-  readonly attempts: readonly AttemptResult[]
-  readonly failures: readonly Failure[]
-}
+} & (
+  | { readonly attempts: readonly [AttemptResult, ...AttemptResult[]]; readonly notRun?: never }
+  | { readonly attempts: readonly []; readonly notRun: 'skipped' | 'todo' | 'cancelled' }
+)
 export interface TestResult {
   readonly kind: 'test'
   readonly name: string

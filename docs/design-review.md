@@ -46,3 +46,9 @@ DiagnosticValueのkindで、undefined・特殊な数値・参照等をJSONでも
 アサーションはexpect / expectCallsと、それぞれの配列内の位置で対応させます。
 復元・後始末を完了できない場合は後続を中断し、片付いていない状態を次のケースへ渡しません。
 これらも各公開ページと型契約の一部です。
+
+## ケースの結果は試行から求める
+
+CaseResult.failuresは各試行のfailuresと重複するため削除しました。status・flakyも派生値として保持しません。
+実行済みケースの結果はattemptsへ一本化し、試行がないケースにだけnotRunでskip・todo・実行前中断を記録します。
+表示とrunの集約は、同じ試行の記録から必要な値を計算します。[実行結果](./results.md)に規則を記載しています。

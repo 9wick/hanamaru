@@ -94,6 +94,7 @@ nextの未呼び出し等のmiddleware契約違反も再試行で解消する扱
   attempt 2: passed
 ```
 
-失敗後に成功したケースは `status: 'passed', flaky: true` となり、全試行の結果を残します。
+失敗後に成功したケースも全試行を残します。最後の試行がpassedで、それ以前にfailedがあれば、reporterはflakyとして表示します。
+CaseResultにstatusやflakyのフィールドは持たせません。各試行の記録から求めます。
 既定ではrunも成功できます。CLIの `--fail-on-flaky` または `run(plan, { failOnFlaky: true })` ではrunをfailedにします。
-ケース自体のpassedと、各試行の記録は変更しません。
+最後の試行のpassedと、過去を含む各試行の記録は変更しません。

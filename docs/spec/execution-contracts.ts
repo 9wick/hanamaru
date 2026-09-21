@@ -1,5 +1,5 @@
 import { Test, run } from 'hanamaru'
-import type { CaseResult, DiagnosticValue, Failure, SourceLocation } from 'hanamaru'
+import type { AttemptResult, CaseResult, DiagnosticValue, Failure, SourceLocation } from 'hanamaru'
 import { add } from '../examples/math.ts'
 
 const rows = [{ a: 1, b: 2, expected: 3 }]
@@ -115,3 +115,37 @@ const invalidDiagnostic: DiagnosticValue = { kind: 'bigint', value: 1n }
 // @ts-expect-error result attempts cannot be appended by consumers.
 result.attempts.push({})
 void [timeout, failure, thrownUndefined, incompleteFailure, incompleteOrigin, invalidDiagnostic]
+
+// @ts-expect-error failures belong to individual attempts, never the case aggregate.
+result.failures
+const allFailures: readonly Failure[] = result.attempts.flatMap(attempt => attempt.failures)
+void allFailures
+
+// @ts-expect-error case status is derived from attempts or its non-execution reason.
+result.status
+// @ts-expect-error flaky is derived from the attempt history.
+result.flaky
+
+const caseInfo = {
+  name: '足す', origin: { file: '/tests/math.test.ts', line: 1, column: 1 },
+  path: [0, 0], row: null, config: { timeout: 500, retry: 2 }, durationMs: 0,
+} as const
+declare const attempt: AttemptResult
+const executed: CaseResult = { ...caseInfo, attempts: [attempt] }
+const skipped: CaseResult = { ...caseInfo, attempts: [], notRun: 'skipped' }
+const todo: CaseResult = { ...caseInfo, attempts: [], notRun: 'todo' }
+const cancelled: CaseResult = { ...caseInfo, attempts: [], notRun: 'cancelled' }
+// @ts-expect-error a case with no attempts must explain why it was not run.
+const unexplained: CaseResult = { ...caseInfo, attempts: [] }
+// @ts-expect-error a case with attempts cannot also claim it was not run.
+const contradictory: CaseResult = { ...caseInfo, attempts: [attempt], notRun: 'skipped' }
+// @ts-expect-error a passed case must have an actual attempt.
+const inventedSuccess: CaseResult = { ...caseInfo, attempts: [], notRun: 'passed' }
+if (result.notRun !== undefined) {
+  const empty: readonly [] = result.attempts
+  void empty
+} else {
+  const first: AttemptResult = result.attempts[0]
+  void first
+}
+void [executed, skipped, todo, cancelled, unexplained, contradictory, inventedSuccess]

@@ -207,7 +207,9 @@ CLIの `--ci` はこの設定を使います。通常実行ではskip/todoだけ
 ## 結果
 
 RunResultは計画順のtestsを持ち、各要素はkindでtestとgroupを区別します。
-CaseResultには宣言位置・元の計画内のpath・適用した設定・全試行・構造化した失敗を残します。
+CaseResultには宣言位置・元の計画内のpath・適用した設定・全試行を残します。構造化した失敗は各試行のfailuresに保持します。
+ケースの成否・flaky・失敗一覧はattemptsから求め、CaseResultに写しを持たせません。
+試行が空のケースにだけnotRunを必須とし、skipped / todo / 実行前のcancelledを区別します。
 各試行のアサーションはexpect / expectCallsの区別と、その配列内の0始まりのindexで対応します。
 expectが構築できなかった場合でも、呼び出し条件のindexをずらしません。
 
