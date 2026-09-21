@@ -72,6 +72,19 @@ export const calls = new Test()
 
 この例ではsaveとsendの本物の処理を呼び、その呼ばれ方を検証します。
 
+## テストを合成する
+
+```ts
+const tests = new Test()
+  .mock(mailService, 'send', m => m.resolves(undefined))
+  .group(userTests)
+  .group('退会', deletionTests)
+```
+
+別々に定義したテストをgroupでまとめ、配下へ共通のmockやsetupを適用できます。
+名前は任意です。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
+親のctxを使う子の書き方は[テストの合成とスコープ](./docs/composition.md)を参照してください。
+
 ## 定義は実行計画になる
 
 ```ts
@@ -82,7 +95,7 @@ const plan = users.plan()
 const result = await run(plan)
 ```
 
-`.plan()` はテストを実行せず、対象、準備、ケースごとのモック、引数、呼び出し条件、結果の期待の組み立て方を返します。
+`.plan()` はテストを実行せず、合成の階層、対象、準備、各スコープのモック、引数、呼び出し条件、結果の期待の組み立て方を返します。
 この実行計画がmetadataです。定義することと、実行することを分離します。
 テストを書くために、識別子やソース位置を別途登録する必要はありません。
 
@@ -92,7 +105,7 @@ const result = await run(plan)
 - [設計思想](./docs/concepts.md)
 - [Test ビルダー](./docs/api-test.md) / [it ビルダー](./docs/api-it.md)
 - [モック](./docs/api-mock.md) / [マッチャ](./docs/api-expect.md)
-- [テストの再利用](./docs/reuse.md)
+- [テストの合成とスコープ](./docs/composition.md)
 - [実行計画とmetadata](./docs/metadata.md)
 - [実行セマンティクス](./docs/semantics.md) / [CLI](./docs/cli.md)
 - [型推論](./docs/type-inference.md) / [制約と実装状況](./docs/limitations.md)

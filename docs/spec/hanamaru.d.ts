@@ -11,7 +11,14 @@ declare const definitionBrand: unique symbol
 declare const behaviorBrand: unique symbol
 declare const planBrand: unique symbol
 export interface ItDone { readonly [doneBrand]: true }
-export interface TestDefinition { readonly [definitionBrand]: true }
+export interface TestDefinition<R extends object = {}> {
+  /** 親に要求するctx。関数プロパティで反変にし、供給できない合成を防ぐ。 */
+  readonly [definitionBrand]: (ctx: R) => void
+}
+export type ExtendContext<C, S> = C extends unknown
+  ? S extends unknown ? Omit<C, keyof S> & S : never
+  : never
+type SetupReturn<S> = S & (Awaited<S> extends object ? unknown : never)
 export type Behavior<F extends AnyFn> = BehaviorPlan & {
   readonly [behaviorBrand]: (fn: F) => F
 }
@@ -48,14 +55,14 @@ export interface CallBuilder {
 export interface Expect<F extends AnyFn, C> {
   readonly result: ValueAssertions<Awaited<ReturnType<F>>>
   readonly error: ErrorAssertions
-  readonly ctx: C
+  readonly ctx: Readonly<C>
 }
 export type CallExpectations = readonly [CallAssertion, ...CallAssertion[]]
 export type CallsBuilder = (call: CallBuilder) => CallExpectations
 export interface ItBuilder<F extends AnyFn, C> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, C>
   args(...args: Parameters<F>): ItArgs<F, C>
-  argsFrom(build: (ctx: C) => Parameters<F>): ItArgs<F, C>
+  argsFrom(build: (ctx: Readonly<C>) => Parameters<F>): ItArgs<F, C>
 }
 export interface ItArgs<F extends AnyFn, C> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItArgs<F, C>
@@ -68,40 +75,54 @@ export interface ItExpected extends ItDone {
 export interface ItCalls<F extends AnyFn, C> extends ItDone {
   expect(build: (e: Expect<F, C>) => Assertions): ItDone
 }
-export interface CaseMethods<F extends AnyFn, C> {
-  it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C>
-  only(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C>
-  skip(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C>
-  todo(name: string): Suite<F, C>
+export interface CaseMethods<F extends AnyFn, C, R extends object = {}> {
+  it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
+  only(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
+  skip(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
+  todo(name: string): Suite<F, C, R>
 }
-export interface Suite<F extends AnyFn, C> extends CaseMethods<F, C>, TestDefinition {
-  plan(): TestPlan<F, C>
+export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, TestDefinition<R> {
+  plan(): SuitePlan<F, C, R>
 }
-export interface TestBuilder<F extends AnyFn, C> extends CaseMethods<F, C> {
-  describe(name: string): TestBuilder<F, C>
-  setup<S>(create: () => S, dispose?: (ctx: Awaited<S>) => void | Promise<void>): TestBuilder<F, Awaited<S>>
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C>
+export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R> {
+  describe(name: string): TestBuilder<F, C, R>
+  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>, dispose?: (ctx: Readonly<ExtendContext<C, Awaited<S>>>) => void | Promise<void>): TestBuilder<F, ExtendContext<C, Awaited<S>>, R>
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
-export interface TargetStage<C> {
-  target<F extends AnyFn>(fn: F): TestBuilder<F, C>
-  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C>
+export interface GroupMethods<C extends object, R extends object = {}> {
+  group(child: TestDefinition<C>): GroupSuite<C, R>
+  group(name: string, child: TestDefinition<C>): GroupSuite<C, R>
 }
-export declare class Test implements TargetStage<{}> {
-  setup<S>(create: () => S, dispose?: (ctx: Awaited<S>) => void | Promise<void>): TargetStage<Awaited<S>>
-  target<F extends AnyFn>(fn: F): TestBuilder<F, {}>
-  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, {}>
+export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
+  plan(): GroupPlan<R>
+}
+export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R> {
+  describe(name: string): TargetStage<C, R>
+  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>, dispose?: (ctx: Readonly<ExtendContext<C, Awaited<S>>>) => void | Promise<void>): TargetStage<ExtendContext<C, Awaited<S>>, R>
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R>
+  target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
+  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
+}
+export declare class Test<R extends object = {}> implements TargetStage<R, R> {
+  describe(name: string): TargetStage<R, R>
+  setup<S>(create: (ctx: Readonly<R>) => SetupReturn<S>, dispose?: (ctx: Readonly<ExtendContext<R, Awaited<S>>>) => void | Promise<void>): TargetStage<ExtendContext<R, Awaited<S>>, R>
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<R, R>
+  target<F extends AnyFn>(fn: F): TestBuilder<F, R, R>
+  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
+  group(child: TestDefinition<R>): GroupSuite<R, R>
+  group(name: string, child: TestDefinition<R>): GroupSuite<R, R>
 }
 
 /** 実行計画は値・参照・遅延評価する関数を保持する。 */
 export type ValuePlan<V, C> =
   | { readonly kind: 'value'; readonly value: V }
-  | { readonly kind: 'from-context'; readonly build: (ctx: C) => V }
+  | { readonly kind: 'from-context'; readonly build: (ctx: Readonly<C>) => V }
 export type TargetPlan<F extends AnyFn> =
   | { readonly kind: 'function'; readonly fn: F }
   | { readonly kind: 'method'; readonly object: object; readonly key: string; readonly fn: F }
-export interface SetupPlan<C> {
-  readonly create: () => C | Promise<C>
-  readonly dispose?: (ctx: C) => void | Promise<void>
+export interface SetupPlan<C = any, S extends object = any> {
+  readonly create: (ctx: Readonly<C>) => S | Promise<S>
+  readonly dispose?: (ctx: Readonly<ExtendContext<C, S>>) => void | Promise<void>
 }
 export type BehaviorPlan =
   | { readonly kind: 'returns' | 'resolves'; readonly value: unknown }
@@ -147,7 +168,7 @@ export type Assertions =
 export interface ExpectationPlan<C> {
   readonly kind: 'deferred'
   /** 元のexpectコールバックにctxと記述子ビルダーを渡す処理。targetの後に評価する。 */
-  readonly build: (ctx: C) => Assertions
+  readonly build: (ctx: Readonly<C>) => Assertions
 }
 export type ExecutableCase<F extends AnyFn, C> = {
   readonly name: string
@@ -162,14 +183,29 @@ export interface TodoCase {
   readonly name: string
   readonly mode: 'todo'
 }
-export interface TestPlan<F extends AnyFn = AnyFn, C = any> {
-  readonly [planBrand]: true
+export interface PlanBase<R extends object> {
+  readonly [planBrand]: (ctx: R) => void
   readonly version: 1
+  readonly setup: readonly SetupPlan[]
+  readonly mocks: readonly MockPlan[]
+}
+export interface SuitePlan<F extends AnyFn = AnyFn, C = any, R extends object = {}> extends PlanBase<R> {
+  readonly kind: 'test'
   readonly name: string
   readonly target: TargetPlan<F>
-  readonly setup: SetupPlan<C> | null
   readonly cases: readonly (ExecutableCase<F, C> | TodoCase)[]
 }
+export interface GroupPlan<R extends object = {}> extends PlanBase<R> {
+  readonly kind: 'group'
+  readonly name: string | null
+  readonly children: readonly GroupEntry[]
+}
+export interface GroupEntry {
+  readonly name: string | null
+  /** 子の要求型は階層内では隠す。取り出して単独実行はできない。 */
+  readonly plan: TestPlan<never>
+}
+export type TestPlan<R extends object = {}> = SuitePlan<AnyFn, any, R> | GroupPlan<R>
 export interface Failure {
   readonly phase: 'setup' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
   readonly message: string
@@ -182,14 +218,21 @@ export interface CaseResult {
   readonly failures: readonly Failure[]
 }
 export interface TestResult {
+  readonly kind: 'test'
   readonly name: string
   readonly status: 'passed' | 'failed'
   readonly cases: readonly CaseResult[]
 }
+export interface GroupResult {
+  readonly kind: 'group'
+  readonly name: string | null
+  readonly status: 'passed' | 'failed'
+  readonly children: readonly { readonly name: string | null; readonly result: TestResult | GroupResult }[]
+}
 export interface RunResult {
   readonly version: 1
   readonly status: 'passed' | 'failed'
-  readonly tests: readonly TestResult[]
+  readonly tests: readonly (TestResult | GroupResult)[]
 }
 export interface RunOptions { readonly forbidOnly?: boolean }
 export declare function run(plan: TestPlan | readonly TestPlan[], options?: RunOptions): Promise<RunResult>

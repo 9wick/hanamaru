@@ -19,7 +19,7 @@
 ## args / argsFrom
 
 `.args(...args)` は対象の引数をそのまま受け取ります。
-`.argsFrom(ctx => [...args])` はsetupの戻り値から引数タプルを作ります。
+`.argsFrom(ctx => [...args])` はそのケースの親から子までのsetupで用意したctxから引数タプルを作ります。
 
 ```ts
 .args(1, 2)
@@ -77,7 +77,7 @@ mockやspyの事前登録は不要で、別途importする補助関数もあり�
 ## 結果の期待を組み立てる時点
 
 expectのコールバックはtarget終了後に1回評価します。
-`e.ctx` はsetupが返した実際の値で、`e.result` と `e.error` は記述子を作るためのマッチャです。
+`e.ctx` はsetupを順に反映したctxで、`e.result` と `e.error` は記述子を作るためのマッチャです。
 対象が例外を投げた場合もresultの記述子は作れますが、実際の終了と合わなければ失敗します。
 コールバック自体のthrowはテストの失敗であり、targetに期待した例外として扱いません。
 

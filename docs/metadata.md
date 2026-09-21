@@ -1,7 +1,7 @@
 # 実行計画とmetadata
 
 hanamaruのmetadataは、テストの実行計画です。
-対象・準備・振る舞いの置き換え・引数・期待を、構造化した値として渡します。
+合成の階層・対象・準備・振る舞いの置き換え・引数・期待を、構造化した値として渡します。
 そのデータの用途は、受け取る側に委ねます。
 
 ## 取得と実行
@@ -24,25 +24,55 @@ const result = await run(plan)
 
 | 構造 | 保持するもの |
 |---|---|
-| TestPlan.version | 計画形式のバージョン |
-| TestPlan.name | describeの表示名。省略時は対象名 |
-| TestPlan.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
-| TestPlan.setup | createと任意のdispose。省略時はnull |
-| TestPlan.cases | 宣言順のケース |
+| TestPlan.version / kind | 計画形式のバージョンとtest / group |
+| TestPlan.name | describeの表示名。testでは省略時に対象名、groupではnull |
+| TestPlan.setup | そのノードに登録したcreateと任意のdisposeの配列。登録順、未登録なら空配列 |
+| TestPlan.mocks | そのノードの共通モック |
+| SuitePlan.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
+| SuitePlan.cases | 宣言順のケース |
+| GroupPlan.children | 合成した順の子。各要素はnameとplanを持つ |
+| GroupEntry.name | group(name, child)の説明。省略時はnull |
+| GroupEntry.plan | 子の計画。さらにグループでもよい |
 | Case.name / mode | ケース名とrun / only / skip / todo |
-| Case.mocks | 共通設定とケース上書きの解決後のモック |
+| Case.mocks | そのケースで登録したモック |
 | Case.args | 引数タプル、またはctxから組み立てる関数 |
 | Case.expect | 結果・例外のアサーションをctxから組み立てる処理。省略時はnull |
 | Case.calls | 呼び出し条件の記述子の配列。省略時は空配列 |
 
 各モックはobject・key・behaviorを持ちます。
 behaviorはreturns / resolvesと値、throws / rejectsと例外、callsFakeと関数のいずれかです。
-同じobject・keyへのモック設定は最後の振る舞い1件に解決します。
+同じスコープ内のobject・keyへのモック設定は最後の振る舞い1件に解決します。
+親と子の設定は別々に保持し、実行時に外側→内側→ケースの順で重ねます。
 呼び出し条件は複数あっても上書きせず、返された順に全て保持します。
 
 todoは実行本体を持たず、nameとmodeだけがあります。
 他のケースにはexpectかcallsの少なくとも一方が必要です。
-ケース名は表示名であり、一意性を要求しません。結果は計画・ケースと同じ順・同じ件数で返します。
+ケース名とグループ名は表示名であり、一意性を要求しません。
+結果は計画と同じ階層・順・件数で返すため、無名のグループや同名のケースも位置で対応します。
+
+## 合成した計画
+
+`TestPlan` は `kind: 'test'` のSuitePlanと、`kind: 'group'` のGroupPlanのunionです。
+各ノードがその場所のsetup・mockを保持し、子へ設定を書き込むことはありません。
+名前のないグループも構造として残ります。
+
+```ts
+import { registrations } from './groups.test.ts'
+
+const plan = registrations.plan()
+for (const entry of plan.children) {
+  const child = entry.plan
+  if (child.kind === 'group') {
+    // child.setup、child.mocks、child.childrenを取得できる。
+  } else {
+    // child.target、child.casesを取得できる。
+  }
+}
+```
+
+親ctxを要求する子もplanを取得できますが、runに渡せるのは親ctxを要求しないルート計画です。
+この区別は型上の契約であり、型引数から実行時のctxスキーマを生成するものではありません。
+階層から取り出した子の計画は要求型を隠しているため、そのまま単独でrunへ渡せません。
 
 ## 呼び出し条件は定義時に構造化する
 
@@ -106,12 +136,12 @@ expectは静的な値だけを使う場合も遅延扱いです。
 | itのコールバック | 定義時 | ケースの構造に展開 |
 | mockの振る舞いコールバック | 定義時 | behaviorに展開 |
 | expectCallsのコールバック | 定義時 | callsの記述子に展開 |
-| setup.create | ケース開始時 | 関数参照 |
+| setup.create | ケース開始時、親から子へ、同じ階層では登録順 | ctxから追加フィールドを作る関数参照 |
 | argsFrom | targetの前 | kind: from-contextとbuild関数 |
 | expectのコールバック | targetの後 | kind: deferredとbuild関数 |
 | callsFakeの関数 | 対象メソッドの呼び出し時 | 関数参照 |
 | toSatisfyの述語 | アサーション評価時 | 記述子内の関数参照 |
-| setup.dispose | ケースの後始末 | 関数参照 |
+| setup.dispose | 成功済みsetupの逆順で後始末 | 対応するcreate直後のctxを受ける関数参照 |
 
 expectとexpectCallsのチェーン上の順序は、この評価時点を変えません。
 
