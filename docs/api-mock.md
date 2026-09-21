@@ -1,294 +1,120 @@
 # モック
 
-hanamaru のモックは 2 つの面を持つ。
+モックは「登録先」「振る舞い」「呼び出しの期待」の3つからなる。
+その構造を実行計画に保持し、実行時だけ対象メソッドを差し替える。
 
-- **定義する**: `.mock(obj, 'method', m => behavior)` で依存の振る舞いを宣言する
-- **検証する**: `.expect()` の中で `e.mock(obj, 'method')` から呼ばれ方を調べる
-
-この 2 つが同じ `(obj, key)` の組で対応しているのが hanamaru のモックの基本形である。
+## 名前で登録・参照する
 
 ```ts
-new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))   // 定義
-  .mock(mailService, 'send', m => m.resolves(undefined))         // 定義
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),   // 検証
-    ])
-  )
+.mock('save', userRepository, 'save', m => m.resolves({ id: 'u1', name: 'Alice' }))
+.mock('send', mailService, 'send', m => m.resolves(undefined))
 ```
 
-## モックを定義する
-
-### `.mock(obj, key, def)`
+第1引数は登録名、第2引数はオブジェクト、第3引数は存在が保証された関数型の文字列キー。
+第4引数は振る舞いの記述を返すコールバック。
 
 ```ts
-mock<O, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<O, K>): TestBuilder<F, [...M, { obj: O; key: K }], C>
+.expect(e => [
+  e.mock('save').calledOnceWith({ name: 'Alice' }),
+  e.mock('send').calledOnceWith({ id: 'u1', name: 'Alice' }),
+])
 ```
 
-`obj` の `key` プロパティを、第3引数のコールバックが宣言した振る舞いに差し替える。
+登録した名前だけが参照できる。同じ構造の別オブジェクトを検証時に渡すAPIはない。
+元のメソッド型が登録名に対応し、戻り値・呼び出し引数の型を制約する。
 
-第2引数に渡せるのは `obj` の**関数型のプロパティのキーのみ**。非関数プロパティや存在しないキーは型エラーになる。
+名前は空でない文字列リテラル。同じ名前を再登録することは型エラー。
+異なる名前で同じ `(object, key)` を登録した場合も、実際の差し替え先が重なるため定義エラーにする。
+文脈由来の登録先が重なる場合は、実行時のbinding段階で検出する。
 
-`Test` レベルと `it` レベルのどちらでも同じ形で書ける。
-`Test` レベルに書けば全ケース共通の前提になり、`it` レベルに書けばそのケースだけの前提になる。
-`it` レベルでの書き方と上書きの規則は [it の中のビルダー](./api-it.md) を参照。
-
-第3引数のコールバックが受け取る `m` から選べる振る舞いは次の 5 つで、これがすべてである。
-
-| 記法 | 意味 |
-|---|---|
-| `m.returns(v)` | 同期的に `v` を返す |
-| `m.resolves(v)` | `Promise.resolve(v)` を返す |
-| `m.throws(e)` | 同期的に `e` を投げる |
-| `m.rejects(e)` | `Promise.reject(e)` を返す |
-| `m.callsFake(fn)` | `fn` を代わりに呼ぶ |
-
-### `m.returns(v)`
-
-同期的に `v` を返す。
-
-差し替える対象が同期関数のときに使う。`v` の型は対象メソッドの `ReturnType` に縛られる。
-
-このページの共通の例には同期メソッドが1つも無いため、同期の振る舞いを説明する箇所では
-補助的なオブジェクト `clock` を使う。
+## 文脈から登録先を得る
 
 ```ts
-declare const clock: { now(): number }
-
-new Test()
-  .target(createUser)
-  .mock(clock, 'now', m => m.returns(1700000000000))
+.mockFrom('save', ctx => ctx.repository, 'save', m => m.resolves({ id: 'u1', name: 'Alice' }))
 ```
 
-`now()` の戻り値型は `number` なので、`m.returns('now')` のような書き方は型エラーになる。
+selectorはそのケースのsetup後に1回実行する。
+計画にはselectorとキーを保持する。計画作成のためにselectorを先行実行しない。
+型契約の `NoInfer` は、selectorの戻り値から先にオブジェクト型を確定させるために使う。
 
-### `m.resolves(v)`
+## 振る舞い
 
-`Promise.resolve(v)` を返す。
+| API | 呼び出されたときの動作 | 型 |
+|---|---|---|
+| `returns(value)` | 値をそのまま返す | `ReturnType<F>` |
+| `resolves(value)` | 値をresolveするPromiseを返す | 非同期メソッドの `Awaited<ReturnType<F>>` |
+| `throws(error)` | 同期的にthrowする | `unknown` |
+| `rejects(error)` | rejectするPromiseを返す | 非同期メソッドだけ |
+| `callsFake(label, fn)` | 渡した関数を呼ぶ | 元のメソッドと同じシグネチャ |
 
-非同期メソッドの成功系を宣言するときに使う。`v` の型は対象メソッドの `Awaited<ReturnType>` に縛られる。
-`Promise<User>` を返すメソッドなら、渡すのは `Promise<User>` ではなく `User` である。
+同期メソッドに `resolves` / `rejects` は指定できない。
+Promiseを返すメソッドに `returns(Promise.resolve(...))` を指定することは型として可能だが、
+通常は呼び出しごとにPromiseを作る `resolves` / `rejects` を使う。
+`throws` は戻り値型にかかわらず使える。Promiseを返すという型でも、同期throwする関数は表現できる。
 
 ```ts
-.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-.mock(mailService, 'send', m => m.resolves(undefined))
+.mock('find', repository, 'find', m => m.callsFake('u1だけ存在する', async id =>
+  id === 'u1' ? { id: 'u1', name: 'Alice' } : null))
 ```
 
-`mailService.send` は `Promise<void>` を返すため、`m.resolves(undefined)` と書く。
+`callsFake` でも呼び出しは記録される。関数には呼び出し時の `this` と引数を渡す。
 
-型エラーになる例。
+## 文脈から振る舞いを作る
 
 ```ts
-.mock(userRepository, 'save', m => m.resolves({ nope: 1 }))
-//                                              ^^^^ 型エラー: User に nope は無い
+.mock('save', repository, 'save', m =>
+  m.resolvesFrom('fixtureのユーザー', ctx => ctx.user))
 ```
 
-### `m.throws(e)`
+`returnsFrom(label, get)` / `resolvesFrom(label, get)` は、setup後、モック適用前に1回値を作る。
+そのケースで複数回呼ばれたときは同じ値を返す。
+`callsFakeFrom(label, ctx => fn)` はその段階でfake関数を作り、呼び出しごとにその関数を実行する。
 
-同期的に `e` を投げる。
+静的な `returns` / `resolves` にオブジェクトを渡すと、ケース間でも同じ参照を使う。
+対象がそれを書き換える可能性があるなら、setupまたは `*From` でケースごとに作る。
+メソッドの復元と、渡したオブジェクトの状態の復元は別である。
 
-差し替える対象が同期関数で、その中で例外が起きる状況を作りたいときに使う。
-
-```ts
-declare const clock: { now(): number }
-
-.mock(clock, 'now', m => m.throws(new Error('clock unavailable')))
-```
-
-target がこの例外をそのまま外に漏らすなら、`.expect()` では `e.error` で受ける。
-target が内部で握って別の結果を返すなら `e.result` で受ける。
-`e.result` と `e.error` の使い分けは [アサーション](./api-expect.md) を参照。
-
-### `m.rejects(e)`
-
-`Promise.reject(e)` を返す。
-
-非同期メソッドの失敗系を宣言するときに使う。これまでの例では、保存の失敗を作るのに使っている。
+## ケースで上書きする
 
 ```ts
-.it('保存に失敗したら通知しない', t => t
-  .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
+.it('保存失敗', t => t
+  .override('save', m => m.rejects(new Error('save failed')))
   .args({ name: 'Alice' })
-  .expect(e => [
-    e.error.toBeInstanceOf(Error),
-    e.mock(mailService, 'send').notCalled(),
-  ])
-)
+  .expectError(e => [
+    e.error.toThrow('save failed'),
+    e.mock('send').notCalled(),
+  ]))
 ```
 
-`userRepository.save` が reject すると `createUser` は `mailService.send` に到達しない。
-それを `notCalled()` で確かめている。
+`override` は既存の登録先・メソッド型を維持し、振る舞いだけを変える。
+未登録名へのoverrideや、元のメソッドと合わない戻り値は型エラーになる。
+計画の各ケースには、共通登録と上書きを解決したモック一覧が入る。
 
-### `m.callsFake(fn)`
-
-`fn` を代わりに呼ぶ。
-
-上の 4 つは「何が返るか」を固定するが、`callsFake` は**引数を受け取って動的に振る舞いを変えたい**ときに使う。
-呼び出しごとに違う値を返したい、引数に応じて成功と失敗を切り替えたい、といった場合が該当する。
-
-```ts
-.mock(userRepository, 'find', m => m.callsFake(async id =>
-  id === 'u1' ? { id: 'u1' } : null
-))
-```
-
-`fn` には対象メソッドと同じシグネチャの関数を渡す。
-固定値を返すだけなら `m.returns()` / `m.resolves()` の方が意図が読み取りやすい。
-
-`callsFake` を使った場合も呼び出しの記録は残るため、`e.mock()` での検証はそのまま使える。
-
-## モックを検証する
-
-### `e.mock(obj, key)`
-
-```ts
-mock<O, K extends RegKeyOrError<M, NoInfer<O>> & FnKeys<O>>(obj: O, key: K): MockAssertions<MethodOf<O, K>>
-```
-
-`.expect()` のコールバックが受け取る `e` から、登録済みのモックの呼ばれ方を調べる。
-返るのは記述オブジェクトを作るためのマッチャ群で、次の 4 つがすべてである。
+## 呼ばれ方を検証する
 
 | マッチャ | 意味 |
 |---|---|
-| `calledTimes(n)` | ちょうど n 回呼ばれたこと |
-| `notCalled()` | 一度も呼ばれていないこと |
-| `calledWith(...args)` | その引数で呼ばれた回が1回以上あること |
-| `calledOnceWith(...args)` | ちょうど1回、その引数で呼ばれたこと |
+| `calledTimes(n)` | 全呼び出し回数がn回 |
+| `notCalled()` | 全呼び出し回数が0回 |
+| `calledWith(...args)` | 指定した引数と深く等しい呼び出しが1回以上ある |
+| `calledOnceWith(...args)` | 全呼び出し回数が1回で、その引数が深く等しい |
+| `calledWithFrom(label, get)` | ctxから引数タプルを得て `calledWith` |
+| `calledOnceWithFrom(label, get)` | ctxから引数タプルを得て `calledOnceWith` |
 
-### `calledTimes(n)`
+`calledTimes` のnは0以上の整数。負数・小数は定義エラーになる。
+引数タプルは登録メソッドの `Parameters<F>` に制約される。
+期待引数の `*From` はtarget終了後、アサーション評価時に呼ぶ。
 
-呼び出し回数がちょうど `n` 回であることを記述する。引数は見ない。
+`calledOnceWith` は一致した呼び出しだけを数えない。
+別の引数で追加の呼び出しがあれば失敗し、失敗表示には全回数と実際の引数を出す。
 
-```ts
-e.mock(mailService, 'send').calledTimes(1)
-e.mock(userRepository, 'find').calledTimes(2)
-```
+## 差し替えの範囲
 
-「何回呼ばれたか」だけが関心事のときに使う。引数まで見たいなら `calledWith` 系を併用する。
+差し替えるのはオブジェクトのプロパティだけ。モジュールモックは提供しない。
+対象は依存を `repository.save(...)` のように、実行時にプロパティ経由で呼ぶ必要がある。
+差し替え前に取り出した関数参照や、直接importされた関数の呼び出しは置き換わらない。
 
-### `notCalled()`
-
-一度も呼ばれていないことを記述する。
-
-```ts
-e.mock(mailService, 'send').notCalled()
-```
-
-「失敗したらこの副作用は起きない」という性質を書くときに使う。
-`calledTimes(0)` と同じ状況を指すが、意図が読み取りやすいので `notCalled()` を使う。
-
-### `calledWith(...args)`
-
-**その引数で呼ばれた回が1回以上ある**ことを記述する。
-
-```ts
-e.mock(userRepository, 'find').calledWith('u1')
-```
-
-`find` が `'u1'` と `'u2'` で合計 2 回呼ばれていても、`calledWith('u1')` は成立する。
-他の引数での呼び出しがあってもよく、回数も問わない。
-
-### `calledOnceWith(...args)`
-
-**ちょうど1回、その引数で**呼ばれたことを記述する。
-
-```ts
-e.mock(mailService, 'send').calledOnceWith({ id: 'u1' })
-```
-
-`calledWith` との違いは回数の扱いにある。
-
-| | 引数の一致 | 回数 |
-|---|---|---|
-| `calledWith(...args)` | その引数での呼び出しが 1 回以上 | 問わない |
-| `calledOnceWith(...args)` | その引数での呼び出し | ちょうど 1 回 |
-
-通知メールのように「二重送信が起きていないこと」まで含めて確かめたい副作用には `calledOnceWith` を使う。
-呼ばれていれば十分な場合は `calledWith` で足りる。
-
-### 引数の型
-
-`calledWith` / `calledOnceWith` に渡す引数は、対象メソッドの `Parameters` に型が縛られる。
-
-```ts
-e.mock(mailService, 'send').calledOnceWith({ id: 'u1' })   // send(user: User) なので OK
-e.mock(mailService, 'send').calledOnceWith({ id: 123 })    // 型エラー
-e.mock(mailService, 'send').calledOnceWith('u1')           // 型エラー
-```
-
-引数の数と順序も検査される。
-
-### 登録していないモックは型エラーになる
-
-`e.mock()` の第2引数の制約は、**そのケースまでに `.mock()` で登録されたキー**から作られる。
-登録していない `(obj, key)` を参照するとコンパイルエラーになる。
-
-```ts
-new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('...', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.mock(userRepository, 'find').calledTimes(1),
-      //                     ^^^^^^ 型エラー: find は登録していない
-      e.mock(mailService, 'send').notCalled(),
-      //     ^^^^^^^^^^^ 型エラー: mailService は一度も登録していない
-    ]))
-```
-
-これは hanamaru の差別化軸の1つで、「モックし忘れたまま検証だけ書いた」という誤りを実行前に潰す。
-仕組みと、この検出が効かない場合については [型推論](./type-inference.md) を参照。
-
-## モックの適用と復元
-
-モックは 1 ケースの実行手順の中で、決まった位置で適用され、決まった位置で戻される。
-
-1. `.setup()` を実行してコンテキストを得る
-2. **モックを適用する**（`Test` レベル → `it` レベルの順。同じ `(obj, key)` は後勝ち）
-3. `.args()` / `.argsFrom()` で引数を決める
-4. target を呼ぶ。戻り値が Promise なら await する
-5. `.expect()` のアサーションを全部評価する
-6. **`finally` でモックを元に戻し**、`.setup()` に後始末の関数を渡していればそれを呼ぶ
-
-手順 6 は手順 4 や 5 が失敗しても必ず実行される。target が例外を投げても、アサーションが落ちても、
-プロパティは元の値に戻る。**前のケースのモックが次のケースに漏れることはない。**
-
-モックはケースごとに適用されるため、ケース間で呼び出し記録が混ざることもない。
-`calledTimes(1)` はそのケースの中で 1 回という意味であり、ファイル全体での合計ではない。
-
-実行順序の全体像は [実行セマンティクス](./semantics.md) を参照。
-
-## モジュールモックは持たない
-
-hanamaru が差し替えるのは**オブジェクトのプロパティ**だけである。
-モジュール単位でモックする API は存在しない。
-
-このページの例が動くのは、`createUser` が依存を `userRepository.save(...)` という
-プロパティアクセスの形で呼んでいるからである。
-
-```ts
-export async function createUser(input: CreateUserInput): Promise<User> {
-  const user = await userRepository.save(input)   // プロパティアクセスなので差し替えられる
-  await mailService.send(user)
-  return user
-}
-```
-
-逆に、依存が import した関数として直接呼ばれている場合は差し替えられない。
-
-```ts
-import { save } from './repository.ts'
-
-export async function createUser(input: CreateUserInput): Promise<User> {
-  return await save(input)   // hanamaru では差し替えられない
-}
-```
-
-この場合は、依存をオブジェクトのプロパティとして受け渡す形に変える必要がある。
-**DI されていない依存はモックできない**、というのが hanamaru の制約である。
-
-この割り切りの背景と、他に何ができないのかは [制約](./limitations.md) を参照。
+書き換え不能なプロパティ、アクセサ、非関数の実体は実行時にエラーにする。
+適用したプロパティはfinallyで元のdescriptorへ戻す。
+継承されたメソッドなら、作成したown propertyを削除して継承状態に戻す。
+詳細は[実行セマンティクス](./semantics.md)に定める。

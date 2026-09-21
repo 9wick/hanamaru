@@ -1,255 +1,112 @@
 # 実行セマンティクス
 
-hanamaru でテストを書いたとき、実際に何がどの順で起きるのかを定めます。
+このページは `run(plan)` が実行する契約を定める。
+APIの実装はまだなく、ここに書いた実行時保証は実装・検証対象である。
 
-`new Test()` はテストを実行しません。実行可能なデータ構造を組み立てて返すだけです。
-そのデータ構造を実際に走らせるのが、ここで説明する実行セマンティクスです。
+## 定義と実行の境界
 
-関連: [概念](./concepts.md) / [CLI](./cli.md) / [型推論](./type-inference.md)
+`new Test()` のチェーンはビルダーコールバックを評価し、定義を組み立てる。
+`.plan()` が `TestPlan` を返し、`run()` がその計画を実行する。
+setup・target・遅延値・fake・述語は、定義とplan取得では実行しない。
+テストモジュールのトップレベルコードは通常のimportと同様に動く。
 
-## テストの発見
-
-CLI は次の順でテストを集めます。
-
-1. 対象ファイルを glob で集める（コマンドライン引数、なければ設定ファイルの `include`）
-2. 各ファイルを `import()` する
-3. export されている値のうち、`Test` インスタンスを集める
-
-ここで重要なのは 3 番目です。**export されていない `Test` は実行されません。**
+## 計画の受付
 
 ```ts
-// src/user.test.ts
-import { Test } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-// export されているので実行される
-export const users = new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.result.toEqual({ id: 'u1' }),
-      e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ])
-  )
-
-// export されていないので実行されない
-const draft = new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u2' }))
-  .it('書きかけ', t => t.args({ name: 'Bob' }).expect(e => [e.result.toEqual({ id: 'u2' })]))
+const result = await run(tests.plan())
+const results = await run([first.plan(), second.plan()])
 ```
 
-この規則には意図があります。テスト定義を**値として再利用できるようにするため**です。
+単一計画または計画配列を受け取る。配列は渡された順、ケースは宣言順に直列実行する。
+結果の `tests` も計画の順に並び、各ケースは計画内のIDに対応する。
 
-`Test` のすべてのメソッドはイミュータブルで、新しいビルダーを返します。
-そのため、export したテスト定義を別ファイルから import して派生を作れます。
+version、計画の構造、重複ID・重複登録等を実行前に検査する。
+空の計画配列は受付エラー。受付エラーではsetupを開始せずPromiseをrejectする。
+ケース中の失敗は結果に残し、他の実行対象ケースを続ける。
 
-```ts
-// src/user-with-db.test.ts
-import { users } from './user.test.ts'
+同一プロセスで複数の `run()` が重ならないようにし、重複呼び出しは受付エラーにする。
+オブジェクトのプロパティ差し替え中に別の実行を混ぜない。
 
-export const usersWithDb = users.setup(() => ({ db: makeTestDb() }))
-```
+## 1ケースの手順
 
-「ファイルの中に書いたものが全部走る」ではなく「export したものが走る」という規則にすることで、
-組み立て途中のビルダーや、他所で組み合わせるための部品を、同じファイルに置いておけます。
+1. **setup**: createを呼び、Promiseならawaitしてctxを得る。省略時は新しい `{}`。
+2. **binding**: targetFrom、mockFromのselector、モックの振る舞いの `*From` を評価する。
+3. **mock**: 登録先を検査し、元のプロパティdescriptorを退避してモックを適用する。
+4. **args**: 静的な引数を使うか、argsFromにctxを渡して引数タプルを得る。
+5. **target**: 対象を呼び、Promise/thenableならawaitする。戻り値か例外をタグ付きで保持する。
+6. **assertion**: 期待した終了の種類を照合し、各アサーションをすべて評価する。
+7. **cleanup**: finallyでモックを逆順に復元し、setup.disposeがあればctxを渡してawaitする。
 
-## 1ケースの実行手順
+selectorとモックの値factoryはモック適用前に実行する。fixtureを構築したり対象を取得したりする処理から、
+既にモックされた依存を呼ぶことはない。setup内の呼び出しはモックの検証対象にもならない。
 
-1つの `.it()` について、次の 6 ステップが順に実行されます。
+呼び出し記録はモック適用直後に開始し、targetの終了時までを対象とする。
+argsFrom内でモックを呼んだ場合も記録されるので、argsFromは引数を組み立てる処理に留める。
+アサーションと後始末中の呼び出しは検証対象に含めない。
 
-1. **`.setup()` を実行してコンテキストを得る**
-   `.setup()` を呼んでいない場合、コンテキストは `{}` です。
-   第1引数の関数が返した値がそのままコンテキストになります。
-   `.setup()` の第2引数に後始末の関数を渡していた場合、その関数はステップ 6 でコンテキストを受け取って呼ばれます。
+## 正常終了・例外の期待
 
-2. **モックを適用する**
-   `Test` レベルの `.mock()` を先に、`it` レベルの `.mock()` を後に適用します。
-   同じ `(obj, key)` の組に対する宣言が両方にある場合は**後勝ち**、つまり `it` レベルが勝ちます。
+| 計画のoutcome | 実際 | 結果 |
+|---|---|---|
+| `return` | 正常終了 | resultとmockの条件を検証 |
+| `return` | throw / reject | 予期しない例外として失敗 |
+| `throw` | throw / reject | errorとmockの条件を検証 |
+| `throw` | 正常終了 | 例外が発生しなかったとして失敗 |
 
-3. **引数を決める**
-   `.args()` ならその値をそのまま使います。`.argsFrom()` なら、ステップ 1 で得たコンテキストを渡して
-   コールバックを呼び、返ってきたタプルを引数に使います。
+モックだけを検証していても、outcomeの検証を省略しない。
+`return undefined` と `throw undefined` は別の結果として扱う。
 
-4. **target を呼ぶ**
-   戻り値が Promise なら await します。`.target(obj, 'method')` の形で指定した場合、`this` は正しく束縛されます。
+終了の種類が合わないときも、取得済みの呼び出し記録に対するモックの検証は続ける。
+存在しないresult/errorを必要とするアサーションは評価不能として報告し、その述語を呼ばない。
+アサーション自身や期待値factoryのthrowは、そのアサーションの失敗になる。
 
-5. **`.expect()` のアサーションを全部評価する**
-   1つ落ちても後続を評価します。詳しくは[次の節](#アサーションは全部評価する)。
+## 途中の失敗
 
-6. **`finally` で後始末する**
-   モックを元のプロパティに戻し、`.setup()` の第2引数に後始末の関数を渡していればそれを呼びます。
+- setup失敗: targetを呼ばない。ctxを得られていないのでdisposeは呼べない。create側が途中まで取得した資源を片付ける。
+- binding失敗: targetを呼ばず、成功済みsetupのdisposeを呼ぶ。
+- mock適用途中の失敗: 適用済みの分だけ復元し、disposeを呼ぶ。
+- args失敗: targetを呼ばず、適用したモックを復元し、disposeを呼ぶ。
+- target失敗: outcomeに従って判定し、アサーション評価後に後始末する。
+- assertion失敗: 後続アサーションを評価し、後始末する。
+- 復元・dispose失敗: ケースを失敗にする。元の失敗も残し、残りの復元・disposeも試みる。
 
-### 後始末は必ず実行される
+setup・binding・mock・argsの失敗ではtargetの結果がないため、アサーション評価へ進まない。
+これらの失敗を `expectError` の成功として扱わない。
 
-ステップ 6 は `finally` で実行されます。
-ステップ 4 で target が例外を投げても、ステップ 5 でアサーションが失敗しても、必ず実行されます。
+## モックの適用・復元
 
-このため、**前のケースのモックが次のケースに漏れることはありません。**
-あるケースで `userRepository.save` を差し替えても、そのケースが終わった時点で元のメソッドに戻っています。
+各ケースには共通登録とoverrideを解決した実効モック一覧がある。その順で適用する。
+複数の登録が同じオブジェクトの同じキーへ解決されたら、適用前にエラーにする。
+`target(object, key)` と同じ登録先へのmockも、対象自体の差し替えになるためエラーにする。
 
-### setup はケースごとに1回
+書き換え可能なデータプロパティ、またはshadow可能な継承メソッドを対象にする。
+アクセサ、非関数、差し替え不能なプロパティはエラー。
+復元は元のdescriptorを戻す。継承メソッドをshadowした場合は追加したown propertyを削除する。
 
-`.setup()` は**各テストケースごとに1回**実行されます。ケース間で値は共有されません。
+復元保証は制御がfinallyへ到達する通常の実行についてのもの。
+プロセスの強制終了、targetが終わらない場合、外部コードがプロパティを凍結した場合まで成功を保証しない。
+復元に失敗した事実は隠さず結果に残す。
 
-```ts
-export const users = new Test()
-  .target(createUser)
-  .setup(() => ({ db: makeTestDb() }), ctx => ctx.db.close())
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('ケース A', t => t.args({ name: 'Alice' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
-  .it('ケース B', t => t.args({ name: 'Bob' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
-```
+## ケース間の独立性
 
-この例では `makeTestDb()` が 2 回呼ばれます。ケース A が `db` に書き込んだ内容は、ケース B には見えません。
-第2引数に渡した後始末の関数も同様にケースごとに呼ばれ、そのケースの `db` を受け取って閉じます。
-
-### モックの適用順
-
-`Test` レベル → `it` レベルの順に適用し、同じ `(obj, key)` は後勝ちです。
-
-```ts
-export const users = new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .it('保存に失敗したら通知しない', t => t
-    // Test レベルの userRepository.save を上書きする
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.error.toBeInstanceOf(Error),
-      e.mock(mailService, 'send').notCalled(),
-    ])
-  )
-```
-
-このケースでは、`userRepository.save` は `it` レベルの `rejects` が使われ、
-`mailService.send` は `Test` レベルの `resolves(undefined)` がそのまま使われます。
-
-## アサーションは全部評価する
-
-`.expect()` が返したアサーションは、**1つ落ちても後続を評価します**。失敗はまとめて報告されます。
-
-マッチャは呼ばれた時点では何も検証せず、記述を返すだけです。実際の評価はフレームワークが行います。
-だからこそ、配列に並んだすべての記述を独立に評価できます。
-
-```ts
-.expect(e => [
-  e.result.toEqual({ id: 'u1' }),
-  e.mock(mailService, 'send').calledOnceWith({ id: 'u1' }),
-])
-```
-
-最初の `e.result.toEqual` が失敗しても、次の `e.mock(...).calledOnceWith` は評価されます。
-
-理由は、**「結果も違うし通知も飛んでいない」が一度の実行で分かる**ようにするためです。
-最初の失敗で打ち切る方式だと、1つ直して再実行して次の失敗を見つける、という往復が必要になります。
-
-失敗したときの出力はこうなります。
-
-```console
-✗ 保存して通知する
-
-  2 件のアサーションが失敗しました
-
-  [1] result.toEqual
-      - expected: { id: 'u1' }
-      + actual:   { id: 'u2' }
-
-  [2] mock(mailService.send).calledOnceWith
-      expected: 1 回 { id: 'u1' } で呼ばれること
-      actual:   0 回
-```
-
-## result と error の関係
-
-`e.result` は target の戻り値（Promise なら await 済み）、`e.error` は target が投げた例外を指します。
-target が正常終了したか例外を投げたかによって、どちらかは存在しません。
-
-- **`e.result` を使ったのに target が例外を投げた** → 失敗。
-  「予期しない例外」として、元の例外とスタックトレースを添えて報告します。
-- **`e.error` を使ったのに target が正常終了した** → 失敗。
-  「例外が発生しませんでした」と報告します。
-
-```ts
-// target が例外を投げる場合
-.it('保存に失敗したら通知しない', t => t
-  .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-  .args({ name: 'Alice' })
-  .expect(e => [
-    e.error.toBeInstanceOf(Error),          // 例外を期待しているので正しい
-    e.mock(mailService, 'send').notCalled(),
-  ])
-)
-```
-
-同じ `.expect()` の中で `e.result` と `e.error` を両方使うことは可能ですが、
-target は正常終了と例外送出のどちらか一方しか起きないため、**必ずどちらかが失敗します**。
-
-```ts
-.expect(e => [
-  e.result.toEqual({ id: 'u1' }),   // 正常終了したならこちらが評価される
-  e.error.toBeInstanceOf(Error),    // 正常終了したならこちらが失敗する
-])
-```
-
-`e.result` と `e.error` を並べて書いても、どちらか一方が通る、という書き方にはなりません。
+setupを毎回呼び、呼び出し記録を毎回作り直す。
+同じ計画を再実行する場合も同様だが、静的に渡されたオブジェクトまで複製はしない。
+fixture factoryが共有オブジェクトを返したり、fakeが外の状態を変更したりすれば、その状態は共有される。
+独立性が必要な値はケースごとに生成する。
 
 ## only / skip / todo
 
-### only
+`run()` に渡された計画全体のどこかにonlyがあれば、onlyのケースだけ実行する。
+他のrunケースはskippedとして結果に残す。明示skipはskipped、todoはtodoのまま。
+いずれもsetup・targetを呼ばない。
 
-どこか1箇所でも `.only()` があれば、**全ファイル横断で** only のついたケースだけを実行します。
-他のケースは skip として報告されます。
+`run(plans, { forbidOnly: true })` はonlyを受付エラーにする。
+CLIの `--ci` はこの設定を使う。通常実行ではskip/todoだけでも失敗とはしない。
 
-```ts
-export const users = new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .only('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })])
-  )
-  .it('保存に失敗したら通知しない', t => t
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [e.error.toBeInstanceOf(Error)])
-  )
-```
+## 結果
 
-この状態で実行すると、「保存して通知する」だけが実行されます。
-「保存に失敗したら通知しない」は skip として報告されます。
-同じことが**他のファイルのケースにも及びます**。別ファイルの `.it()` もすべて skip になります。
+`RunResult` は計画順の `tests` を持ち、各 `TestResult` はケースID・status・失敗一覧を持つ。
+失敗には発生段階を記録し、設定・実行前のエラーと、ケースの失敗を混同しない。
+実際の戻り値・例外の全体を結果JSONへ埋め込むことは要求しない。失敗内容はmessageとして報告する。
 
-### skip と todo
-
-```ts
-  .skip('あとで直す', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })])
-  )
-  .todo('メールの本文を検証する')
-```
-
-- `.skip(name, t => ...)` は `.it()` と同じくコールバックを取ります。中身は書いてあるが実行しない、という状態です。
-- `.todo(name)` は**コールバックを取りません**。名前だけを登録します。まだ中身を書いていない、という状態です。
-
-## 終了コード
-
-| コード | 意味 |
-|---|---|
-| 0 | 全て成功（skip / todo のみでも 0） |
-| 1 | テストが1つ以上失敗 |
-| 2 | 設定エラー・ファイル読み込みエラー |
-
-skip や todo は失敗として扱いません。すべてのケースが skip でも終了コードは 0 です。
-
-テストファイルの import に失敗した場合や、設定ファイルが読めない場合は 2 になります。
-これはテストの失敗（1）とは区別されます。CI では両者を分けて扱えます。
-
-CI での使い方は [CLI](./cli.md) を参照してください。
+CLIの終了コードは[CLI](./cli.md)に定める。
