@@ -21,9 +21,9 @@ const users = new Test()
 
 | 段階 | 使える操作 |
 |---|---|
-| 対象・子を追加する前 | describe、setup、use、mock、target、group |
-| 対象を決めた後、ケースの前 | describe、setup、use、mock、it / only / skip / todo |
-| 最初のケースを追加した後 | it / only / skip / todo、plan |
+| 対象・子を追加する前 | describe、setup、use、mock、timeout、retry、target、group |
+| 対象を決めた後、ケースの前 | describe、setup、use、mock、timeout、retry、it / each / only / skip / todo |
+| 最初のケースを追加した後 | it / each / only / skip / todo、plan |
 | 最初のgroupを追加した後 | group、plan |
 
 対象は一度決めたら固定します。最初のケース・group以降は共通設定も固定します。
@@ -74,11 +74,18 @@ const tests = new Test()
 関連するテストをまとめ、共通設定の範囲を作ります。完成済みのテストまたはグループを渡します。
 名前は任意で、一意性も要求しません。
 `group(name, child)` の名前はその場所の見出しであり、元の子のdescribeを変更しません。
-親のmock・setup・useは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
+親のmock・setup・use・timeout・retryは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
 同じ子を別の親や同じ親の複数箇所へ合成することもでき、それぞれ独立した実行箇所になります。
 
 子は元のctxの型を保ちます。親のctxが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
 親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](./grouping.md)を参照してください。
+
+## timeout / retry
+
+`.timeout(ms)` と `.retry(count)` はtargetの前後に設定でき、groupにも引き継がれます。
+内側で明示した項目だけを上書きし、各ケースのtでも変更できます。最初のケース・group以降は共通設定を固定します。
+既定値はtimeoutが5,000ms、retryが0です。
+[timeoutとretry](./execution-options.md)に設定の解決順・表示・停止保証を記載しています。
 
 ## setup
 
@@ -106,7 +113,7 @@ new Test()
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-各ケースは新しい `{}` から始め、親から子の順にsetup・useを実行します。
+各ケースの各試行は新しい `{}` から始め、親から子の順にsetup・useを実行します。
 最終的なctxがargsFromとe.ctxに渡ります。setup・use・mockは最初のケース・groupより前に登録します。
 ctxのフィールドは読み取り専用ですが、フィールドが参照するオブジェクト自体は共有します。
 
@@ -135,7 +142,7 @@ nextに渡したフィールドの型が、middlewareから返す完了値を通
 追加がなければ `return await next()` と書けます。値を渡すだけならsetupも使えます。
 
 setupとuseは登録順に実行し、nextは後続の準備・対象・期待の検証・復元を囲みます。
-グループでも各ケースごとに呼び、後処理は内側から外側へ戻ります。
+グループでも各試行ごとに呼び、後処理は内側から外側へ戻ります。
 finallyで後始末する場合は `return await next(...)` として、完了を待ってから片付けます。
 nextの未呼び出し・複数回・待機漏れは実行時に検査します。
 詳しくは[middleware](./middleware.md)と[実行セマンティクス](./semantics.md)を参照してください。
@@ -167,6 +174,13 @@ todoは名前だけを受け取ります。名前の一意性は要求しませ�
 
 実行器に渡す計画全体にonlyがあればonlyだけを実行します。skipとtodoではsetup・use・targetを呼びません。
 詳細は[it ビルダー](./api-it.md)と[実行セマンティクス](./semantics.md)を参照してください。
+
+## each
+
+`each(name, rows, body)` で行ごとのケースを追加します。
+bodyは `(t, row) => ...` の形で、tの操作はitと同じです。eachの後にitや別のeachを続けられます。
+行から引数と期待値の型を検査し、最初のeach以降は共通設定を固定します。
+[each](./each.md)にそのまま使える例と、行名・位置・実行の契約があります。
 
 ## plan
 

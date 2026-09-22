@@ -34,6 +34,11 @@ export type Behavior<F extends AnyFn> = BehaviorPlan & {
   readonly [behaviorBrand]: (fn: F) => F
 }
 export interface BehaviorBuilder<F extends AnyFn> {
+  returnsOnce(value: ReturnType<F>): BehaviorBuilder<F>
+  resolvesOnce(value: ReturnType<F> extends PromiseLike<unknown> ? Awaited<ReturnType<F>> : never): BehaviorBuilder<F>
+  throwsOnce(error: unknown): BehaviorBuilder<F>
+  rejectsOnce(error: ReturnType<F> extends PromiseLike<unknown> ? unknown : never): BehaviorBuilder<F>
+  callsFakeOnce(fn: F): BehaviorBuilder<F>
   returns(value: ReturnType<F>): Behavior<F>
   resolves(value: ReturnType<F> extends PromiseLike<unknown> ? Awaited<ReturnType<F>> : never): Behavior<F>
   throws(error: unknown): Behavior<F>
@@ -58,6 +63,7 @@ export interface CallMatchers<F extends AnyFn> {
   notCalled(): CallAssertion
   calledWith(...args: Parameters<F>): CallAssertion
   calledOnceWith(...args: Parameters<F>): CallAssertion
+  calledNthWith(n: number, ...args: Parameters<F>): CallAssertion
 }
 /** 呼び出しは行わず、メソッドの呼び出し条件を記述する。 */
 export interface CallBuilder {
@@ -70,12 +76,12 @@ export interface Expect<F extends AnyFn, C> {
 }
 export type CallExpectations = readonly [CallAssertion, ...CallAssertion[]]
 export type CallsBuilder = (call: CallBuilder) => CallExpectations
-export interface ItBuilder<F extends AnyFn, C> {
+export interface ItBuilder<F extends AnyFn, C> extends ExecutionSettings<ItBuilder<F, C>> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, C>
   args(...args: Parameters<F>): ItArgs<F, C>
   argsFrom(build: (ctx: Readonly<C>) => Parameters<F>): ItArgs<F, C>
 }
-export interface ItArgs<F extends AnyFn, C> {
+export interface ItArgs<F extends AnyFn, C> extends ExecutionSettings<ItArgs<F, C>> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItArgs<F, C>
   expect(build: (e: Expect<F, C>) => Assertions): ItExpected
   expectCalls(build: CallsBuilder): ItCalls<F, C>
@@ -87,6 +93,7 @@ export interface ItCalls<F extends AnyFn, C> extends ItDone {
   expect(build: (e: Expect<F, C>) => Assertions): ItDone
 }
 export interface CaseMethods<F extends AnyFn, C, R extends object = {}> {
+  each<const Row>(name: string | ((row: NoInfer<Row>) => string), rows: readonly Row[], body: (t: ItBuilder<F, C>, row: NoInfer<Row>) => ItDone): Suite<F, C, R>
   it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
   only(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
   skip(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
@@ -95,7 +102,7 @@ export interface CaseMethods<F extends AnyFn, C, R extends object = {}> {
 export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, TestDefinition<R> {
   plan(): SuitePlan<F, C, R>
 }
-export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R> {
+export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, ExecutionSettings<TestBuilder<F, C, R>> {
   describe(name: string): TestBuilder<F, C, R>
   setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TestBuilder<F, ExtendContext<C, Awaited<S>>, R>
   use<S extends object>(middleware: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
@@ -108,7 +115,7 @@ export interface GroupMethods<C extends object, R extends object = {}> {
 export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
   plan(): GroupPlan<R>
 }
-export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R> {
+export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R>, ExecutionSettings<TargetStage<C, R>> {
   describe(name: string): TargetStage<C, R>
   setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TargetStage<ExtendContext<C, Awaited<S>>, R>
   use<S extends object>(middleware: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
@@ -117,6 +124,8 @@ export interface TargetStage<C extends object, R extends object = {}> extends Gr
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
 }
 export declare class Test<R extends object = {}> implements TargetStage<R, R> {
+  timeout(ms: number): TargetStage<R, R>
+  retry(count: number): TargetStage<R, R>
   describe(name: string): TargetStage<R, R>
   setup<S>(create: (ctx: Readonly<R>) => SetupReturn<S>): TargetStage<ExtendContext<R, Awaited<S>>, R>
   use<S extends object>(middleware: Middleware<R, S>): TargetStage<ExtendContext<R, S>, R>
@@ -125,6 +134,28 @@ export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
   group(child: TestDefinition<R>): GroupSuite<R, R>
   group(name: string, child: TestDefinition<R>): GroupSuite<R, R>
+}
+
+export interface ExecutionSettings<Self> {
+  timeout(ms: number): Self
+  retry(count: number): Self
+}
+export interface ExecutionConfig {
+  readonly timeout?: number
+  readonly retry?: number
+}
+export interface ResolvedExecutionConfig {
+  readonly timeout: number
+  readonly retry: number
+}
+export interface SourceLocation {
+  readonly file: string
+  readonly line: number
+  readonly column: number
+}
+export interface RowPlan {
+  readonly index: number
+  readonly value: unknown
 }
 
 /** 実行計画は値・参照・遅延評価する関数を保持する。 */
@@ -143,10 +174,15 @@ export interface MiddlewarePlan<C = any, S extends object = any> {
   readonly run: Middleware<C, S>
 }
 export type StepPlan = SetupPlan | MiddlewarePlan
-export type BehaviorPlan =
+export type BehaviorAction =
   | { readonly kind: 'returns' | 'resolves'; readonly value: unknown }
   | { readonly kind: 'throws' | 'rejects'; readonly error: unknown }
   | { readonly kind: 'callsFake'; readonly fn: AnyFn }
+export type BehaviorPlan = BehaviorAction | {
+  readonly kind: 'sequence'
+  readonly once: readonly [BehaviorAction, ...BehaviorAction[]]
+  readonly fallback: BehaviorAction
+}
 export interface MockPlan {
   readonly object: object
   readonly key: string
@@ -179,6 +215,7 @@ export type CallAssertion = {
     | { readonly matcher: 'calledTimes'; readonly count: number }
     | { readonly matcher: 'notCalled' }
     | { readonly matcher: 'calledWith' | 'calledOnceWith'; readonly args: readonly unknown[] }
+    | { readonly matcher: 'calledNthWith'; readonly n: number; readonly args: readonly unknown[] }
 }
 export type Assertion = ResultAssertion | ErrorAssertion
 export type Assertions =
@@ -192,6 +229,9 @@ export interface ExpectationPlan<C> {
 export type ExecutableCase<F extends AnyFn, C> = {
   readonly name: string
   readonly mode: 'run' | 'only' | 'skip'
+  readonly origin: SourceLocation
+  readonly row: RowPlan | null
+  readonly config: ExecutionConfig
   readonly mocks: readonly MockPlan[]
   readonly args: ValuePlan<Parameters<F>, C>
 } & (
@@ -201,8 +241,12 @@ export type ExecutableCase<F extends AnyFn, C> = {
 export interface TodoCase {
   readonly name: string
   readonly mode: 'todo'
+  readonly origin: SourceLocation
+  readonly row: null
+  readonly config: ExecutionConfig
 }
 export interface PlanBase<R extends object> {
+  readonly config: ExecutionConfig
   readonly [planBrand]: (ctx: R) => void
   readonly version: 1
   readonly steps: readonly StepPlan[]
@@ -220,44 +264,113 @@ export interface GroupPlan<R extends object = {}> extends PlanBase<R> {
   readonly children: readonly GroupEntry[]
 }
 export interface GroupEntry {
+  readonly origin: SourceLocation
   readonly name: string | null
   /** 子の要求型は階層内では隠す。取り出して単独実行はできない。 */
   readonly plan: TestPlan<never>
 }
 export type TestPlan<R extends object = {}> = SuitePlan<AnyFn, any, R> | GroupPlan<R>
-export interface Failure {
-  readonly phase: 'setup' | 'middleware' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
+/** JSONにも同じ形で出す診断値。id/referenceは一つの診断値の中で対応する。 */
+export type DiagnosticKey =
+  | { readonly kind: 'string'; readonly value: string }
+  | { readonly kind: 'symbol'; readonly id: number; readonly description: string | null }
+export interface DiagnosticProperty {
+  readonly key: DiagnosticKey
+  readonly value: DiagnosticValue
+}
+export type DiagnosticValue =
+  | { readonly kind: 'undefined' | 'null' | 'hole' }
+  | { readonly kind: 'boolean'; readonly value: boolean }
+  | { readonly kind: 'string'; readonly value: string }
+  | { readonly kind: 'number'; readonly value: number | 'NaN' | 'Infinity' | '-Infinity' | '-0' }
+  | { readonly kind: 'bigint'; readonly value: string }
+  | { readonly kind: 'symbol'; readonly id: number; readonly description: string | null }
+  | { readonly kind: 'function'; readonly id: number; readonly name: string }
+  | { readonly kind: 'array'; readonly id: number; readonly items: readonly DiagnosticValue[]; readonly properties: readonly DiagnosticProperty[] }
+  | { readonly kind: 'object'; readonly id: number; readonly type: string; readonly properties: readonly DiagnosticProperty[]; readonly omitted: readonly string[] }
+  | { readonly kind: 'date'; readonly id: number; readonly value: string | null }
+  | { readonly kind: 'regexp'; readonly id: number; readonly source: string; readonly flags: string }
+  | { readonly kind: 'map'; readonly id: number; readonly entries: readonly (readonly [DiagnosticValue, DiagnosticValue])[] }
+  | { readonly kind: 'set'; readonly id: number; readonly values: readonly DiagnosticValue[] }
+  | { readonly kind: 'reference'; readonly id: number }
+  | { readonly kind: 'accessor'; readonly get: boolean; readonly set: boolean }
+  | { readonly kind: 'omitted'; readonly reason: string }
+export type ExecutionPhase = 'setup' | 'middleware' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
+export type AssertionReference = {
+  readonly index: number
+} & (
+  | { readonly source: 'expect'; readonly subject: 'result'; readonly matcher: ResultAssertion['check']['matcher'] }
+  | { readonly source: 'expect'; readonly subject: 'error'; readonly matcher: ErrorAssertion['check']['matcher'] }
+  | { readonly source: 'expectCalls'; readonly subject: 'call'; readonly key: string; readonly matcher: CallAssertion['check']['matcher'] }
+)
+export interface TargetOutcome {
+  readonly kind: 'return' | 'throw'
+  readonly value: DiagnosticValue
+}
+export type Failure = {
   readonly message: string
-  readonly assertionIndex?: number
-}
-export interface CaseResult {
-  readonly name: string
-  readonly status: 'passed' | 'failed' | 'skipped' | 'todo'
+} & (
+  | { readonly kind: 'assertion'; readonly phase: 'assertion'; readonly assertion: AssertionReference; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
+  | { readonly kind: 'outcome'; readonly phase: 'target'; readonly expected: 'return' | 'throw'; readonly actual: TargetOutcome }
+  | { readonly kind: 'execution'; readonly phase: ExecutionPhase; readonly cause: DiagnosticValue; readonly assertion?: AssertionReference }
+  | { readonly kind: 'timeout'; readonly phase: ExecutionPhase; readonly timeoutMs: number; readonly cleanup: 'complete' | 'incomplete' }
+)
+export type AssertionResult = {
+  readonly assertion: AssertionReference
+} & (
+  | { readonly status: 'passed' | 'failed'; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
+  | { readonly status: 'not-evaluated'; readonly reason: string }
+)
+export interface AttemptResult {
+  readonly attempt: number
+  readonly status: 'passed' | 'failed' | 'cancelled'
   readonly durationMs: number
+  readonly outcome: TargetOutcome | null
+  readonly assertions: readonly AssertionResult[]
   readonly failures: readonly Failure[]
+  readonly cleanup: 'complete' | 'incomplete'
 }
+export type CaseResult = {
+  readonly name: string
+  readonly origin: SourceLocation
+  readonly path: readonly number[]
+  readonly row: { readonly index: number; readonly value: DiagnosticValue } | null
+  readonly config: ResolvedExecutionConfig
+  readonly durationMs: number
+} & (
+  | { readonly attempts: readonly [AttemptResult, ...AttemptResult[]]; readonly notRun?: never }
+  | { readonly attempts: readonly []; readonly notRun: 'skipped' | 'todo' | 'cancelled' }
+)
 export interface TestResult {
   readonly kind: 'test'
   readonly name: string
-  readonly status: 'passed' | 'failed'
+  readonly path: readonly number[]
+  readonly status: 'passed' | 'failed' | 'cancelled'
   readonly cases: readonly CaseResult[]
 }
 export interface GroupResult {
   readonly kind: 'group'
   readonly name: string | null
-  readonly status: 'passed' | 'failed'
-  readonly children: readonly { readonly name: string | null; readonly result: TestResult | GroupResult }[]
+  readonly path: readonly number[]
+  readonly status: 'passed' | 'failed' | 'cancelled'
+  readonly children: readonly { readonly name: string | null; readonly origin: SourceLocation; readonly result: TestResult | GroupResult }[]
 }
 export interface RunResult {
   readonly version: 1
-  readonly status: 'passed' | 'failed'
+  readonly status: 'passed' | 'failed' | 'cancelled'
+  readonly reason: 'completed' | 'timeout' | 'interrupted' | 'cleanup-failed'
   readonly tests: readonly (TestResult | GroupResult)[]
 }
-export interface RunOptions { readonly forbidOnly?: boolean }
+export interface RunOptions {
+  readonly forbidOnly?: boolean
+  readonly failOnFlaky?: boolean
+}
 export declare function run(plan: TestPlan | readonly TestPlan[], options?: RunOptions): Promise<RunResult>
 export interface Config {
   readonly include?: readonly string[]
   readonly exclude?: readonly string[]
   readonly reporter?: 'pretty' | 'json'
+  readonly collectionTimeout?: number
+  readonly shutdownGrace?: number
 }
 export declare function defineConfig(config: Config): Config
