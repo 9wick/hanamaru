@@ -80,7 +80,7 @@ new Test().plan()
 // @ts-expect-error group names are strings when present.
 new Test().group(123, independent)
 // @ts-expect-error metadata structure is readonly.
-parent.plan().children.push({ name: null, plan: independent.plan() })
+parent.plan().children.push({ name: null, middleware: null, plan: independent.plan() })
 
 // Each setup receives the accumulated context; later fields replace earlier ones.
 new Test()
@@ -135,4 +135,41 @@ const result = await run(plan)
 for (const node of result.tests) {
   if (node.kind === 'group') expectType<readonly unknown[]>(node.children)
   else expectType<readonly unknown[]>(node.cases)
+}
+
+
+interface SharedServer { close(): Promise<void>; readonly port: number }
+declare function startServer(): Promise<SharedServer>
+
+const groupScopedChild = new Test<{ server: SharedServer }>()
+  .target((server: SharedServer) => server.port)
+  .it('group middlewareのctxを使う', t => t.argsFrom(ctx => [ctx.server])
+    .expect(e => [e.result.toBe(e.ctx.server.port)]))
+
+const groupedWithMiddleware = new Test()
+  .group(async (_, next) => {
+    const server = await startServer()
+    try {
+      return await next({ server })
+    } finally {
+      await server.close()
+    }
+  }, groupScopedChild)
+  .group('名前付き', async (_, next) => {
+    const server = await startServer()
+    try {
+      return await next({ server })
+    } finally {
+      await server.close()
+    }
+  }, groupScopedChild)
+run(groupedWithMiddleware.plan())
+
+// @ts-expect-error group middleware must supply the child's required context.
+new Test().group(async (_, next) => next({ other: true }), groupScopedChild)
+// @ts-expect-error named group middleware has the same context contract.
+new Test().group('不足', async (_, next) => next({ other: true }), groupScopedChild)
+
+for (const entry of groupedWithMiddleware.plan().children) {
+  if (entry.middleware) expectType<Function>(entry.middleware.run)
 }
