@@ -111,6 +111,12 @@ groupで関連するテストをまとめ、配下へ共通のmock・setup・use
 retryは失敗したケースだけを再試行し、各試行を結果に残します。
 [timeoutとretry](./docs/execution-options.md)に設定例と停止の保証を記載しています。
 
+## ケースは独立して実行できる
+
+各caseは、他のcaseが実行されたか、どの順序で実行されたかに依存しないものとして扱います。
+宣言順は表示・metadataの順序であり、case間の依存を表しません。setup・middleware・mock・ctx・呼び出し記録は各attemptで作り直します。
+将来のshuffle・並列実行・複数processへの配置でも意味が変わらないtestを基本にし、順序を持つ一連の操作は通常のcaseとは分けてflowとして扱う方針です。
+
 ## 準備と後始末を同じ場所に書く
 
 ```ts
