@@ -26,6 +26,18 @@ export const userCount = new Test()
 各試行で開き、期待の検証とモックの復元が終わってからcloseします。
 ケースが失敗してもfinallyを通ります。
 
+## lifetimeを名前で表す
+
+middlewareは資源のlifetimeをAPI上で明示します。
+
+| scope | lifetime |
+|---|---|
+| `perAttempt` | retryを含む各caseの各試行ごとにsetupし、その試行の終了時にcleanupする |
+
+将来の共有fixtureでは `perGroup`、実行processごとの `perProcess`、run全体の `perRun` を同じ `.use(scope, ...)` の形で追加できる設計を想定しますが、初版の公開APIには含めません。
+共有fixtureはsetup costを共有するためのlifetimeであり、case間の順序依存を許す仕組みではありません。
+順序依存が必要な一連の操作はflowの責務として分離します。
+
 ## ctxの型はnextから伝わる
 
 `next({ db, expected: 3 })` が返す完了値をmiddlewareから返すことで、後続のctxにdbとexpectedの型が伝わります。
