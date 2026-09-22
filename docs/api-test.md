@@ -121,6 +121,8 @@ ctxのフィールドは読み取り専用ですが、フィールドが参照�
 
 ## use
 
+初版では各attemptのlifetimeを明示して `use('perAttempt', middleware)` と書きます。
+
 ```ts
 new Test()
   .use('perAttempt', async (_, next) => {
@@ -137,10 +139,11 @@ new Test()
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-ケースの実行を囲むmiddlewareを登録します。定義時には実行しません。
+各ケースの各試行を囲むmiddlewareを登録します。定義時には実行しません。
 nextに渡したフィールドの型が、middlewareから返す完了値を通じて後続のctxへ伝わります。
 追加がなければ `return await next()` と書けます。値を渡すだけならsetupも使えます。
 
+`perAttempt` はretryの各試行ごとに新しく実行します。将来の共有fixture用scopeは同じuse APIへ追加できるよう、lifetimeを第一引数として公開します。
 setupとuseは登録順に実行し、nextは後続の準備・対象・期待の検証・復元を囲みます。
 グループでも各試行ごとに呼び、後処理は内側から外側へ戻ります。
 finallyで後始末する場合は `return await next(...)` として、完了を待ってから片付けます。
