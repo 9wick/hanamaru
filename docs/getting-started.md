@@ -130,7 +130,7 @@ export const addition = new Test()
 ```
 
 setupは各ケースの各試行で実行します。戻り値の型が `argsFrom` と `e.ctx` に伝わります。
-非同期setupも使えます。準備と後始末を同じ場所に書く場合は、[`use('perAttempt', ...)` のmiddleware](./middleware.md)で各試行を囲みます。
+非同期setupも使えます。準備と後始末を同じ場所に書く場合は、[`use(...)` のmiddleware](./middleware.md)で各試行を囲みます。
 共通設定は最初のケース・groupの前に書き、追加した後の変更は型で防ぎます。
 
 ## 実行環境とコマンド
