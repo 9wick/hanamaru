@@ -120,7 +120,7 @@ retryは失敗したケースだけを再試行し、各試行を結果に残し
 ## 準備と後始末を同じ場所に書く
 
 ```ts
-.use('perAttempt', async (_, next) => {
+.use(async (_, next) => {
   const db = await createDatabase()
   try {
     return await next({ db })
