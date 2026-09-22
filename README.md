@@ -104,6 +104,26 @@ groupで関連するテストをまとめ、配下へ共通のmock・setup・use
 名前は任意です。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
 グループ化と共通設定の範囲は[テストをグループにまとめる](./docs/grouping.md)を参照してください。
 
+## group全体で資源を共有する
+
+通常の `.use()` は各caseの各attemptを囲みます。
+高価な資源を一つのgroup全体で共有したい場合は、group追加箇所をmiddlewareで囲めます。
+
+```ts
+const tests = new Test()
+  .group(async (_, next) => {
+    const server = await startServer()
+    try {
+      return await next({ server })
+    } finally {
+      await server.stop()
+    }
+  }, userTests)
+```
+
+middlewareは一度だけserverを用意し、`next({ server })` の値をuserTests配下の各attemptへ渡します。
+共有資源のlifetimeを表すだけで、case間の順序依存は許しません。
+
 ## 実行設定を下流へ渡す
 
 `.timeout(1_000)` と `.retry(2)` はgroup・target・ケースで設定できます。
