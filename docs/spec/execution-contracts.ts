@@ -11,6 +11,12 @@ defineConfig({
 })
 
 const rows = [{ a: 1, b: 2, expected: 3 }]
+const scoped = new Test().use('perAttempt', async (_, next) => await next({ scoped: true }))
+// @ts-expect-error middleware lifetime must be explicit and supported.
+new Test().use('perGroup', async (_, next) => await next())
+// @ts-expect-error the old implicit lifetime is not part of the contract.
+new Test().use(async (_, next) => await next())
+void scoped
 const ready = new Test().retry(2).target(add).timeout(2_000).retry(1)
 const suite = ready.each('足す', rows, (t, row) => t
   .timeout(500).args(row.a, row.b).retry(0)
