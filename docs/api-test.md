@@ -77,6 +77,9 @@ const tests = new Test()
 親のmock・setup・use・timeout・retryは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
 同じ子を別の親や同じ親の複数箇所へ合成することもでき、それぞれ独立した実行箇所になります。
 
+`group(middleware, child)` では、middlewareをそのchild全体に一度だけ適用できます。`next(fields)` が渡す型はchildのctxへ供給されます。名前付きは `group(name, middleware, child)` です。
+通常の `.use()` が各caseの各attemptを囲むのに対し、group middlewareはその追加箇所のchild全体を囲みます。
+
 子は元のctxの型を保ちます。親のctxが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
 親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](./grouping.md)を参照してください。
 
