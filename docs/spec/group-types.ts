@@ -173,3 +173,22 @@ new Test().group('不足', async (_, next) => next({ other: true }), groupScoped
 for (const entry of groupedWithMiddleware.plan().children) {
   if (entry.middleware) expectType<Function>(entry.middleware.run)
 }
+
+
+const groupScopedCombinedChild = new Test<{ seed: number; server: SharedServer }>()
+  .target((seed: number, server: SharedServer) => seed + server.port)
+  .it('親attempt ctxとgroup ctxを合わせる', t => t.argsFrom(ctx => [ctx.seed, ctx.server])
+    .expect(e => [e.result.toBe(e.ctx.seed + e.ctx.server.port)]))
+
+new Test()
+  .setup(() => ({ seed: 1 }))
+  .group(async (ctx, next) => {
+    // @ts-expect-error per-attempt setup fields do not exist before the group middleware starts.
+    ctx.seed
+    const server = await startServer()
+    try {
+      return await next({ server })
+    } finally {
+      await server.close()
+    }
+  }, groupScopedCombinedChild)
