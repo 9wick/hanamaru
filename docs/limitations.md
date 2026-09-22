@@ -100,7 +100,7 @@ timeout・retryはgroup・target・ケースで項目ごとに継承・上書き
 
 - 並列実行、自動的な実行順変更
 - watch、カバレッジ計測
-- グループ・process・run単位のshared fixture（`use('perGroup' | 'perProcess' | 'perRun', ...)` は将来候補。初版は `perAttempt` のみ）
+- process・run単位のshared fixture。group単位のshared fixtureは `group(middleware, child)` で提供する
 - fake timers / Date（次verで検討）、呼び出しの順序・部分一致（後続）
 - flow（今回の計画外）
 - each専用のonly/skip/todo表記（未採用）
