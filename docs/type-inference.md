@@ -28,7 +28,7 @@ new Test()
 
 ```ts
 new Test()
-  .use('perAttempt', async (_, next) => {
+  .use(async (_, next) => {
     const db = await createDatabase()
     try {
       return await next({ db, expected: 3 })
