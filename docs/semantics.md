@@ -55,9 +55,30 @@ process数やcaseの配置はrunnerの実行戦略であり、caseの意味に�
 RunのPromiseは、そのRunが所有する開始済みのexecution processと必要な後始末が完了してからsettleします。
 同じhost runtimeではactiveなRunを一つに制限しますが、完了したRunの後に別のRunを開始できます。
 
-middlewareのlifetimeはこの実行モデルに沿って `perAttempt` を初版で公開します。
-`perGroup`、`perProcess`、`perRun` は共有fixtureのlifetimeとして追加できる名前を予約しますが、初版の公開APIには含めません。
-共有fixtureはsetup costの共有であり、case間の順序依存を表しません。
+## group middleware
+
+`group(middleware, child)` のmiddlewareは、そのgroup追加箇所のchild全体を一度だけ囲みます。
+通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
+
+group middlewareへ渡すctxは、そのgroup定義が外側から要求する安定したctxです。
+親ノードのsetup/useは各attemptで実行されるため、そこで初めて作る値をgroup middlewareのsetupに渡すことはしません。
+一方、group middlewareが `next(fields)` へ渡した値は、各child attemptで親のper-attempt ctxと合成し、childのargsFrom・expectから参照できます。
+
+実行の概略は次のとおりです。
+
+```text
+group middleware setup
+  child case A
+    attempt setup/use → target → assertions → cleanup
+    retryがあれば次のattempt
+  child case B
+    attempt setup/use → target → assertions → cleanup
+group middleware cleanup
+```
+
+setupが失敗した場合はchildのcaseを開始しません。cleanupが失敗した場合はrunを失敗として後続を中断します。
+共有資源を残したまま次のgroupへ進まないことは、通常のcleanup failureと同じ保証です。
+group middlewareを持つchildは、その共有資源のlifetime中は同じexecution processで実行します。
 
 ## 実行設定の解決
 
@@ -67,7 +88,7 @@ group → target → ケースの経路でtimeoutとretryを項目ごとに重�
 
 ## 一試行の手順
 
-1. **準備**: 期限の計測を開始し、新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。setupは戻り値をawaitしてctxを拡張し、次へ進む。`use('perAttempt', ...)` は直前のctxとnextを受け取り、nextで後続のstepsとケース本体を実行する。
+1. **準備**: 期限の計測を開始し、新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。setupは戻り値をawaitしてctxを拡張し、次へ進む。`use(...)` は直前のctxとnextを受け取り、nextで後続のstepsとケース本体を実行する。
 2. **instrumentation**: 経路上の共通mockとケースのmockを解決し、callsと参照・キーでまとめる。元のdescriptorを保存して差し替えと記録を設定する。
 3. **args**: 静的な引数を使うか、argsFromにctxを渡して引数タプルを得る。
 4. **target**: 対象を呼び、Promise/thenableならawaitする。戻り値か例外をタグ付きで保持する。
@@ -89,7 +110,7 @@ expect・述語・後始末中の呼び出しは記録に含めません。
 
 ## middlewareとnext
 
-`use('perAttempt', (ctx, next) => ...)` はケースの一試行を囲むmiddlewareです。
+`use((ctx, next) => ...)` はケースの一試行を囲むmiddlewareです。
 `next(fields)` はctxを拡張して後続を呼び、`next()` は現在のctxをそのまま渡します。
 後続はnextを呼んだ非同期コンテキスト内で実行するため、AsyncLocalStorageやコールバック型トランザクションで囲めます。
 setupとuseを混ぜた場合も登録順を保ちます。
@@ -197,9 +218,9 @@ target以外の段階の失敗は、targetに対するerrorの期待を満たし
 
 ## ケース間の状態
 
-各ケースの各試行で経路上のsetup・`use('perAttempt', ...)`を呼び、モックのsequenceと呼び出し記録を作り直します。同じ計画の再実行でも同様です。
+各ケースの各試行で経路上のsetup・`use(...)`を呼び、モックのsequenceと呼び出し記録を作り直します。同じ計画の再実行でも同様です。
 caseは、他のcaseが実行されたか、どの順序で実行されたかに依存してはいけません。process.env、module state、global、filesystem、DB等の共有状態を変更する場合は、そのcase自身の境界で必要な初期化・復元を行います。
-静的に渡したオブジェクトや、factoryが返した共有値までrunnerが複製する保証はありません。独立性が必要な値はsetup・`use('perAttempt', ...)`・argsFromで毎回生成してください。
+静的に渡したオブジェクトや、factoryが返した共有値までrunnerが複製する保証はありません。独立性が必要な値はsetup・`use(...)`・argsFromで毎回生成してください。
 
 ## 期限・再試行・中断
 
