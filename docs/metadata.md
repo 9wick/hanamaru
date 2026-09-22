@@ -29,7 +29,7 @@ const result = await run(plan)
 | TestPlan.config | そのノードで明示したtimeout・retry。未指定は親から継承 |
 | TestPlan.steps | そのノードのsetup・useを登録順に並べた配列。未登録なら空配列 |
 | SetupPlan | kind: setupとcreate関数 |
-| MiddlewarePlan | kind: middlewareとrun関数 |
+| MiddlewarePlan | kind: middleware、scope: perAttempt、run関数 |
 | TestPlan.mocks | そのノードの共通モック |
 | SuitePlan.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
 | SuitePlan.cases | 宣言順のケース |
@@ -153,7 +153,7 @@ expectは静的な値だけを使う場合も遅延扱いです。
 | toSatisfyの述語 | アサーション評価時 | 記述子内の関数参照 |
 
 setupとuseは共通のsteps配列に保持するため、混ぜて登録した順序も失いません。
-middlewareはctxとnextを受ける関数として保持します。前処理・後処理を別の関数へ分解したり、試しに実行してctxを取り出したりはしません。
+middlewareはscopeと、ctx・nextを受ける関数として保持します。初版のscopeはperAttemptです。前処理・後処理を別の関数へ分解したり、試しに実行してctxを取り出したりはしません。
 expectとexpectCallsのチェーン上の順序は、この評価時点を変えません。
 
 ## 参照を保持する意味
