@@ -36,6 +36,7 @@ const result = await run(plan)
 | GroupPlan.children | 追加した順の子。各要素はname・origin・planを持つ |
 | GroupEntry.name | group(name, child)の説明。省略時はnull |
 | GroupEntry.origin | その親へ追加したgroupの宣言位置 |
+| GroupEntry.middleware | group追加箇所を一度囲むmiddleware。通常のgroupではnull |
 | GroupEntry.plan | 子の計画。さらにグループでもよい |
 | Case.name / mode | ケース名とrun / only / skip / todo |
 | Case.origin | it / only / skip / todo / eachの宣言位置 |
@@ -61,7 +62,7 @@ todoは実行本体を持たず、name・mode・origin・config・row: nullを�
 ## グループの階層
 
 `TestPlan` は `kind: 'test'` のSuitePlanと、`kind: 'group'` のGroupPlanのunionです。
-各ノードがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。
+各ノードがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。group追加箇所だけに適用するmiddlewareは `GroupEntry.middleware` に保持します。
 名前のないグループも構造として残ります。
 
 ```ts
