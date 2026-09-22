@@ -84,6 +84,8 @@ setup・useで用意する値に依存する引数や結果の期待は、それ
 親の設定を配下のケースへ適用し、内側のmockは外側のmockを上書きします。
 setup・useは親から子へctxを渡し、useの後処理は逆順です。ctxと呼び出し記録は各ケースの試行ごとに用意します。
 
+高価な資源を配下全体で一度だけ用意する場合は、`group(middleware, child)` でgroup追加箇所をmiddlewareで囲みます。通常のuseは各attempt、group middlewareはchild全体という実行境界がAPI構造から分かれます。
+
 ビルダーはイミュータブルです。グループへ追加しても元の子の定義は変わりません。
 metadataには各階層の設定と子の関係を保持します。
 [テストをグループにまとめる](./grouping.md)に例と契約を示します。
