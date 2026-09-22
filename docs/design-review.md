@@ -58,3 +58,17 @@ CaseResult.failuresは各試行のfailuresと重複するため削除しまし�
 [終了状態の表](./results.md#終了状態の表)で、試行・ケースの派生値・run・後続ケースを定めます。
 timeoutとcleanup失敗はfailed、失敗がないまま割り込まれた試行はcancelledです。既存の失敗を消さず、複数の中断原因の優先順位も固定します。
 収集期限と終了猶予は[CLIの設定](./cli.md#時間制限)で変更可能にしました。30,000msと1,000msは未指定時の既定値であり、全プロジェクトに強制する時間ではありません。
+
+## caseの独立性と実行境界
+
+caseは他のcaseの実行有無・実行順に依存しない独立した実行単位とします。初版が宣言順に直列実行しても、その順序は利用者が依存する契約にはしません。将来のshuffle・parallel・複数process配置を許せる意味論にします。
+
+実行モデルは Run > Process * N とします。各execution processは一つのRunに所属し、同じhost runtimeでactiveなRunを重複させません。完了したRunの後に次のRunを開始することはできます。
+
+middlewareはlifetimeを明示するため、初版の `.use()` を `.use('perAttempt', ...)` にします。`perGroup` / `perProcess` / `perRun` はshared fixtureの将来候補で、初版の公開APIには含めません。shared fixtureはsetup costの共有であり、case間の順序依存を許す仕組みではありません。
+
+順序を持つ一連の操作は通常case間の依存として扱わず、flowというordered scenarioへ分離する方針を維持します。flow自体のAPIは今回確定しません。
+
+## ゼロ設定の探索
+
+CLIのinclude未指定時は `**/*.{test,spec}.ts` を使います。ゼロ設定の `hanamaru` で `.test.ts` と `.spec.ts` を収集できることを公開契約にします。
