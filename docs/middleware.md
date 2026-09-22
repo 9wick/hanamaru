@@ -1,6 +1,6 @@
 # middlewareで準備と後始末を書く
 
-`.use()` は、各ケースの実行を囲むmiddlewareを登録します。
+`.use('perAttempt', )` は、各ケースの実行を囲むmiddlewareを登録します。
 資源の取得と解放を同じスコープに書き、`next({ db })` で後続へ値を渡せます。
 
 ```ts
@@ -8,7 +8,7 @@ import { Test } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
-  .use(async (_, next) => {
+  .use('perAttempt', async (_, next) => {
     const db = await createDatabase()
     try {
       return await next({ db, expected: 3 })
@@ -55,7 +55,7 @@ nextは、呼び出した非同期コンテキスト内で後続を実行しま�
 AsyncLocalStorageやコールバック型トランザクションも、同じ形でケースを囲めます。
 
 ```ts
-.use(async (_, next) => {
+.use('perAttempt', async (_, next) => {
   return await storage.run({ requestId: 'test' }, async () => {
     return await next()
   })
