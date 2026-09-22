@@ -105,7 +105,7 @@ export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMe
 export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, ExecutionSettings<TestBuilder<F, C, R>> {
   describe(name: string): TestBuilder<F, C, R>
   setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TestBuilder<F, ExtendContext<C, Awaited<S>>, R>
-  use<S extends object>(middleware: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
+  use<S extends object>(scope: 'perAttempt', middleware: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
 export interface GroupMethods<C extends object, R extends object = {}> {
@@ -118,7 +118,7 @@ export interface GroupSuite<C extends object, R extends object = {}> extends Gro
 export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R>, ExecutionSettings<TargetStage<C, R>> {
   describe(name: string): TargetStage<C, R>
   setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TargetStage<ExtendContext<C, Awaited<S>>, R>
-  use<S extends object>(middleware: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
+  use<S extends object>(scope: 'perAttempt', middleware: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
@@ -128,7 +128,7 @@ export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   retry(count: number): TargetStage<R, R>
   describe(name: string): TargetStage<R, R>
   setup<S>(create: (ctx: Readonly<R>) => SetupReturn<S>): TargetStage<ExtendContext<R, Awaited<S>>, R>
-  use<S extends object>(middleware: Middleware<R, S>): TargetStage<ExtendContext<R, S>, R>
+  use<S extends object>(scope: 'perAttempt', middleware: Middleware<R, S>): TargetStage<ExtendContext<R, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<R, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, R, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
@@ -171,6 +171,7 @@ export interface SetupPlan<C = any, S extends object = any> {
 }
 export interface MiddlewarePlan<C = any, S extends object = any> {
   readonly kind: 'middleware'
+  readonly scope: 'perAttempt'
   readonly run: Middleware<C, S>
 }
 export type StepPlan = SetupPlan | MiddlewarePlan
