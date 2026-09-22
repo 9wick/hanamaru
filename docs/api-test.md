@@ -123,7 +123,7 @@ ctxのフィールドは読み取り専用ですが、フィールドが参照�
 
 ```ts
 new Test()
-  .use(async (_, next) => {
+  .use('perAttempt', async (_, next) => {
     const db = await createDatabase()
     try {
       return await next({ db, expected: 3 })
