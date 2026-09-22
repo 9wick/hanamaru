@@ -2,7 +2,7 @@ import { Test } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
-  .use('perAttempt', async (_, next) => {
+  .use(async (_, next) => {
     const db = await createDatabase()
     try {
       return await next({ db, expected: 3 })
