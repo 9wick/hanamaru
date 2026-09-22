@@ -1,6 +1,6 @@
 # middlewareで準備と後始末を書く
 
-`.use('perAttempt', ...)` は、各ケースの実行を囲むmiddlewareを登録します。
+`.use(...)` は、各ケースの実行を囲むmiddlewareを登録します。
 資源の取得と解放を同じスコープに書き、`next({ db })` で後続へ値を渡せます。
 
 ```ts
@@ -8,7 +8,7 @@ import { Test } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
-  .use('perAttempt', async (_, next) => {
+  .use(async (_, next) => {
     const db = await createDatabase()
     try {
       return await next({ db, expected: 3 })
@@ -25,18 +25,6 @@ export const userCount = new Test()
 [この例](./examples/middleware.test.ts)の[サンプルDB](./examples/database.ts)は、3件のユーザーを持つメモリ上の実装です。
 各試行で開き、期待の検証とモックの復元が終わってからcloseします。
 ケースが失敗してもfinallyを通ります。
-
-## lifetimeを名前で表す
-
-middlewareは資源のlifetimeをAPI上で明示します。
-
-| scope | lifetime |
-|---|---|
-| `perAttempt` | retryを含む各caseの各試行ごとにsetupし、その試行の終了時にcleanupする |
-
-将来の共有fixtureでは `perGroup`、実行processごとの `perProcess`、run全体の `perRun` を同じ `.use(scope, ...)` の形で追加できる設計を想定しますが、初版の公開APIには含めません。
-共有fixtureはsetup costを共有するためのlifetimeであり、case間の順序依存を許す仕組みではありません。
-順序依存が必要な一連の操作はflowの責務として分離します。
 
 ## ctxの型はnextから伝わる
 
@@ -67,7 +55,7 @@ nextは、呼び出した非同期コンテキスト内で後続を実行しま�
 AsyncLocalStorageやコールバック型トランザクションも、同じ形でケースを囲めます。
 
 ```ts
-.use('perAttempt', async (_, next) => {
+.use(async (_, next) => {
   return await storage.run({ requestId: 'test' }, async () => {
     return await next()
   })
