@@ -23,7 +23,7 @@ Vitest/JestのAPI全体との互換性は提供しません。
 
 ## チェーンが型を積み上げる
 
-`.target()` で引数と戻り値、`.setup()` や `.use('perAttempt', ...)` でctxが決まります。
+`.target()` で引数と戻り値、`.setup()` や `.use(...)` でctxが決まります。
 呼び出しの検証では、`call(obj, key)` からそのメソッドの引数型が決まります。
 通常は型パラメータを手書きせず、エディタ上で次に書ける内容が絞られます。
 独立した子が親のctxを使う場合だけ、必要な型を宣言します。
@@ -38,7 +38,7 @@ Vitest/JestのAPI全体との互換性は提供しません。
 宣言順は表示とmetadata上の順序であり、利用者が意味を持たせる実行順ではありません。
 標準実行器の初版は直列に実行しますが、将来のshuffle・並列実行・複数processへの配置で順序や配置が変わっても、caseの意味が変わらないことを前提にします。
 
-setup、`use('perAttempt', ...)`、mock、ctx、呼び出し記録は各attemptで作り直します。
+setup、`use(...)`、mock、ctx、呼び出し記録は各attemptで作り直します。
 利用者がprocess.env、module state、global、外部DB等を変更する場合も、別caseの実行結果へ依存せず、必要な初期化と復元をそのcaseの実行境界で行います。
 高価な環境の共有と、case間の意味的な依存は別の問題として扱います。
 
@@ -90,7 +90,7 @@ metadataには各階層の設定と子の関係を保持します。
 
 ## middlewareでケースを囲む
 
-`.use('perAttempt', (ctx, next) => ...)` で、資源の取得と解放を同じスコープに書けます。
+`.use((ctx, next) => ...)` で、資源の取得と解放を同じスコープに書けます。
 `return await next({ db })` で後続へ値と型を渡し、finallyで片付けます。
 準備した値を返すだけなら、`.setup(() => ({ expected: 3 }))` で書けます。
 [準備と後始末の例](./middleware.md)を参照してください。
