@@ -87,7 +87,7 @@ runnerはhanamaru自身が管理するコンテキスト・mock・呼び出し�
 process.env、module state、global、filesystem、外部DB等の利用者側の共有状態を自動で複製・復元する保証はありません。必要な初期化と復元はcase自身の実行境界に含めます。
 
 順序を持つscenarioは通常case間の依存として表さず、将来のflowへ分離する方針です。
-高価な環境の共有は別のfixture lifetimeの問題であり、flowとは区別します。
+高価な環境の共有は共有資源を保持する期間の問題であり、flowとは区別します。
 
 ## 初版の実行契約
 
@@ -100,7 +100,7 @@ timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継
 
 - 並列実行、自動的な実行順変更
 - watch、カバレッジ計測
-- process・run単位のshared fixture。group単位のshared fixtureは `group(middleware, [children])` で提供する
+- process・run単位の共有資源の管理。group単位の共有資源は `group(middleware, [children])` で管理する
 - fake timers / Date（次verで検討）、呼び出しの順序・部分一致（後続）
 - flow（今回の計画外）
 - each専用のonly/skip/todo表記（未採用）

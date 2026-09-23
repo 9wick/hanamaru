@@ -32,7 +32,7 @@ e.fromで期待値ごとにコールバックを追加する案は撤回しま�
 ## 今回含めないもの
 
 - 時計の制御は次verで扱います。
-- shared fixture、呼び出しの順序・部分一致、watch・coverage・parallel・shardingは後続です。
+- process・run単位の共有資源の管理、呼び出しの順序・部分一致、watch・coverage・parallel・shardingは後続です。
 - flowは今回の計画外です。操作記述・値の受け渡し・実行単位を今回確定しません。
 - each専用のonly/skip/todo表記は未採用です。通常のonlyとCLIのfilterは展開後のケースに作用します。
 - signal、custom matcherの登録API、タグ・注記、snapshotは追加しません。
@@ -67,7 +67,7 @@ caseは他のcaseの実行有無・実行順に依存しない独立した実行
 
 実行モデルは Run > Process * N とします。各execution processは一つのRunに所属し、同じhost runtimeでactiveなRunを重複させません。完了したRunの後に次のRunを開始することはできます。
 
-通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。shared fixtureはscope引数を `.use()` に増やさず、`group(middleware, [children])` で子のまとまり全体を一度囲む形にします。これにより共有コンテキストの型と実行順をtree構造から読めるようにします。shared fixtureは共有資源を用意するコストの共有であり、case間の順序依存を許す仕組みではありません。
+通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。group単位の共有資源はscope引数を `.use()` に増やさず、`group(middleware, [children])` で子のまとまり全体を一度囲む形にします。これにより共有コンテキストの型と実行順をtree構造から読めるようにします。group middlewareは共有資源を用意するコストを抑えるためのものであり、case間の順序依存を許す仕組みではありません。
 
 順序を持つ一連の操作は通常case間の依存として扱わず、flowというordered scenarioへ分離する方針を維持します。flow自体のAPIは今回確定しません。
 

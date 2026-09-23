@@ -75,7 +75,7 @@ middlewareが `next({ server })` へ渡したフィールドは、全子の要�
 同じ子を別のgroupへ追加した場合は、追加箇所ごとに独立してmiddlewareを実行します。
 
 group middlewareは共有資源のlifetimeを表します。配下のcaseが互いの実行結果や状態に依存してよいことを意味しません。
-順序を持つ一連の操作はflowとして表し、shared group fixtureとは区別します。
+順序を持つ一連の操作はflowとして表し、group middlewareによる共有資源の管理とは区別します。
 
 group middlewareの前処理が失敗した場合、渡した全子の実行は開始せず、配下の実行対象caseをcancelledとしてrunを失敗させます。
 後処理が失敗した場合もrunを失敗させ、片付いていない共有状態を次のgroupへ持ち越さないため後続の実行を中断します。
