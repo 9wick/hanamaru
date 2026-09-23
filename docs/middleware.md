@@ -34,13 +34,19 @@ fnは `(ctx, next) => ...`、optionsは `{ timeout }` です。
 
 `.use()` / `.group()` の引数にそのまま書いた場合、ctxの型は書いた場所から決まります。注釈は不要です。
 
-変数へ入れて複数の場所で使い回す場合だけ、必要なctxを引数の型に書きます。
-その型を供給できるかは、使う場所の `.use()` / `.group()` で検査します。
+変数へ入れて使い回すmiddlewareが上流のctxを読む場合だけ、引数を `Ctx<…>` で包んで要求を書きます。
+`Ctx<C>` は、利用者が要求するフィールドと、hanamaruがctxへ足すフィールドを合わせた公開型です。
 
 ```ts
-const withExpected = middleware(async (ctx: { seed: number }, next) =>
+import { Test, middleware, type Ctx } from 'hanamaru'
+
+const withExpected = middleware(async (ctx: Ctx<{ seed: number }>, next) =>
   next({ expected: ctx.seed + 1 }))
 ```
+
+nextへ渡す値は書きません。要求から読んだ値と同じく型は推論されます。
+要求を満たさないチェーンで使うと、その `.use()` / `.group()` が型エラーになります。
+`middleware<{ seed: number }>(fn)` のように型パラメータで要求を書くと、TypeScriptは型引数の部分推論ができないため、nextへ渡す値の推論が失われます。
 
 ## ctxの型はnextから伝わる
 

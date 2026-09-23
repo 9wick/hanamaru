@@ -23,7 +23,7 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 ### middleware
 
-- 識別子: `middleware(fn, { timeout })`、`.use(m)`、`.group(m, child)`
+- 識別子: `middleware(fn, { timeout })`、`.use(m)`、`.group(m, child)`、`Ctx<…>`
 - 定義: ケースを支える準備と後片付けを、ケースの実行を囲む形で書いたもの。共通の下ごしらえを複数のケースで使い回すために使います。
 - 文脈: テストを書く人が、DB・サーバー・テナントなどの前提を整えるときに使います。
 - ルール:
@@ -32,7 +32,15 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
   - 複数のmiddlewareは入れ子になり、後処理は逆順に動きます。
   - `.use(m)` では各試行を囲み、`.group(m, child)` ではchild全体を一度だけ囲みます。どちらでも同じmiddlewareを使えます。
   - HonoやExpressのmiddlewareと違い、nextを呼ばずに打ち切ることはできません。nextは必ず1回呼びます。nextの失敗をcatchしても、テストの失敗は取り消せません。
+  - 単独で定義して上流の値を読む場合は、引数を `Ctx<…>` で包んで要求を書きます。渡す値は書きません（推論されます）。
 - 使わない語: setup、fixture。
+
+### Ctx
+
+- 識別子: `Ctx<…>`
+- 定義: middlewareが要求するctxの型。利用者が書いたフィールドと、hanamaruがctxへ足すフィールドを合わせます。
+- 文脈: 単独で定義して使い回すmiddlewareの引数に書きます。`.use()` / `.group()` へ直接書くmiddlewareでは、文脈から型が決まるので書きません。
+- ルール: 要求だけを書きます。型パラメータで要求を書くと、nextへ渡す値の推論が失われます。
 
 ### 前処理・後処理（before / after）
 

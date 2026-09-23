@@ -1,4 +1,4 @@
-import { Test, middleware, run } from 'hanamaru'
+import { Test, middleware, run, type Ctx } from 'hanamaru'
 interface Db { close(): Promise<void>; countUsers(): Promise<number> }
 declare function createDb(): Promise<Db>
 declare function countUsers(db: Db): Promise<number>
@@ -85,11 +85,24 @@ new Test().use(middleware(async (ctx, next) => {
   ctx.db
   return await next({ db: await createDb() })
 }))
-// A middleware defined on its own declares the ctx it needs.
-const doubling = middleware(async (ctx: { value: number }, next) => next({ doubled: ctx.value * 2 }))
+// A middleware defined on its own writes its requirement with Ctx; the fields it passes stay inferred.
+const doubling = middleware(async (ctx: Ctx<{ value: number }>, next) => {
+  expectType<number>(ctx.value)
+  // @ts-expect-error a requirement written with Ctx is readonly too.
+  ctx.value = 3
+  return await next({ doubled: ctx.value * 2 })
+})
 new Test().use(middleware(async (_, next) => next({ value: 2 }))).use(doubling)
-// @ts-expect-error the declared ctx must be supplied where the middleware is used.
+  .target((doubled: number) => doubled)
+  .it('単独で定義したmiddlewareを使う', t => t.argsFrom(ctx => {
+    expectType<number>(ctx.doubled)
+    expectType<number>(ctx.value)
+    return [ctx.doubled]
+  }).expect(e => [e.result.toBe(4)]))
+// @ts-expect-error the requirement must be supplied where the middleware is used.
 new Test().use(doubling)
+// @ts-expect-error a field of the wrong type does not satisfy the requirement.
+new Test().use(middleware(async (_, next) => next({ value: '2' }))).use(doubling)
 new Test().use(middleware(async (_, next) => next({ value: 1 })))
   .use(middleware(async (ctx, next) => {
     expectType<number>(ctx.value)

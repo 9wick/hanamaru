@@ -28,8 +28,10 @@ export interface Next {
   (): Promise<MiddlewareResult<{}>>
   <S extends object>(fields: S): Promise<MiddlewareResult<S>>
 }
+/** 利用者が要求するフィールドと、将来hanamaruがctxへ足すフィールドを合わせた型。 */
+export type Ctx<C> = Readonly<C>
 export type MiddlewareFn<C, S extends object> =
-  (ctx: Readonly<C>, next: Next) => Promise<MiddlewareResult<S>>
+  (ctx: Ctx<C>, next: Next) => Promise<MiddlewareResult<S>>
 export interface MiddlewareOptions {
   /** 前処理と後処理のそれぞれへ独立に適用する期限。 */
   readonly timeout?: number
@@ -83,14 +85,14 @@ export interface CallBuilder {
 export interface Expect<F extends AnyFn, C> {
   readonly result: ValueAssertions<Awaited<ReturnType<F>>>
   readonly error: ErrorAssertions
-  readonly ctx: Readonly<C>
+  readonly ctx: Ctx<C>
 }
 export type CallExpectations = readonly [CallAssertion, ...CallAssertion[]]
 export type CallsBuilder = (call: CallBuilder) => CallExpectations
 export interface ItBuilder<F extends AnyFn, C> extends ExecutionSettings<ItBuilder<F, C>> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, C>
   args(...args: Parameters<F>): ItArgs<F, C>
-  argsFrom(build: (ctx: Readonly<C>) => Parameters<F>): ItArgs<F, C>
+  argsFrom(build: (ctx: Ctx<C>) => Parameters<F>): ItArgs<F, C>
 }
 export interface ItArgs<F extends AnyFn, C> extends ExecutionSettings<ItArgs<F, C>> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItArgs<F, C>
@@ -174,7 +176,7 @@ export interface RowPlan {
 /** 実行計画は値・参照・遅延評価する関数を保持する。 */
 export type ValuePlan<V, C> =
   | { readonly kind: 'value'; readonly value: V }
-  | { readonly kind: 'from-context'; readonly build: (ctx: Readonly<C>) => V }
+  | { readonly kind: 'from-context'; readonly build: (ctx: Ctx<C>) => V }
 export type TargetPlan<F extends AnyFn> =
   | { readonly kind: 'function'; readonly fn: F }
   | { readonly kind: 'method'; readonly object: object; readonly key: string; readonly fn: F }
@@ -240,7 +242,7 @@ export type Assertions =
 export interface ExpectationPlan<C> {
   readonly kind: 'deferred'
   /** 元のexpectコールバックにctxと記述子ビルダーを渡す処理。targetの後に評価する。 */
-  readonly build: (ctx: Readonly<C>) => Assertions
+  readonly build: (ctx: Ctx<C>) => Assertions
 }
 export type ExecutableCase<F extends AnyFn, C> = {
   readonly name: string
