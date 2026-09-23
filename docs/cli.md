@@ -14,7 +14,7 @@ npx hanamaru
 npx hanamaru src/math.test.ts
 ```
 
-引数なしなら設定のincludeに一致するファイルを読む。
+引数なしなら設定のincludeに一致するファイルを読む。include未指定時は `**/*.{test,spec}.ts` を使う。
 ファイルを指定した場合は、そのファイルを対象とする。
 
 CLIは次の手順を取る。
@@ -61,7 +61,7 @@ filterは正規表現ではない。階層内のケース名に文字列を含�
 import { defineConfig } from 'hanamaru'
 
 export default defineConfig({
-  include: ['**/*.test.ts'],
+  include: ['**/*.{test,spec}.ts'],
   exclude: ['**/node_modules/**', '**/dist/**'],
   reporter: 'pretty',
   collectionTimeout: 120_000,
@@ -69,6 +69,7 @@ export default defineConfig({
 })
 ```
 
+includeの既定値は `['**/*.{test,spec}.ts']`、excludeの既定値は `['**/node_modules/**', '**/dist/**']` とする。
 CLI引数は設定値を上書きする。明示ファイルはinclude/excludeによる探索を行わず、指定順ではなくパス順に正規化する。
 設定ファイルも通常のTypeScriptモジュールとして読む。
 

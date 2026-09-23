@@ -131,6 +131,16 @@ getterや利用者のtoJSONを診断のために実行しません。
 取得できない内部状態や省略した部分にはomittedと理由を残し、空の値として偽装しません。
 診断は比較に使う値そのものの代わりではなく、元の実体へ復元できることも要求しません。
 
+## group middlewareの結果
+
+`group(middleware, child)` を使ったgroup追加箇所では、GroupResult.childrenの各要素にmiddlewareの実行結果を保持します。
+通常のgroupではmiddlewareはnullです。
+
+middleware結果にはstatus・durationMs・failures・cleanupを保持します。
+setup前に実行対象がなくmiddlewareを開始しなかった場合や、外側の中断で開始しなかった場合はnot-runとして理由を残します。
+setup failureではchild配下の実行対象caseをnotRun: cancelledとし、cleanup failureでは既存のchild結果を保持したままrunをfailedにして後続を中断します。
+caseの通常失敗やretryではgroup middlewareを終了・再作成せず、child全体が完了してからcleanupします。
+
 ## run全体
 
 RunResultのstatusはpassed / failed / cancelled、reasonはcompleted / timeout / interrupted / cleanup-failedです。

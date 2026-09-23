@@ -42,10 +42,52 @@ export const registrations = new Test()
 隣のsaveのテストでは本物の保存処理を呼ぶため、結果は `u1` です。
 さらにケース内のmockで、そのケースだけ振る舞いを上書きできます。
 
+## group全体をmiddlewareで囲む
+
+`group(middleware, child)` は、childの実行全体を一度だけmiddlewareで囲みます。
+
+```ts
+const userTests = new Test<{ server: Server }>()
+  .group(createUserTests)
+  .group(deleteUserTests)
+
+export const tests = new Test()
+  .group(async (_, next) => {
+    const server = await startServer()
+    try {
+      return await next({ server })
+    } finally {
+      await server.stop()
+    }
+  }, userTests)
+```
+
+実行順は次の形です。
+
+```text
+startServer
+  createUserTests の各case/attempt
+  deleteUserTests の各case/attempt
+stopServer
+```
+
+通常の `.use()` は各attemptを囲み、`group(middleware, child)` のmiddlewareはそのchild全体を一度だけ囲みます。
+middlewareが `next({ server })` へ渡したフィールドは、childの要求ctxとして型検査され、child配下の各attemptのctxから参照できます。
+同じchildを別のgroupへ追加した場合は、追加箇所ごとに独立してmiddlewareを実行します。
+
+group middlewareは共有資源のlifetimeを表します。配下のcaseが互いの実行結果や状態に依存してよいことを意味しません。
+順序を持つ一連の操作はflowとして表し、shared group fixtureとは区別します。
+
+group middlewareのsetupが失敗した場合、そのchildの実行は開始せず、配下の実行対象caseをcancelledとしてrunを失敗させます。
+cleanupが失敗した場合もrunを失敗させ、片付いていない共有状態を次のgroupへ持ち越さないため後続の実行を中断します。
+通常のcase失敗やretryではgroup middlewareを作り直さず、child全体の実行が終わるまで同じ共有資源を保持します。
+
+名前を付ける場合は `group(name, middleware, child)` と書けます。
+
 ## 名前は任意
 
 `group(child)` なら追加の名前は不要です。
-見出しを付けたい場合は `group('作成', child)` と書けます。
+見出しを付けたい場合は `group('作成', child)` と書けます。middleware付きでも `group(middleware, child)` / `group('作成', middleware, child)` の同じ規則です。
 名前の有無で設定の範囲は変わらず、一意性も要求しません。
 子自身のdescribeや対象名もそのまま保持します。
 
@@ -154,5 +196,5 @@ CLIには必要なctxを用意したルートだけをexportします。
 グループ全体の時間制限や、成功した兄弟まで再実行する意味にはしません。
 [設定例と解決順](./execution-options.md)を参照してください。
 
-setup/useの準備と後始末は各ケースの各試行で行います。グループ全体で1回だけ資源を用意するshared fixtureは初版には含めません。
+setup/useの準備と後始末は各ケースの各試行で行います。`group(middleware, child)` のmiddlewareだけは、そのgroup追加箇所のchild全体を一度囲みます。
 groupへの追加位置は自動取得し、失敗の詳細と計画・結果の階層へ保持します。詳しくは[宣言位置](./results.md)を参照してください。

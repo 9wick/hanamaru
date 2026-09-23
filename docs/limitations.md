@@ -77,6 +77,18 @@ finally内の早すぎる解放を型で防ぐことはできない。後始末�
 プロパティを経由せず保存済みの関数参照を呼ぶコードは、そのプロパティを差し替えても変わらない。
 モックのために依存の渡し方を整理する必要がある場合がある。
 
+## ケースの独立性
+
+各caseは、他のcaseの実行有無・実行順に依存しないことを契約とします。
+初版の標準実行器は直列・宣言順で実行しますが、その順序は利用者が依存できる保証ではありません。
+将来のshuffle・parallel・sharding・複数process配置で順序や配置が変わっても意味が変わらないtestを前提とします。
+
+runnerはhanamaru自身が管理するctx・mock・呼び出し記録を各attemptで作り直します。
+process.env、module state、global、filesystem、外部DB等の利用者側の共有状態を自動で複製・復元する保証はありません。必要な初期化と復元はcase自身の実行境界に含めます。
+
+順序を持つscenarioは通常case間の依存として表さず、将来のflowへ分離する方針です。
+高価な環境の共有は別のfixture lifetimeの問題であり、flowとは区別します。
+
 ## 初版の実行契約
 
 宣言位置の自動取得、構造化した失敗、各試行の結果、timeout・retry、each、mock sequence、nthの呼び出し条件を含めます。
@@ -88,7 +100,7 @@ timeout・retryはgroup・target・ケースで項目ごとに継承・上書き
 
 - 並列実行、自動的な実行順変更
 - watch、カバレッジ計測
-- グループで一度だけ準備するshared fixture
+- process・run単位のshared fixture。group単位のshared fixtureは `group(middleware, child)` で提供する
 - fake timers / Date（次verで検討）、呼び出しの順序・部分一致（後続）
 - flow（今回の計画外）
 - each専用のonly/skip/todo表記（未採用）

@@ -23,8 +23,8 @@ const result = await run(tests.plan())
 const results = await run([first.plan(), second.plan()])
 ```
 
-単一計画または計画配列を受け取り、渡された順に直列実行します。
-グループはchildren順に深さ優先でたどり、テスト内はケースの宣言順です。
+単一計画または計画配列を受け取ります。初版の標準実行器は渡された順、children順の深さ優先、ケースの宣言順で直列実行します。
+ただしこの順序は利用者が依存できるテストの意味ではありません。各caseは他のcaseの実行有無・実行順に依存せず、将来のshuffle・並列実行・複数processへの配置で順序が変わっても同じ意味を持つものとします。
 同じ子を複数箇所に合成しても参照で重複排除せず、それぞれの経路の設定で実行します。
 
 結果のtestsはルート計画と同じ順・同じ件数です。
@@ -33,9 +33,52 @@ skip/todoも結果に残すため、名前がなくても、重複していて�
 
 version・計画構造・呼び出し条件の妥当性を階層全体について実行前に検査します。
 循環、空のchildren/cases、不正なsteps・mock・config・origin・sequenceの終端動作等も受付エラーです。同じ子を別の経路から参照することは循環ではありません。
-空の計画配列や、同一プロセスでのrunの重複実行は受付エラーです。
+空の計画配列や、同じhost runtimeでactiveなrunがある間のrunの重複実行は受付エラーです。先のrunをawaitして完了した後に次のrunを開始することはできます。
 受付エラーではsetup・useを開始せずPromiseをrejectします。ケース中の失敗は結果に残します。通常はretryの規則に従ってそのケースを完了し、他のケースを続けます。
 timeout・外部中断・復元や後始末の失敗では後続を中断します。
+
+## Runとprocess
+
+実行モデルではRunが一つ以上のexecution processを所有します。
+
+```text
+Run
+  Process 1
+  Process 2
+  ...
+```
+
+processは必ず一つのRunに属し、Runをまたいで実行状態を共有する単位にはしません。
+初版のライブラリ `run(plan)` は一つのprocessで実行できます。標準CLIは停止保証等のために実行環境をprocessとして分離でき、将来は一つのRunへ複数processを配置できます。
+process数やcaseの配置はrunnerの実行戦略であり、caseの意味に含めません。
+
+RunのPromiseは、そのRunが所有する開始済みのexecution processと必要な後始末が完了してからsettleします。
+同じhost runtimeではactiveなRunを一つに制限しますが、完了したRunの後に別のRunを開始できます。
+
+## group middleware
+
+`group(middleware, child)` のmiddlewareは、そのgroup追加箇所のchild全体を一度だけ囲みます。
+通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
+
+group middlewareへ渡すctxは、そのgroup定義が外側から要求する安定したctxです。
+親ノードのsetup/useは各attemptで実行されるため、そこで初めて作る値をgroup middlewareのsetupに渡すことはしません。
+一方、group middlewareが `next(fields)` へ渡した値は、各child attemptで親のper-attempt ctxと合成し、childのargsFrom・expectから参照できます。
+
+実行の概略は次のとおりです。
+
+```text
+group middleware setup
+  child case A
+    attempt setup/use → target → assertions → cleanup
+    retryがあれば次のattempt
+  child case B
+    attempt setup/use → target → assertions → cleanup
+group middleware cleanup
+```
+
+setupが失敗した場合はchildのcaseを開始しません。cleanupが失敗した場合はrunを失敗として後続を中断します。
+共有資源を残したまま次のgroupへ進まないことは、通常のcleanup failureと同じ保証です。
+group middlewareを持つchildは、その共有資源のlifetime中は同じexecution processで実行します。
 
 ## 実行設定の解決
 
@@ -45,7 +88,7 @@ group → target → ケースの経路でtimeoutとretryを項目ごとに重�
 
 ## 一試行の手順
 
-1. **準備**: 期限の計測を開始し、新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。setupは戻り値をawaitしてctxを拡張し、次へ進む。useは直前のctxとnextを受け取り、nextで後続のstepsとケース本体を実行する。
+1. **準備**: 期限の計測を開始し、新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。setupは戻り値をawaitしてctxを拡張し、次へ進む。`use(...)` は直前のctxとnextを受け取り、nextで後続のstepsとケース本体を実行する。
 2. **instrumentation**: 経路上の共通mockとケースのmockを解決し、callsと参照・キーでまとめる。元のdescriptorを保存して差し替えと記録を設定する。
 3. **args**: 静的な引数を使うか、argsFromにctxを渡して引数タプルを得る。
 4. **target**: 対象を呼び、Promise/thenableならawaitする。戻り値か例外をタグ付きで保持する。
@@ -67,7 +110,7 @@ expect・述語・後始末中の呼び出しは記録に含めません。
 
 ## middlewareとnext
 
-`use((ctx, next) => ...)` はケースの実行を囲むmiddlewareです。
+`use((ctx, next) => ...)` はケースの一試行を囲むmiddlewareです。
 `next(fields)` はctxを拡張して後続を呼び、`next()` は現在のctxをそのまま渡します。
 後続はnextを呼んだ非同期コンテキスト内で実行するため、AsyncLocalStorageやコールバック型トランザクションで囲めます。
 setupとuseを混ぜた場合も登録順を保ちます。
@@ -175,9 +218,9 @@ target以外の段階の失敗は、targetに対するerrorの期待を満たし
 
 ## ケース間の状態
 
-各ケースの各試行で経路上のsetup・useを呼び、モックのsequenceと呼び出し記録を作り直します。同じ計画の再実行でも同様です。
-静的に渡したオブジェクトや、factoryが返した共有値まで複製はしません。
-独立性が必要な値はsetup・use・argsFromで毎回生成してください。
+各ケースの各試行で経路上のsetup・`use(...)`を呼び、モックのsequenceと呼び出し記録を作り直します。同じ計画の再実行でも同様です。
+caseは、他のcaseが実行されたか、どの順序で実行されたかに依存してはいけません。process.env、module state、global、filesystem、DB等の共有状態を変更する場合は、そのcase自身の境界で必要な初期化・復元を行います。
+静的に渡したオブジェクトや、factoryが返した共有値までrunnerが複製する保証はありません。独立性が必要な値はsetup・`use(...)`・argsFromで毎回生成してください。
 
 ## 期限・再試行・中断
 
