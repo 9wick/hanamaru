@@ -1,20 +1,20 @@
 # 宣言位置と実行結果
 
-テストを書く人に位置やIDの入力を要求せず、計画と結果から宣言位置・各試行・失敗内容を取得できます。
+テストを書く人に位置やIDの入力を要求せず、blueprintと結果から宣言位置・各試行・失敗内容を取得できます。
 完全な公開型は[hanamaru.d.ts](./spec/hanamaru.d.ts)にあります。
 
 ## 宣言位置
 
 it / only / skip / todo / eachには、宣言したテストソースの `origin: { file, line, column }` を保持します。
 groupには、その親へ子を追加した位置をGroupEntry.originに保持します。結果のgroup追加箇所にも同じoriginを残します。
-fileは絶対パス、行・列は1始まりです。wrapper内でitを呼んだ場合は、そのitの位置を指します。
-plan/runの呼出位置では上書きしません。同じ子を複数回追加しても子の宣言位置は変えません。
+fileは絶対パス、ソース行番号・列番号は1始まりです。wrapper内でitを呼んだ場合は、そのitの位置を指します。
+blueprint/runの呼出位置では上書きしません。同じ子を複数回追加しても子の宣言位置は変えません。
 
 対応範囲のテストソースでは必ず提供し、取得不能をnullの正常結果にはしません。
 標準CLIが直接実行するNode/Bun向けソースは[対応環境](./limitations.md)の範囲です。
 ライブラリ利用で事前変換したコードは、元ソースへ対応するsource mapがある場合を対応範囲とします。
 位置を提供できない定義は定義エラーです。ユーザーに位置を手入力させるAPIは設けません。
-target関数の実装位置と、編集・移動・改名をまたぐidentityは初版の保証に含めません。
+テスト対象の実装位置と、編集・移動・改名をまたぐidentityは初版の保証に含めません。
 
 ```text
 ユーザー登録
@@ -33,22 +33,22 @@ target関数の実装位置と、編集・移動・改名をまたぐidentityは
 入れ子のgroupの追加位置は外側から内側へ表示し、無名のgroupも省略しません。
 ルートには存在しないgroup追加位置を作りません。
 
-## 計画と結果の対応
+## blueprintと結果の対応
 
 同名・同じ位置・同じ子の複数追加を別ケースとして扱います。
 結果のpathは、ルートの番号、経路上のchildrenの番号、casesの番号を並べた0始まりの配列です。
 グループとテストの結果も、そのノードまでのpathを持ちます。
-CLIは収集した全計画で番号を定め、filterや表示の並べ替えでも元のpathを保持します。
-ライブラリのrunでは渡した計画配列を基準にします。別の計画を渡し直した後まで同じpathを保証するものではありません。
+CLIは収集した全テストで番号を定め、filterや表示の並べ替えでも元のpathを保持します。
+ライブラリのrunでは渡したテスト配列を基準にします。別の配列を渡し直した後まで同じpathを保証するものではありません。
 
 ## ケースと試行
 
 CaseResultにはname・origin・path・row・適用したconfig・durationMs・attemptsを保持します。
 失敗一覧・成否・flakyは試行から求め、CaseResultに重複したフィールドを持たせません。
-通常ケースのrowはnullです。eachのrow.valueはケースの最初の試行開始前、未実行なら結果作成時に診断値へ取り込みます。eachの行番号はrow.indexに残し、表示するときだけ1始まりにします。
+通常ケースのrowはnullです。eachのrow.valueはケースの最初の試行開始前、未実行なら結果作成時に診断値へ取り込みます。eachのデータ行番号はrow.indexに0始まりで残し、表示するときだけ1始まりにします。
 
 durationMsは最初の試行開始からケース終了・中断までの実時間で、未実行なら0です。
-attemptsは実行順で、attemptは1始まりです。各試行のdurationMsもmiddlewareの前処理開始から後始末終了・中断までを測ります。各試行に状態・時間・targetの終了・アサーションの評価・失敗・後始末の状態を残します。
+attemptsは実行順で、attemptは1始まりです。各試行のdurationMsもmiddlewareの前処理開始から後始末終了・中断までを測ります。各試行に状態・時間・テスト対象の終了・アサーションの評価・失敗・後始末の状態を残します。
 失敗は各試行のfailuresにだけ保持します。最後に成功しても過去の試行を消しません。
 
 ### 試行の有無と未実行の理由
@@ -57,7 +57,7 @@ attemptsは実行順で、attemptは1始まりです。各試行のdurationMsも
 実行していないケースはattemptsが空で、notRunにskipped / todo / cancelledのいずれかを必ず持ちます。
 明示skipとonlyによる除外はskipped、未実行予定はtodo、実行前の中断はcancelledです。
 空のattemptsだけで未実行の理由を推測したり、skip等を架空の試行として追加したりしません。
-この組み合わせは公開型でも制約します。
+この組み合わせは公開型でも制約します。試行列では、最終以外の試行を後処理が完了したfailedに限り、passed / cancelledや後処理未完了のfailedの後に別の試行を並べられません。
 
 実行中の試行にはnotRunを付けません。timeoutや復元・後始末の失敗はfailed、失敗がないまま外部から中断された試行はcancelledです。詳細は下記の状態表で定めます。
 再試行の間で中断して次の試行を開始しなかった場合も、開始済みの試行だけを残します。ケースの成否は最後の試行から読み、runのreasonに中断を残します。
@@ -90,11 +90,11 @@ Promiseの完了を観測できない中断でもnullとし、成功の戻り値
 
 全てにphaseと人間向けmessageを保持します。messageを解析しなくても、条件・期待・観測・原因が分かります。
 アサーションの参照にはsource（expect / expectCalls）、その配列内の0始まりのindex、subject、matcherを持ちます。
-callにはkeyも残し、sourceとindexから計画内のオブジェクト参照へ対応できます。同名メソッドを持つ別オブジェクトを混同しません。
+callにはkeyも残し、sourceとindexからblueprint内のオブジェクト参照へ対応できます。同名メソッドを持つ別オブジェクトを混同しません。
 expectの配列は遅延するため、評価後に得た配列との対応です。呼び出し条件のindexはexpectの成功・失敗でずれません。
 
 各条件はpassed / failed / not-evaluatedとして記録し、未評価には理由を残します。
-middlewareの失敗でtargetを呼べない場合、既知の呼び出し条件はnot-evaluatedです。まだ構築できないexpectの条件を捏造しません。
+middlewareの失敗でテスト対象を呼べない場合、既知の呼び出し条件はnot-evaluatedです。まだ構築できないexpectの条件を捏造しません。
 呼び出し0回の成功と、検証していない状態を区別します。
 複数条件の失敗・原因・後始末の失敗を全て残し、最後の例外で前の失敗を消しません。
 
@@ -137,6 +137,7 @@ getterや利用者のtoJSONを診断のために実行しません。
 通常のgroupではmiddlewareはnullです。
 
 middleware結果にはstatus・durationMs・failures・cleanupを保持します。
+公開型ではpassedに失敗記録を付けられず、failedには一件以上の失敗記録が必要です。not-runは開始しなかった理由を必ず持ちます。
 各failureはphaseにbefore / after / contractを持ち、期限超過ではその期限も残します。
 実行対象がなくmiddlewareを開始しなかった場合や、外側の中断で開始しなかった場合はnot-runとして理由を残します。
 前処理の失敗ではchild配下の実行対象caseをnotRun: cancelledとし、後処理の失敗では既存のchild結果を保持したままrunをfailedにして後続を中断します。
@@ -179,7 +180,8 @@ case列は最後の試行またはnotRunから求める値であり、CaseResult
 
 runのstatusは、timeout・cleanup失敗・caseの派生値がfailed・failOnFlakyの条件に該当するケースのいずれかがあればfailedです。
 それらがなくinterruptedならcancelled、通常完了ならpassedです。途中で失敗してもretryで成功したケースは、failOnFlakyを指定しない限りrunを失敗にしません。
-グループ・テストは配下のfailedを優先し、次にcancelled、それ以外はpassedとします。skip/todoだけならpassedです。
+公開型では `passed/completed` と `cancelled/interrupted`、および `failed` と上記の終了理由の組だけを許します。試行の `passed` は失敗記録なし・後処理完了、`failed` は失敗記録ありに制限します。ケースの `attempts` と `notRun` も排他的です。
+グループ・対象ケース群は配下のfailedを優先し、次にcancelled、それ以外はpassedとします。skip/todoだけならpassedです。
 failOnFlakyはrunのstatusだけへ作用し、ケースのattemptsや各階層の結果を書き換えません。
 収集のtimeoutはrun開始前の読込エラーです。この表の試行timeoutとは区別し、RunResultや架空の試行を作りません。
 表示と終了コードは[CLI](./cli.md)、実行順は[実行セマンティクス](./semantics.md)を参照してください。

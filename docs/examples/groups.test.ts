@@ -2,7 +2,6 @@ import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const registrations = new Test()
-  .describe('ユーザー')
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group('作成', new Test()
     .target(createUser)

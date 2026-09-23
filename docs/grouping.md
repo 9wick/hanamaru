@@ -14,7 +14,6 @@ import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const registrations = new Test()
-  .describe('ユーザー')
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group('作成', new Test()
     .target(createUser)
@@ -72,7 +71,7 @@ stopServer
 ```
 
 通常の `.use()` は各attemptを囲み、`group(middleware, child)` のmiddlewareはそのchild全体を一度だけ囲みます。
-middlewareが `next({ server })` へ渡したフィールドは、childの要求ctxとして型検査され、child配下の各attemptのctxから参照できます。
+middlewareが `next({ server })` へ渡したフィールドは、childの要求コンテキストとして型検査され、child配下の各attemptのコンテキストから参照できます。
 同じchildを別のgroupへ追加した場合は、追加箇所ごとに独立してmiddlewareを実行します。
 
 group middlewareは共有資源のlifetimeを表します。配下のcaseが互いの実行結果や状態に依存してよいことを意味しません。
@@ -90,7 +89,7 @@ group middlewareの前処理が失敗した場合、そのchildの実行は開�
 `group(child)` なら追加の名前は不要です。
 見出しを付けたい場合は `group('作成', child)` と書けます。middleware付きでも `group(middleware, child)` / `group('作成', middleware, child)` の同じ規則です。
 名前の有無で設定の範囲は変わらず、一意性も要求しません。
-子自身のdescribeや対象名もそのまま保持します。
+子の対象ケース群の名前もそのまま保持します。グループ自身は無名です。
 
 ## 入れ子にして設定の範囲を分ける
 
@@ -110,13 +109,13 @@ mockは外側→内側→ケースの順に重ね、同じオブジェクト・�
 useのmiddlewareもグループの配下だけに適用します。
 親から子へ登録順に進み、後処理は内側から外側へ戻ります。
 middlewareはグループ全体で1回ではなく、実行する各ケースの各試行で動きます。
-ctxと呼び出し記録も各試行で用意します。
+コンテキストと呼び出し記録も各試行で用意します。
 資源を使うグループでは[useのmiddleware](./middleware.md)で各ケースを囲めます。
 
-## 親で用意したctxを子へ渡す
+## 親で用意したコンテキストを子へ渡す
 
-グループのuseで用意した値は、子のargsFrom・e.ctxへ渡ります。
-親のctxを使う子は、必要なフィールドを `new Test<Ctx>()` で宣言します。
+グループのuseで用意した値は、子のargsFrom・`e.ctx`へ渡ります。
+親のコンテキストを使う子は、必要なフィールドを `new Test<Ctx>()` で宣言します。
 自分のuseで値を用意する場合、型パラメータは不要です。
 
 次は[user-cases.ts](./examples/user-cases.ts)の例です。
@@ -153,13 +152,13 @@ const tests = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group(userCases)
 
-run(tests.plan())
+run(tests)
 ```
 
 不足するフィールドや型違いがあればgroupで型エラーになります。
 子の定義時に、後から追加する親の型へ遡って推論されることはありません。
-ctxのフィールドは読み取り専用で、`next(fields)` で追加・置き換えます。
-親のctxを手動でspreadする必要はありません。
+コンテキストのフィールドは読み取り専用で、`next(fields)` で追加・置き換えます。
+親のコンテキストを手動でspreadする必要はありません。
 
 ## 別ファイルのテストをまとめる
 
@@ -180,22 +179,22 @@ const tests = new Test()
 ## 定義と実行の条件
 
 - groupには、1ケース以上あるテストか、子を持つグループを渡します。
-- グループ自体はtarget・ケースを持たず、それぞれの子が対象を持ちます。
-- 共通のdescribe・use・mockは最初のgroupより前に書きます。以降はgroupの追加とplanの取得ができます。
+- グループ自体はテスト対象・ケースを持たず、それぞれの子がテスト対象を持ちます。
+- 共通のuse・mockは最初のgroupより前に書きます。以降はgroupの追加とblueprintの取得ができます。
 - 対象を持つテストをまとめたいときは、新しい親からgroupへ渡します。
 
-`.plan()` は無名のグループも含む階層と、それぞれの設定を保持します。
-子の要求ctxを満たさない計画は単独でrunへ渡せません。
-CLIには必要なctxを用意したルートだけをexportします。
+プラグイン向けの `.blueprint()` は無名のグループも含む階層と、それぞれの設定を保持します。
+子の要求コンテキストを満たさないテストは単独でrunへ渡せません。
+CLIには必要なコンテキストを用意したルートだけをexportします。
 子は探索対象外のファイルに置き、二重の収集を避けます。
-詳細は[型推論](./type-inference.md)、[実行計画](./metadata.md)、[CLI](./cli.md)を参照してください。
+詳細は[型推論](./type-inference.md)、[プラグイン向けblueprint](./metadata.md)、[CLI](./cli.md)を参照してください。
 
 ## timeoutとretryも継承する
 
-親のgroupで指定したtimeout・retryは配下へ渡り、内側のgroup・target・ケースで項目ごとに上書きできます。
+親のgroupで指定したtimeout・retryは配下へ渡り、内側のgroupの共通設定、対象ケース群の共通設定、ケース個別の設定で項目ごとに上書きできます。
 未指定の項目は親の値を保ちます。groupで指定したtimeoutは配下の各ケースの試行期限、retryは失敗したケースの再試行回数です。
 グループ全体の時間制限や、成功した兄弟まで再実行する意味にはしません。
 [設定例と解決順](./execution-options.md)を参照してください。
 
 useのmiddlewareは各ケースの各試行を囲みます。`group(middleware, child)` のmiddlewareだけは、そのgroup追加箇所のchild全体を一度囲みます。
-groupへの追加位置は自動取得し、失敗の詳細と計画・結果の階層へ保持します。詳しくは[宣言位置](./results.md)を参照してください。
+groupへの追加位置は自動取得し、blueprintと実行結果の階層へ保持します。詳しくは[宣言位置](./results.md)を参照してください。

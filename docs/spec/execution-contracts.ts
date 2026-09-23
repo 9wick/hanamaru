@@ -1,5 +1,5 @@
 import { Test, defineConfig, middleware, run } from 'hanamaru'
-import type { AttemptResult, CaseResult, DiagnosticValue, Failure, SourceLocation } from 'hanamaru'
+import type { AssertionResult, AttemptResult, CaseResult, DiagnosticValue, FailedAttemptResult, Failure, GroupMiddlewareResult, PassedAttemptResult, RunResult, SourceLocation, TestResult } from 'hanamaru'
 import { add } from '../examples/math.ts'
 
 defineConfig({
@@ -20,7 +20,7 @@ ready.each('タプル', [[1, 2, 3], [2, 3, 5]], (t, row) => t.args(row[0], row[1
 ready.use(middleware(async (_, next) => next({ expected: 3 }))).each('ctx', rows, (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(e.ctx.expected)]))
 suite.it('通常ケースも追加する', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
 new Test().timeout(5_000).retry(2).group(suite)
-run(suite.plan(), { failOnFlaky: true })
+run(suite, { failOnFlaky: true })
 // @ts-expect-error each requires a target.
 new Test().each('未設定', rows, () => {})
 // @ts-expect-error each is one complete call, not a prefix for it.
@@ -54,7 +54,7 @@ ready.it('検証後の設定', t => t.args(1, 2).expect(e => [e.result.toBe(3)])
 // @ts-expect-error settings do not insert fields into user context.
 ready.it('予約ctxなし', t => t.args(1, 2).expect(e => [e.result.toBe(e.ctx.timeout)]))
 // @ts-expect-error signal is not a public runner option.
-run(suite.plan(), { signal: {} })
+run(suite, { signal: {} })
 
 const api = { async fetch(id: string) { return { id } } }
 ready.mock(api, 'fetch', m => m.rejectsOnce(new Error('temporary')).resolvesOnce({ id: 'u1' }).resolves({ id: 'u2' }))
@@ -79,7 +79,7 @@ ready.it('nth引数', t => t.args(1, 2).expectCalls(call => [call(api, 'fetch').
 // @ts-expect-error nth requires its index.
 ready.it('nth位置', t => t.args(1, 2).expectCalls(call => [call(api, 'fetch').calledNthWith('u1')]))
 
-for (const c of observed.plan().cases) {
+for (const c of observed.blueprint().cases) {
   const origin: SourceLocation = c.origin
   const timeout: number | undefined = c.config.timeout
   void [origin, timeout]
@@ -114,6 +114,45 @@ const failure = {
   expected: { kind: 'number', value: 1 }, actual: { kind: 'number', value: 2 },
 } satisfies Failure
 const thrownUndefined = { kind: 'outcome', phase: 'target', message: 'unexpected throw', expected: 'return', actual: { kind: 'throw', value: { kind: 'undefined' } } } satisfies Failure
+const attemptInfo = { attempt: 1, durationMs: 1, outcome: null, assertions: [] } as const
+const passedAttempt: PassedAttemptResult = { ...attemptInfo, status: 'passed', failures: [], cleanup: 'complete' }
+const failedAttempt = { ...attemptInfo, status: 'failed', failures: [failure], cleanup: 'complete' } as const satisfies FailedAttemptResult
+const failedCleanupAttempt = { ...attemptInfo, status: 'failed', failures: [failure], cleanup: 'incomplete' } as const satisfies FailedAttemptResult
+const cancelledAttempt: AttemptResult = { ...attemptInfo, status: 'cancelled', failures: [], cleanup: 'incomplete' }
+const failedAssertion = {
+  assertion: failure.assertion, status: 'failed',
+  expected: { kind: 'number', value: 1 }, actual: { kind: 'number', value: 2 },
+} as const satisfies AssertionResult
+// @ts-expect-error a passed attempt cannot contain a failure.
+const passedWithFailure: AttemptResult = { ...attemptInfo, status: 'passed', failures: [failure], cleanup: 'complete' }
+// @ts-expect-error a failed attempt must explain at least one failure.
+const failedWithoutFailure: AttemptResult = { ...attemptInfo, status: 'failed', failures: [], cleanup: 'complete' }
+// @ts-expect-error an incomplete cleanup cannot be reported as passed.
+const passedWithoutCleanup: AttemptResult = { ...attemptInfo, status: 'passed', failures: [], cleanup: 'incomplete' }
+// @ts-expect-error a cancelled attempt with a recorded failure is failed.
+const cancelledWithFailure: AttemptResult = { ...attemptInfo, status: 'cancelled', failures: [failure], cleanup: 'complete' }
+// @ts-expect-error a passed attempt cannot contain a failed assertion.
+const passedWithFailedAssertion: AttemptResult = { ...attemptInfo, status: 'passed', assertions: [failedAssertion], failures: [], cleanup: 'complete' }
+void [passedAttempt, failedAttempt, cancelledAttempt, passedWithFailure, failedWithoutFailure, passedWithoutCleanup, cancelledWithFailure, passedWithFailedAssertion]
+
+const middlewareInfo = { durationMs: 1 } as const
+const passedMiddleware = { ...middlewareInfo, status: 'passed', failures: [], cleanup: 'complete' } satisfies GroupMiddlewareResult
+// @ts-expect-error middleware with a failed cleanup cannot pass.
+const passedMiddlewareWithFailedCleanup = { ...middlewareInfo, status: 'passed', failures: [], cleanup: 'incomplete' } satisfies GroupMiddlewareResult
+// @ts-expect-error a failed group middleware must retain its failure.
+const failedMiddlewareWithoutFailure = { ...middlewareInfo, status: 'failed', failures: [], cleanup: 'complete' } satisfies GroupMiddlewareResult
+void [passedMiddleware, passedMiddlewareWithFailedCleanup, failedMiddlewareWithoutFailure]
+
+declare const testResult: TestResult
+const runInfo = { version: 1, tests: [testResult] } as const
+const passedRun = { ...runInfo, status: 'passed', reason: 'completed' } satisfies RunResult
+const failedRun = { ...runInfo, status: 'failed', reason: 'timeout' } satisfies RunResult
+const cancelledRun = { ...runInfo, status: 'cancelled', reason: 'interrupted' } satisfies RunResult
+// @ts-expect-error a timeout cannot be reported as a passed run.
+const passedTimeout = { ...runInfo, status: 'passed', reason: 'timeout' } satisfies RunResult
+// @ts-expect-error cancellation requires an interruption reason.
+const cancelledCompleted = { ...runInfo, status: 'cancelled', reason: 'completed' } satisfies RunResult
+void [passedRun, failedRun, cancelledRun, passedTimeout, cancelledCompleted]
 // @ts-expect-error assertion failures must retain expected and actual.
 const incompleteFailure: Failure = { kind: 'assertion', phase: 'assertion', message: 'bad', assertion: failure.assertion }
 // @ts-expect-error a location cannot omit its column.
@@ -138,15 +177,19 @@ const caseInfo = {
   name: '足す', origin: { file: '/tests/math.test.ts', line: 1, column: 1 },
   path: [0, 0], row: null, config: { timeout: 500, retry: 2 }, durationMs: 0,
 } as const
-declare const attempt: AttemptResult
-const executed: CaseResult = { ...caseInfo, attempts: [attempt] }
+const executed: CaseResult = { ...caseInfo, attempts: [passedAttempt] }
+const retried: CaseResult = { ...caseInfo, attempts: [failedAttempt, passedAttempt] }
+// @ts-expect-error an incomplete cleanup prevents another attempt.
+const retriedAfterFailedCleanup: CaseResult = { ...caseInfo, attempts: [failedCleanupAttempt, passedAttempt] }
+// @ts-expect-error a passed attempt cannot be followed by a retry.
+const retriedAfterSuccess: CaseResult = { ...caseInfo, attempts: [passedAttempt, failedAttempt] }
 const skipped: CaseResult = { ...caseInfo, attempts: [], notRun: 'skipped' }
 const todo: CaseResult = { ...caseInfo, attempts: [], notRun: 'todo' }
 const cancelled: CaseResult = { ...caseInfo, attempts: [], notRun: 'cancelled' }
 // @ts-expect-error a case with no attempts must explain why it was not run.
 const unexplained: CaseResult = { ...caseInfo, attempts: [] }
 // @ts-expect-error a case with attempts cannot also claim it was not run.
-const contradictory: CaseResult = { ...caseInfo, attempts: [attempt], notRun: 'skipped' }
+const contradictory: CaseResult = { ...caseInfo, attempts: [passedAttempt], notRun: 'skipped' }
 // @ts-expect-error a passed case must have an actual attempt.
 const inventedSuccess: CaseResult = { ...caseInfo, attempts: [], notRun: 'passed' }
 if (result.notRun !== undefined) {
@@ -156,4 +199,4 @@ if (result.notRun !== undefined) {
   const first: AttemptResult = result.attempts[0]
   void first
 }
-void [executed, skipped, todo, cancelled, unexplained, contradictory, inventedSuccess]
+void [executed, retried, retriedAfterFailedCleanup, retriedAfterSuccess, skipped, todo, cancelled, unexplained, contradictory, inventedSuccess]

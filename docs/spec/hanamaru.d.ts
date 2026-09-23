@@ -9,13 +9,15 @@ declare const assertionBrand: unique symbol
 declare const doneBrand: unique symbol
 declare const definitionBrand: unique symbol
 declare const behaviorBrand: unique symbol
-declare const planBrand: unique symbol
+declare const blueprintBrand: unique symbol
 declare const middlewareBrand: unique symbol
 declare const middlewareDefBrand: unique symbol
 export interface ItDone { readonly [doneBrand]: true }
 export interface TestDefinition<R extends object = {}> {
   /** 親に要求するctx。関数プロパティで反変にし、供給できない合成を防ぐ。 */
   readonly [definitionBrand]: (ctx: R) => void
+  /** プラグイン向け。定義から実行前の構造を取得する。 */
+  blueprint(): TestBlueprint<R>
 }
 export type ExtendContext<C, S> = C extends unknown
   ? S extends unknown ? Omit<C, keyof S> & S : never
@@ -43,7 +45,7 @@ export interface Middleware<C = unknown, S extends object = object> {
 export declare function middleware<C, S extends object>(
   fn: MiddlewareFn<C, S>, options?: MiddlewareOptions
 ): Middleware<C, S>
-export type Behavior<F extends AnyFn> = BehaviorPlan & {
+export type Behavior<F extends AnyFn> = BehaviorBlueprint & {
   readonly [behaviorBrand]: (fn: F) => F
 }
 export interface BehaviorBuilder<F extends AnyFn> {
@@ -113,10 +115,9 @@ export interface CaseMethods<F extends AnyFn, C, R extends object = {}> {
   todo(name: string): Suite<F, C, R>
 }
 export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, TestDefinition<R> {
-  plan(): SuitePlan<F, C, R>
+  blueprint(): SuiteBlueprint<F, C, R>
 }
 export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, ExecutionSettings<TestBuilder<F, C, R>> {
-  describe(name: string): TestBuilder<F, C, R>
   use<S extends object>(m: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
@@ -128,23 +129,25 @@ export interface GroupMethods<C extends object, R extends object = {}> {
   group(name: string, child: TestDefinition<C>): GroupSuite<C, R>
 }
 export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
-  plan(): GroupPlan<R>
+  blueprint(): GroupBlueprint<R>
 }
 export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R>, ExecutionSettings<TargetStage<C, R>> {
-  describe(name: string): TargetStage<C, R>
   use<S extends object>(m: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
+  target<F extends AnyFn>(name: string, fn: F): TestBuilder<F, C, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
+  target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
 }
 export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   timeout(ms: number): TargetStage<R, R>
   retry(count: number): TargetStage<R, R>
-  describe(name: string): TargetStage<R, R>
   use<S extends object>(m: Middleware<R, S>): TargetStage<ExtendContext<R, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<R, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, R, R>
+  target<F extends AnyFn>(name: string, fn: F): TestBuilder<F, R, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
+  target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
   group<S extends object>(m: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
   group<S extends object>(name: string, m: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
   group(child: TestDefinition<R>): GroupSuite<R, R>
@@ -168,43 +171,43 @@ export interface SourceLocation {
   readonly line: number
   readonly column: number
 }
-export interface RowPlan {
+export interface RowBlueprint {
   readonly index: number
   readonly value: unknown
 }
 
-/** 実行計画は値・参照・遅延評価する関数を保持する。 */
-export type ValuePlan<V, C> =
+/** blueprintは値・参照・遅延評価する関数を保持する。 */
+export type ValueBlueprint<V, C> =
   | { readonly kind: 'value'; readonly value: V }
   | { readonly kind: 'from-context'; readonly build: (ctx: Ctx<C>) => V }
-export type TargetPlan<F extends AnyFn> =
+export type TargetBlueprint<F extends AnyFn> =
   | { readonly kind: 'function'; readonly fn: F }
   | { readonly kind: 'method'; readonly object: object; readonly key: string; readonly fn: F }
-export interface MiddlewarePlan<C = any, S extends object = any> {
+export interface MiddlewareBlueprint<C = any, S extends object = any> {
   readonly kind: 'middleware'
   readonly run: MiddlewareFn<C, S>
   /** middlewareの定義で指定した前処理・後処理の期限。未指定はundefined。 */
   readonly timeout: number | undefined
 }
-export interface GroupMiddlewarePlan<C = any, S extends object = any> {
+export interface GroupMiddlewareBlueprint<C = any, S extends object = any> {
   readonly kind: 'middleware'
   readonly run: MiddlewareFn<C, S>
   readonly timeout: number | undefined
 }
-export type StepPlan = MiddlewarePlan
+export type StepBlueprint = MiddlewareBlueprint
 export type BehaviorAction =
   | { readonly kind: 'returns' | 'resolves'; readonly value: unknown }
   | { readonly kind: 'throws' | 'rejects'; readonly error: unknown }
   | { readonly kind: 'callsFake'; readonly fn: AnyFn }
-export type BehaviorPlan = BehaviorAction | {
+export type BehaviorBlueprint = BehaviorAction | {
   readonly kind: 'sequence'
   readonly once: readonly [BehaviorAction, ...BehaviorAction[]]
   readonly fallback: BehaviorAction
 }
-export interface MockPlan {
+export interface MockBlueprint {
   readonly object: object
   readonly key: string
-  readonly behavior: BehaviorPlan
+  readonly behavior: BehaviorBlueprint
 }
 export type ValueCheck<V> =
   | { readonly matcher: 'toBe' | 'toEqual'; readonly expected: V }
@@ -239,7 +242,7 @@ export type Assertion = ResultAssertion | ErrorAssertion
 export type Assertions =
   | readonly [ResultAssertion, ...ResultAssertion[]]
   | readonly [ErrorAssertion, ...ErrorAssertion[]]
-export interface ExpectationPlan<C> {
+export interface ExpectationBlueprint<C> {
   readonly kind: 'deferred'
   /** 元のexpectコールバックにctxと記述子ビルダーを渡す処理。targetの後に評価する。 */
   readonly build: (ctx: Ctx<C>) => Assertions
@@ -248,12 +251,12 @@ export type ExecutableCase<F extends AnyFn, C> = {
   readonly name: string
   readonly mode: 'run' | 'only' | 'skip'
   readonly origin: SourceLocation
-  readonly row: RowPlan | null
+  readonly row: RowBlueprint | null
   readonly config: ExecutionConfig
-  readonly mocks: readonly MockPlan[]
-  readonly args: ValuePlan<Parameters<F>, C>
+  readonly mocks: readonly MockBlueprint[]
+  readonly args: ValueBlueprint<Parameters<F>, C>
 } & (
-  | { readonly expect: ExpectationPlan<C>; readonly calls: readonly CallAssertion[] }
+  | { readonly expect: ExpectationBlueprint<C>; readonly calls: readonly CallAssertion[] }
   | { readonly expect: null; readonly calls: CallExpectations }
 )
 export interface TodoCase {
@@ -263,33 +266,33 @@ export interface TodoCase {
   readonly row: null
   readonly config: ExecutionConfig
 }
-export interface PlanBase<R extends object> {
+interface BlueprintBase<R extends object> {
   readonly config: ExecutionConfig
-  readonly [planBrand]: (ctx: R) => void
+  readonly [blueprintBrand]: (ctx: R) => void
   readonly version: 1
-  readonly steps: readonly StepPlan[]
-  readonly mocks: readonly MockPlan[]
+  readonly steps: readonly StepBlueprint[]
+  readonly mocks: readonly MockBlueprint[]
 }
-export interface SuitePlan<F extends AnyFn = AnyFn, C = any, R extends object = {}> extends PlanBase<R> {
+export interface SuiteBlueprint<F extends AnyFn = AnyFn, C = any, R extends object = {}> extends BlueprintBase<R> {
   readonly kind: 'test'
   readonly name: string
-  readonly target: TargetPlan<F>
+  readonly target: TargetBlueprint<F>
   readonly cases: readonly (ExecutableCase<F, C> | TodoCase)[]
 }
-export interface GroupPlan<R extends object = {}> extends PlanBase<R> {
+export interface GroupBlueprint<R extends object = {}> extends BlueprintBase<R> {
   readonly kind: 'group'
-  readonly name: string | null
+  readonly name: null
   readonly children: readonly GroupEntry[]
 }
 export interface GroupEntry {
   readonly origin: SourceLocation
   readonly name: string | null
   /** group(middleware, child) のmiddleware。通常のgroupではnull。 */
-  readonly middleware: GroupMiddlewarePlan | null
+  readonly middleware: GroupMiddlewareBlueprint | null
   /** 子の要求型は階層内では隠す。取り出して単独実行はできない。 */
-  readonly plan: TestPlan<never>
+  readonly blueprint: TestBlueprint<never>
 }
-export type TestPlan<R extends object = {}> = SuitePlan<AnyFn, any, R> | GroupPlan<R>
+export type TestBlueprint<R extends object = {}> = SuiteBlueprint<AnyFn, any, R> | GroupBlueprint<R>
 /** JSONにも同じ形で出す診断値。id/referenceは一つの診断値の中で対応する。 */
 export type DiagnosticKey =
   | { readonly kind: 'string'; readonly value: string }
@@ -340,18 +343,35 @@ export type Failure = {
 export type AssertionResult = {
   readonly assertion: AssertionReference
 } & (
-  | { readonly status: 'passed' | 'failed'; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
+  | { readonly status: 'passed'; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
+  | { readonly status: 'failed'; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
   | { readonly status: 'not-evaluated'; readonly reason: string }
 )
-export interface AttemptResult {
+interface AttemptResultBase {
   readonly attempt: number
-  readonly status: 'passed' | 'failed' | 'cancelled'
   readonly durationMs: number
   readonly outcome: TargetOutcome | null
+}
+export type PassedAttemptResult = AttemptResultBase & {
+  readonly status: 'passed'
+  readonly assertions: readonly Extract<AssertionResult, { status: 'passed' }>[]
+  readonly failures: readonly []
+  readonly cleanup: 'complete'
+}
+export type FailedAttemptResult = AttemptResultBase & {
+  readonly status: 'failed'
   readonly assertions: readonly AssertionResult[]
-  readonly failures: readonly Failure[]
+  readonly failures: readonly [Failure, ...Failure[]]
   readonly cleanup: 'complete' | 'incomplete'
 }
+export type CancelledAttemptResult = AttemptResultBase & {
+  readonly status: 'cancelled'
+  readonly assertions: readonly Extract<AssertionResult, { status: 'passed' | 'not-evaluated' }>[]
+  readonly failures: readonly []
+  readonly cleanup: 'complete' | 'incomplete'
+}
+export type AttemptResult = PassedAttemptResult | FailedAttemptResult | CancelledAttemptResult
+type RetriableFailedAttemptResult = FailedAttemptResult & { readonly cleanup: 'complete' }
 export type CaseResult = {
   readonly name: string
   readonly origin: SourceLocation
@@ -360,7 +380,9 @@ export type CaseResult = {
   readonly config: ResolvedExecutionConfig
   readonly durationMs: number
 } & (
-  | { readonly attempts: readonly [AttemptResult, ...AttemptResult[]]; readonly notRun?: never }
+  | { readonly attempts: readonly [...RetriableFailedAttemptResult[], PassedAttemptResult]; readonly notRun?: never }
+  | { readonly attempts: readonly [...RetriableFailedAttemptResult[], FailedAttemptResult]; readonly notRun?: never }
+  | { readonly attempts: readonly [...RetriableFailedAttemptResult[], CancelledAttemptResult]; readonly notRun?: never }
   | { readonly attempts: readonly []; readonly notRun: 'skipped' | 'todo' | 'cancelled' }
 )
 export interface TestResult {
@@ -379,9 +401,21 @@ export type GroupMiddlewareFailure = {
 )
 export type GroupMiddlewareResult =
   | {
-      readonly status: 'passed' | 'failed' | 'cancelled'
+      readonly status: 'passed'
       readonly durationMs: number
-      readonly failures: readonly GroupMiddlewareFailure[]
+      readonly failures: readonly []
+      readonly cleanup: 'complete'
+    }
+  | {
+      readonly status: 'failed'
+      readonly durationMs: number
+      readonly failures: readonly [GroupMiddlewareFailure, ...GroupMiddlewareFailure[]]
+      readonly cleanup: 'complete' | 'incomplete'
+    }
+  | {
+      readonly status: 'cancelled'
+      readonly durationMs: number
+      readonly failures: readonly []
       readonly cleanup: 'complete' | 'incomplete'
     }
   | {
@@ -393,7 +427,7 @@ export type GroupMiddlewareResult =
     }
 export interface GroupResult {
   readonly kind: 'group'
-  readonly name: string | null
+  readonly name: null
   readonly path: readonly number[]
   readonly status: 'passed' | 'failed' | 'cancelled'
   readonly children: readonly {
@@ -403,17 +437,20 @@ export interface GroupResult {
     readonly result: TestResult | GroupResult
   }[]
 }
-export interface RunResult {
+interface RunResultBase {
   readonly version: 1
-  readonly status: 'passed' | 'failed' | 'cancelled'
-  readonly reason: 'completed' | 'timeout' | 'interrupted' | 'cleanup-failed'
   readonly tests: readonly (TestResult | GroupResult)[]
 }
+export type RunResult = RunResultBase & (
+  | { readonly status: 'passed'; readonly reason: 'completed' }
+  | { readonly status: 'failed'; readonly reason: 'completed' | 'timeout' | 'interrupted' | 'cleanup-failed' }
+  | { readonly status: 'cancelled'; readonly reason: 'interrupted' }
+)
 export interface RunOptions {
   readonly forbidOnly?: boolean
   readonly failOnFlaky?: boolean
 }
-export declare function run(plan: TestPlan | readonly TestPlan[], options?: RunOptions): Promise<RunResult>
+export declare function run(test: TestDefinition | readonly TestDefinition[], options?: RunOptions): Promise<RunResult>
 export interface Config {
   readonly include?: readonly string[]
   readonly exclude?: readonly string[]

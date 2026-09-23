@@ -42,7 +42,7 @@ const suite = configured.target(countUsers)
       expectType<number>(e.ctx.expected)
       return [e.result.toBe(e.ctx.expected)]
     }))
-run(suite.plan())
+run(suite)
 // @ts-expect-error middleware cannot change the context after a case is declared.
 suite.use(middleware(async (_, next) => next({ extra: true })))
 // @ts-expect-error middleware output must be returned to retain its inferred type.
@@ -52,13 +52,13 @@ const child = new Test<{ db: Db; expected: number }>()
   .target(countUsers)
   .it('親から受け取る', t => t.argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
-run(configured.group(child).plan())
+run(configured.group(child))
 // @ts-expect-error a missing middleware cannot supply the child's required fields.
 new Test().group(child)
 // @ts-expect-error incomplete middleware output cannot satisfy all the requirements.
 new Test().use(middleware(async (_, next) => next({ db: await createDb() }))).group(child)
 // @ts-expect-error the child still cannot run without its parent.
-run(child.plan())
+run(child)
 
 new Test().target(countUsers)
   .use(middleware(async (_, next) => next({ db: await createDb() })))
@@ -129,12 +129,12 @@ const dependent = new Test<{ db: Db }>()
   .use(middleware(async (ctx, next) => next({ count: await ctx.db.countUsers() })))
   .target(countUsers).todo('要求型を保持する')
 // @ts-expect-error middleware cannot discard a parent's required context.
-run(dependent.plan())
-run(configured.group(dependent).plan())
+run(dependent)
+run(configured.group(dependent))
 
-for (const step of suite.plan().steps) {
+for (const step of suite.blueprint().steps) {
   expectType<Function>(step.run)
   expectType<number | undefined>(step.timeout)
 }
 // @ts-expect-error ordered middleware steps are immutable.
-suite.plan().steps.push({ kind: 'middleware', run: async (_, next) => next(), timeout: undefined })
+suite.blueprint().steps.push({ kind: 'middleware', run: async (_, next) => next(), timeout: undefined })

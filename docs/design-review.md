@@ -9,25 +9,25 @@
 | 項目 | 判断と公開仕様 |
 |---|---|
 | 宣言位置 | it等とgroupの位置を自動取得する。失敗時は位置を表示し、成功時もデータに保持する。[実行結果](./results.md) |
-| identity | 収集した計画内のpathで区別し、手書きIDを要求しない。編集をまたぐ同一性やtargetの実装位置は保証に含めない。[実行結果](./results.md) |
+| identity | 収集したblueprint内のpathで区別し、手書きIDを要求しない。編集をまたぐ同一性やテスト対象の実装位置は保証に含めない。[実行結果](./results.md) |
 | 構造化した失敗 | 条件・期待・観測・原因を保持する。JSONでも特殊な値を区別する。[実行結果](./results.md) |
-| timeout / retry | group・target・ケースで指定し、項目ごとに継承・上書きする。全試行を結果へ残す。[実行設定](./execution-options.md) |
+| timeout / retry | group、`.target()` の前後、ケースで指定し、項目ごとに継承・上書きする。全試行を結果へ残す。[実行設定](./execution-options.md) |
 | each | each(name, rows, body)をitと並ぶ入口にする。[each](./each.md) |
 | mock sequence | onceを順に指定し、最後に通常動作を必須とする。[モック](./api-mock.md) |
 | nth | 指定メソッドのn回目の引数を検証する。spy登録を要求しない。[マッチャ](./api-expect.md) |
 | middleware | `middleware(fn, { timeout })` で作り、関数のままでは登録できない。ケースへ値を渡す手段は `next(fields)` だけにする。[middleware](./middleware.md) / [用語集](./glossary.md) |
 | 前処理期限・後処理期限 | middlewareの定義に持たせ、前処理と後処理へ独立に適用する。既定値は10,000ms。[middleware](./middleware.md) |
 
-軽量なチェーン、値と状態遷移の型安全、実行計画と実行の分離を保ちます。
-metadataを特定の表示・解析・実行戦略の用途へ限定しません。
+軽量なチェーン、値と状態遷移の型安全、テスト定義と実行の分離を保ちます。
+通常の実行入口は `run(test)` とし、blueprintはプラグイン作者に公開します。実行計画は実行器の内部で決めます。
 
 ## expectの書き心地を維持する
 
 e.fromで期待値ごとにコールバックを追加する案は撤回しました。
-e.ctxを含む現行の書き方を保ち、expectを遅延処理として公開します。
+`e.ctx`を含む現行の書き方を保ち、expectを遅延処理として公開します。
 実行前に全matcher・正常/例外の期待を得ることは初版の保証に含めません。
 事前構造化をさらに進める方式は継続検討ですが、未決の案を現在の契約として扱いません。
-[計画で得られる構造と評価時点](./metadata.md)が現在の約束です。
+[プラグイン向けblueprint](./metadata.md)が現在の約束です。
 
 ## 今回含めないもの
 
@@ -39,7 +39,7 @@ e.ctxを含む現行の書き方を保ち、expectを遅延処理として公開
 - module mockは初版に含めず、オブジェクトのメソッド境界を保ちます。
 
 既存の条件は通常の関数で組み合わせられるため、そのためだけの専用登録APIや再利用ドキュメントは追加しません。
-シナリオ全体を匿名targetへ包む推奨例も取り下げています。
+シナリオ全体を匿名のテスト対象関数へ包む推奨例も取り下げています。
 
 ## 契約を具体化する際の整理
 
@@ -67,7 +67,7 @@ caseは他のcaseの実行有無・実行順に依存しない独立した実行
 
 実行モデルは Run > Process * N とします。各execution processは一つのRunに所属し、同じhost runtimeでactiveなRunを重複させません。完了したRunの後に次のRunを開始することはできます。
 
-通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。shared fixtureはscope引数を `.use()` に増やさず、`group(middleware, child)` でgroup追加箇所そのものを一度囲む形にします。これにより共有ctxの型と実行順をtree構造から読めるようにします。shared fixtureは共有資源を用意するコストの共有であり、case間の順序依存を許す仕組みではありません。
+通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。shared fixtureはscope引数を `.use()` に増やさず、`group(middleware, child)` でgroup追加箇所そのものを一度囲む形にします。これにより共有コンテキストの型と実行順をtree構造から読めるようにします。shared fixtureは共有資源を用意するコストの共有であり、case間の順序依存を許す仕組みではありません。
 
 順序を持つ一連の操作は通常case間の依存として扱わず、flowというordered scenarioへ分離する方針を維持します。flow自体のAPIは今回確定しません。
 

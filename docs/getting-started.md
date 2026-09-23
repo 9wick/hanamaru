@@ -175,10 +175,10 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 上記のインストール・CLI実行は、公開パッケージがまだないため未検証です。
 リポジトリ内の例は `tsc -p docs/spec/tsconfig.json` で検証できます。
 
-次は[テストをグループにまとめる](./grouping.md)と[実行計画とmetadata](./metadata.md)を参照してください。
+次は[テストをグループにまとめる](./grouping.md)と[プラグイン向けblueprint](./metadata.md)を参照してください。
 
 ## 入力を並べる・実行設定を変える
 
 入力と期待だけが違うケースには[each](./each.md)を使えます。
-[timeoutとretry](./execution-options.md)はgroup・target・ケースで設定し、必要な項目だけ上書きできます。
+[timeoutとretry](./execution-options.md)はgroup、`.target()` の前後、ケースで設定し、必要な項目だけ上書きできます。
 [失敗の表示と結果](./results.md)には宣言位置が自動で残り、IDやソース位置の入力は不要です。

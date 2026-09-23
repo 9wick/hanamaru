@@ -19,7 +19,7 @@
 ## args / argsFrom
 
 `.args(...args)` は対象の引数をそのまま受け取ります。
-`.argsFrom(ctx => [...args])` はそのケースの親から子までのmiddlewareで用意したctxから引数タプルを作ります。
+`.argsFrom(ctx => [...args])` はそのケースの親から子までのmiddlewareで用意したコンテキストから引数タプルを作ります。
 
 ```ts
 .args(1, 2)
@@ -28,13 +28,13 @@
 
 上記は二者択一です。引数は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
 引数のない関数にも `.args()` を書きます。
-argsFromは各試行で、middlewareの前処理の後・targetの前に1回評価します。
+argsFromは各試行で、middlewareの前処理の後・テスト対象の呼び出し前に1回評価します。
 
 ## timeout / retry
 
 `.timeout(ms)` / `.retry(count)` でそのケースだけの実行設定を上書きします。
 argsの前後で使え、expect / expectCallsの後には変更できません。
-未指定の項目はgroup・targetから引き継ぎます。eachのtにも同じ操作があります。
+未指定の項目はgroupやケースに共通する設定から引き継ぎます。eachのtにも同じ操作があります。
 [timeoutとretry](./execution-options.md)を参照してください。
 
 ## mock
@@ -75,18 +75,18 @@ expectは結果・例外、expectCallsは呼び出しを検証します。
 
 expectCallsのコールバックは定義時に1回評価します。
 `call(obj, key)` はメソッドを呼ばず、マッチャがobject・key・条件を持つ記述子を作ります。
-それを計画へ保持するため、実行器はtargetを呼ぶ前に記録対象を確定できます。
+それをblueprintへ保持するため、実行器はテスト対象を呼ぶ前に記録対象を確定できます。
 mockやspyの事前登録は不要で、別途importする補助関数もありません。
 
-この段階ではmiddlewareは未実行です。callにctxはなく、対象参照と期待する引数は定義時に渡せる値を使います。
-実行時のctxを使う引数や結果の期待には、argsFromとexpectを使います。
+この段階ではmiddlewareは未実行です。callにコンテキストはなく、対象参照と期待する引数は定義時に渡せる値を使います。
+実行時のコンテキストを使う引数や結果の期待には、argsFromとexpectを使います。
 
 ## 結果の期待を組み立てる時点
 
-expectのコールバックは各試行のtarget終了後に1回評価します。
-`e.ctx` はmiddlewareが渡した値を順に反映したctxで、`e.result` と `e.error` は記述子を作るためのマッチャです。
+expectのコールバックは各試行でテスト対象の呼び出しが終わった後に1回評価します。
+`e.ctx` はmiddlewareが渡した値を順に反映したコンテキストで、`e.result` と `e.error` は記述子を作るためのマッチャです。
 対象が例外を投げた場合もresultの記述子は作れますが、実際の終了と合わなければ失敗します。
-コールバック自体のthrowはテストの失敗であり、targetに期待した例外として扱いません。
+コールバック自体のthrowはテストの失敗であり、テスト対象に期待した例外として扱いません。
 
-呼び出しの記述子は既に計画にあるため、expectの構築や結果の照合が失敗しても呼び出しの検証は続けます。
+呼び出しの記述子は既にblueprintにあるため、expectの構築や結果の照合が失敗しても呼び出しの検証は続けます。
 マッチャの一覧は[マッチャ](./api-expect.md)、型の仕組みは[型推論](./type-inference.md)を参照してください。

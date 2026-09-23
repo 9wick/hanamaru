@@ -1,5 +1,5 @@
 import { Test, middleware, run } from 'hanamaru'
-import type { MiddlewareResult, TestDefinition, TestPlan } from 'hanamaru'
+import type { GroupEntry, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
 import { add } from '../examples/math.ts'
 import { mailService } from '../examples/user.ts'
 import { registrations } from '../examples/groups.test.ts'
@@ -19,16 +19,16 @@ const parent = new Test()
   .use(middleware(async (_, next) => next({ seed: 2, extra: true })))
   .group(child)
   .group('同じ子をもう一度使う', child)
-run(parent.plan())
-run([parent.plan(), registrations.plan()])
+run(parent)
+run([parent, registrations])
 
 const nested = new Test<{ seed: number }>().group(child)
-run(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group(nested).plan())
+run(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group(nested))
 const independent = new Test().target(add)
   .it('ctxを要求しない', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
 new Test().group(independent)
 new Test().use(middleware(async (_, next) => next({ seed: 1 }))).group(independent)
-new Test().describe('共通設定を共有する')
+new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group(independent)
 new Test().mock(mailService, 'send', m => m.resolves(undefined))
@@ -49,23 +49,19 @@ new Test().group(nested)
 // @ts-expect-error type annotations must not erase required context.
 const erasedDefinition: TestDefinition = child
 // @ts-expect-error the child cannot run without its parent.
-run(child.plan())
+run(child)
 // @ts-expect-error arrays cannot hide a missing context provider.
-run([independent.plan(), child.plan()])
+run([independent, child])
 // @ts-expect-error a group's declared input is still required at the root.
-run(nested.plan())
-// @ts-expect-error type annotations must not erase plan requirements.
-const erasedPlan: TestPlan = child.plan()
+run(nested)
 // @ts-expect-error even locally shadowing an input does not remove an input contract.
-run(new Test<{ seed: number }>().use(middleware(async (_, next) => next({ seed: 1 }))).target(add).todo('後で').plan())
-// @ts-expect-error extracted child nodes cannot be run outside their context.
-run(parent.plan().children[0].plan)
+run(new Test<{ seed: number }>().use(middleware(async (_, next) => next({ seed: 1 }))).target(add).todo('後で'))
 
 // @ts-expect-error middleware is fixed after the first group.
 parent.use(middleware(async (_, next) => next({ seed: 4 })))
 // @ts-expect-error mock scope is fixed after the first group.
 parent.mock(mailService, 'send', m => m.resolves(undefined))
-// @ts-expect-error descriptions are also fixed after the first group.
+// @ts-expect-error describe is no longer part of the API.
 parent.describe('変更')
 // @ts-expect-error a group is a container; targets belong to its children.
 parent.target(add)
@@ -75,12 +71,16 @@ parent.it('対象なし', () => {})
 new Test().group(new Test())
 // @ts-expect-error a configured target needs at least one case.
 new Test().group(new Test().target(add))
-// @ts-expect-error an empty container cannot produce a plan.
-new Test().plan()
+// @ts-expect-error an empty container cannot be run.
+run(new Test())
 // @ts-expect-error group names are strings when present.
 new Test().group(123, independent)
-// @ts-expect-error metadata structure is readonly.
-parent.plan().children.push({ name: null, middleware: null, plan: independent.plan() })
+const parentBlueprint: TestBlueprint = parent.blueprint()
+const firstEntry: GroupEntry = parent.blueprint().children[0]
+// @ts-expect-error run accepts a completed test, not its blueprint.
+run(parentBlueprint)
+// @ts-expect-error blueprint structure is readonly.
+parent.blueprint().children.push({ name: null, middleware: null, blueprint: independent.blueprint() })
 
 // Each middleware receives the accumulated context; later fields replace earlier ones.
 new Test()
@@ -95,7 +95,7 @@ new Test()
     return [ctx.seed, 1]
   }).expect(e => [e.result.toBe(e.ctx.expected)]))
 
-new Test().target(add).use(middleware(async (_, next) => next({ seed: 2 })))
+new Test().target('加算', add).use(middleware(async (_, next) => next({ seed: 2 })))
   .it('期待のctxも同じ', t => t.args(1, 2).expect(e => {
     // @ts-expect-error expectations cannot replace context fields either.
     e.ctx.seed = 3
@@ -114,18 +114,18 @@ new Test().use(middleware(async (_, next) => next({ value: 1 })))
     return [ctx.value]
   }).expect(e => [e.result.toBe(1)]))
 
-const plan = registrations.plan()
-expectType<'group'>(plan.kind)
-expectType<string | null>(plan.name)
-for (const entry of plan.children) {
+const blueprint = registrations.blueprint()
+expectType<'group'>(blueprint.kind)
+expectType<string | null>(blueprint.name)
+for (const entry of blueprint.children) {
   expectType<string | null>(entry.name)
-  if (entry.plan.kind === 'test') {
-    expectType<readonly unknown[]>(entry.plan.cases)
+  if (entry.blueprint.kind === 'test') {
+    expectType<readonly unknown[]>(entry.blueprint.cases)
   } else {
-    expectType<readonly unknown[]>(entry.plan.children)
+    expectType<readonly unknown[]>(entry.blueprint.children)
   }
 }
-const result = await run(plan)
+const result = await run(registrations)
 for (const node of result.tests) {
   if (node.kind === 'group') expectType<readonly unknown[]>(node.children)
   else expectType<readonly unknown[]>(node.cases)
@@ -152,20 +152,12 @@ const sharedServer = middleware(async (_, next) => {
 const groupedWithMiddleware = new Test()
   .group(sharedServer, groupScopedChild)
   .group('名前付き', sharedServer, groupScopedChild)
-run(groupedWithMiddleware.plan())
+run(groupedWithMiddleware)
 
 // @ts-expect-error group middleware must supply the child's required context.
 new Test().group(middleware(async (_, next) => next({ other: true })), groupScopedChild)
 // @ts-expect-error named group middleware has the same context contract.
 new Test().group('不足', middleware(async (_, next) => next({ other: true })), groupScopedChild)
-
-for (const entry of groupedWithMiddleware.plan().children) {
-  if (entry.middleware) {
-    expectType<Function>(entry.middleware.run)
-    expectType<number | undefined>(entry.middleware.timeout)
-  }
-}
-
 
 const groupScopedCombinedChild = new Test<{ seed: number; server: SharedServer }>()
   .target((seed: number, server: SharedServer) => seed + server.port)
@@ -184,3 +176,9 @@ new Test()
       await server.close()
     }
   }), groupScopedCombinedChild)
+for (const entry of groupedWithMiddleware.blueprint().children) {
+  if (entry.middleware) {
+    expectType<Function>(entry.middleware.run)
+    expectType<number | undefined>(entry.middleware.timeout)
+  }
+}

@@ -21,15 +21,15 @@ const users = new Test()
 
 | 段階 | 使える操作 |
 |---|---|
-| 対象・子を追加する前 | describe、use、mock、timeout、retry、target、group |
-| 対象を決めた後、ケースの前 | describe、use、mock、timeout、retry、it / each / only / skip / todo |
-| 最初のケースを追加した後 | it / each / only / skip / todo、plan |
-| 最初のgroupを追加した後 | group、plan |
+| テスト対象・子を追加する前 | use、mock、timeout、retry、target、group |
+| テスト対象を決めた後、ケースの前 | use、mock、timeout、retry、it / each / only / skip / todo |
+| 最初のケースを追加した後 | it / each / only / skip / todo、blueprint |
+| 最初のgroupを追加した後 | group、blueprint |
 
-対象は一度決めたら固定します。最初のケース・group以降は共通設定も固定します。
-対象を持つテストと、子を持つグループのどちらも `new Test()` から作れます。
-グループ自体は対象・ケースを持たず、子ごとに異なる対象をまとめられます。
-useはtargetの前後どちらにも書けます。
+テスト対象は一度決めたら固定します。最初のケース・group以降は共通設定も固定します。
+一つのテスト対象とケースを持つ対象ケース群、子を持つグループのどちらも `new Test()` から作れます。
+グループ自体はテスト対象・ケースを持たず、子ごとに異なるテスト対象をまとめられます。
+useは `.target()` の前後どちらにも書けます。
 各メソッドは新しいビルダーを返すため、元のビルダーから別の派生を作れます。
 
 ```ts
@@ -40,27 +40,20 @@ const tests = base.it('足す', t => t.args(1, 2).expect(e => [e.result.toBe(3)]
 // base.use(...) は可能。ケースを含まない別の派生になる。
 ```
 
-## target
+## テスト対象を指定する: target
 
 ```ts
 new Test().target(createUser)
 new Test().target(userService, 'create')
+new Test().target('ユーザー作成', createUser)
+new Test().target('保存', userService, 'create')
 ```
 
-関数、またはオブジェクトとメソッド名を渡します。
+関数、またはオブジェクトとメソッド名を渡します。先頭に名前を付けることもできます。
 後者は `this` をそのオブジェクトに束縛します。非関数のキーや省略可能なメソッドは型エラーです。
 関数の型から、argsの `Parameters<F>` とresultの `Awaited<ReturnType<F>>` が決まります。
-追加の名前やソース情報は不要です。
-
-## describe
-
-```ts
-new Test().target(createUser).describe('ユーザー作成')
-```
-
-任意の表示名です。省略時は関数名、メソッド形式ではメソッド名を使います。
-名前のない関数には `anonymous` を使います。表示名をソース上の識別情報とは扱いません。
-グループにも設定できます。グループでは省略時に名前を補わず、計画のnameをnullにします。
+名前を省略すると関数名、メソッド形式ではメソッド名を使います。名前のない関数には `anonymous` を使います。
+名前は表示用であり、ソース上の識別情報とは扱いません。グループ自身は無名です。
 
 ## group
 
@@ -73,19 +66,19 @@ const tests = new Test()
 
 関連するテストをまとめ、共通設定の範囲を作ります。完成済みのテストまたはグループを渡します。
 名前は任意で、一意性も要求しません。
-`group(name, child)` の名前はその場所の見出しであり、元の子のdescribeを変更しません。
+`group(name, child)` の名前はその追加箇所の見出しであり、元の子の名前を変更しません。
 親のmock・use・timeout・retryは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
 同じ子を別の親や同じ親の複数箇所へ合成することもでき、それぞれ独立した実行箇所になります。
 
-`group(middleware, child)` では、middlewareをそのchild全体に一度だけ適用できます。`next(fields)` が渡す型はchildのctxへ供給されます。名前付きは `group(name, middleware, child)` です。
+`group(middleware, child)` では、middlewareをそのchild全体に一度だけ適用できます。`next(fields)` が渡す型はchildのコンテキストへ供給されます。名前付きは `group(name, middleware, child)` です。
 通常の `.use()` が各caseの各attemptを囲むのに対し、group middlewareはその追加箇所のchild全体を囲みます。
 
-子は元のctxの型を保ちます。親のctxが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
+子は元のコンテキストの型を保ちます。親のコンテキストが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
 親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](./grouping.md)を参照してください。
 
 ## timeout / retry
 
-`.timeout(ms)` と `.retry(count)` はtargetの前後に設定でき、groupにも引き継がれます。
+`.timeout(ms)` と `.retry(count)` は `.target()` の前後に設定でき、groupにも引き継がれます。
 内側で明示した項目だけを上書きし、各ケースのtでも変更できます。最初のケース・group以降は共通設定を固定します。
 既定値はtimeoutが5,000ms、retryが0です。
 [timeoutとretry](./execution-options.md)に設定の解決順・表示・停止保証を記載しています。
@@ -110,7 +103,7 @@ new Test()
 
 ケースの各試行を囲むmiddlewareを登録します。定義時には実行しません。
 `middleware(fn, options?)` が返す値だけを受け取り、関数をそのまま渡すと型エラーです。
-nextに渡したフィールドの型が、middlewareから返す完了値を通じて後続のctxへ伝わります。
+nextに渡したフィールドの型が、middlewareから返す完了値を通じて後続のコンテキストへ伝わります。
 追加がなければ `return await next()` と書けます。値を渡すだけなら `next(fields)` だけを呼びます。
 DB等の資源は `{ db }` のようにフィールドへ入れます。
 
@@ -125,9 +118,9 @@ new Test()
 ```
 
 各ケースの各試行は新しい `{}` から始め、親から子の順にmiddlewareを実行します。
-最終的なctxがargsFromとe.ctxに渡ります。同名のフィールドは後の値・型を優先します。
+最終的なコンテキストがargsFromと`e.ctx`に渡ります。同名のフィールドは後の値・型を優先します。
 use・mockは最初のケース・groupより前に登録します。
-ctxのフィールドは読み取り専用ですが、フィールドが参照するオブジェクト自体は共有します。
+コンテキストのフィールドは読み取り専用ですが、フィールドが参照するオブジェクト自体は共有します。
 
 nextは後続のmiddleware・対象・期待の検証・復元を囲みます。
 グループでも各試行ごとに呼び、後処理は内側から外側へ戻ります。
@@ -161,7 +154,7 @@ expectとexpectCallsはそれぞれ1回ずつ、どちらの順でも書けま�
 todoは名前だけを受け取ります。名前の一意性は要求しません。
 ケース内で追加・上書きしたモックは次のケースに漏れません。
 
-実行器に渡す計画全体にonlyがあればonlyだけを実行します。skipとtodoではmiddleware・targetを呼びません。
+実行器に渡すテスト全体にonlyがあればonlyだけを実行します。skipとtodoではmiddleware・テスト対象を呼びません。
 詳細は[it ビルダー](./api-it.md)と[実行セマンティクス](./semantics.md)を参照してください。
 
 ## each
@@ -171,14 +164,14 @@ bodyは `(t, row) => ...` の形で、tの操作はitと同じです。eachの�
 行から引数と期待値の型を検査し、最初のeach以降は共通設定を固定します。
 [each](./each.md)にそのまま使える例と、行名・位置・実行の契約があります。
 
-## plan
+## blueprint（プラグイン向け）
 
 ```ts
-const plan = users.plan()
+const blueprint = users.blueprint()
 ```
 
-1ケース以上あるテスト、または完成済みの子を1つ以上持つグループから、読み取り専用の実行計画を取得します。
+1ケース以上あるテスト、または完成済みの子を1つ以上持つグループから、読み取り専用のblueprintを取得します。
 todoだけの定義も含みます。
-middleware・targetは実行しません。戻り値の構造は[実行計画とmetadata](./metadata.md)を参照してください。
-親ctxを要求する定義でも計画は取得できますが、そのままrunへ渡すと型エラーです。
-CLIに収集させるファイルでは、必要なctxを用意したルートをexportします。
+middleware・テスト対象は実行しません。戻り値の構造は[プラグイン向けblueprint](./metadata.md)を参照してください。
+親のコンテキストを要求する定義でもblueprintは取得できますが、`run()` へ渡せるのは親のコンテキストを要求しない完成したテストです。blueprintは `run()` の入力ではありません。
+CLIに収集させるファイルでは、必要なコンテキストを用意したルートをexportします。

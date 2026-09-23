@@ -1,7 +1,7 @@
 # hanamaru
 
 Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
-対象・モック・引数・期待を書けば、その定義が構造化された実行計画になります。
+対象・モック・引数・期待を書き、完成したテストを `run(test)` で実行します。
 
 ```ts
 import { Test } from 'hanamaru'
@@ -126,7 +126,7 @@ middlewareは一度だけserverを用意し、`next({ server })` の値をuserTe
 
 ## 実行設定を下流へ渡す
 
-`.timeout(1_000)` と `.retry(2)` はgroup・target・ケースで設定できます。
+`.timeout(1_000)` と `.retry(2)` はgroup、`.target()` の前後、ケースで設定できます。
 内側で指定した項目だけを上書きし、未指定の項目は親から引き継ぎます。
 retryは失敗したケースだけを再試行し、各試行を結果に残します。
 [timeoutとretry](./docs/execution-options.md)に設定例と停止の保証を記載しています。
@@ -134,7 +134,7 @@ retryは失敗したケースだけを再試行し、各試行を結果に残し
 ## ケースは独立して実行できる
 
 各caseは、他のcaseが実行されたか、どの順序で実行されたかに依存しないものとして扱います。
-宣言順は表示・metadataの順序であり、case間の依存を表しません。middleware・mock・ctx・呼び出し記録は各attemptで作り直します。
+宣言順は表示上の順序であり、case間の依存を表しません。middleware・mock・コンテキスト・呼び出し記録は各attemptで作り直します。
 将来のshuffle・並列実行・複数processへの配置でも意味が変わらないtestを基本にし、順序を持つ一連の操作は通常のcaseとは分けてflowとして扱う方針です。
 
 ## 資源の取得と解放を同じ場所に書く
@@ -150,22 +150,21 @@ retryは失敗したケースだけを再試行し、各試行を結果に残し
 }))
 ```
 
-middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型は後続のargsFromやe.ctxへ伝わります。
+middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型は後続のargsFromや`e.ctx`へ伝わります。
 値を渡すだけなら `.use(middleware(async (_, next) => next({ expected: 3 })))` と書けます。
 詳しくは[middleware](./docs/middleware.md)を参照してください。
 
-## 定義は実行計画になる
+## 定義したテストを実行する
 
 ```ts
 import { run } from 'hanamaru'
 import { users } from './user.test.ts'
 
-const plan = users.plan()
-const result = await run(plan)
+const result = await run(users)
 ```
 
-`.plan()` はテストを実行せず、グループの階層、対象、middleware、各スコープの実行設定・モック、引数、呼び出し条件、結果の期待の組み立て方、宣言位置を返します。
-この実行計画がmetadataです。定義することと、実行することを分離します。
+プラグイン作者は `users.blueprint()` で、グループの階層、テスト対象、middleware、実行設定・モック、ケース、宣言位置などを実行前に参照できます。通常の実行ではblueprintを取得する必要はありません。
+実行器はテストからblueprintを得て、内部で実行計画を決めます。[blueprint](./docs/metadata.md)に取得できる内容と評価時点を記載しています。
 テストを書くために、識別子やソース位置を別途登録する必要はありません。
 
 失敗には宣言位置を自動で添え、条件・期待・観測・原因を構造として返します。
@@ -178,7 +177,7 @@ createUser
       actual:   合計2回
 ```
 
-expectは現在の書き方と実行時のctxを保つため、計画では遅延処理として保持します。
+expectは現在の書き方と実行時のコンテキストを保つため、blueprintでは遅延処理として保持します。
 全ての条件を実行前に展開する保証はありません。[宣言位置と実行結果](./docs/results.md)も参照してください。
 
 ## ドキュメント
@@ -189,7 +188,7 @@ expectは現在の書き方と実行時のctxを保つため、計画では遅�
 - [モック](./docs/api-mock.md) / [マッチャ](./docs/api-expect.md)
 - [テストをグループにまとめる](./docs/grouping.md) / [middleware](./docs/middleware.md)
 - [each](./docs/each.md) / [timeoutとretry](./docs/execution-options.md)
-- [実行計画とmetadata](./docs/metadata.md) / [宣言位置と実行結果](./docs/results.md)
+- [プラグイン向けblueprint](./docs/metadata.md) / [宣言位置と実行結果](./docs/results.md)
 - [実行セマンティクス](./docs/semantics.md) / [CLI](./docs/cli.md)
 - [型推論](./docs/type-inference.md) / [制約と実装状況](./docs/limitations.md)
 - [用語集](./docs/glossary.md)

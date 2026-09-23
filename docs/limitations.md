@@ -7,7 +7,7 @@ READMEとAPIページは、実装する公開契約を記述している。
 
 | 対象 | 状態 |
 |---|---|
-| ビルダー・実行計画・実行のAPI仕様 | 文書化済み |
+| ビルダー・プラグイン向けblueprint・実行のAPI仕様 | 文書化済み |
 | 公開APIの設計用型契約 | `docs/spec/hanamaru.d.ts` |
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
 | ビルダー・ランナー・CLIの実装 | 未実装 |
@@ -22,7 +22,7 @@ READMEとAPIページは、実装する公開契約を記述している。
 Nodeのtype strippingは22.18で既定有効になった。設定例では5.8で導入された `erasableSyntaxOnly` を使う。
 [Nodeの公式説明](https://nodejs.org/docs/latest-v22.x/api/typescript.html)、[TypeScript 5.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html)を参照。
 
-Bun 1.3以上での実行も対応目標とする。Nodeと同じ計画・実行セマンティクスを使う。
+Bun 1.3以上での実行も対応目標とする。Nodeと同じblueprint・実行セマンティクスを使う。
 最低バージョンでの動作とNode/Bun間の同等性は、ランナー実装後に検証する。現時点の対応実績とは区別する。
 
 ## TypeScriptの実行
@@ -47,27 +47,27 @@ Bunではランタイムの解決を使い、同じimportが同じ対象を読�
 Nodeはnode_modules内のTypeScript実行も制限するため、配布パッケージはJavaScriptと型定義を含む形を想定する。
 テスト側のソースはプロジェクト内に置く。
 
-## 計画の性質
+## blueprintの性質
 
-TestPlanには実行に必要な関数や参照を保持する。JSONで往復可能とは限らない。
+TestBlueprintには実行に必要な関数や参照を保持する。JSONで往復可能とは限らない。
 任意関数の内部動作や依存を完全に解析する機能も含まない。
-expectは遅延した処理として保持し、plan取得時にはその内部のアサーション一覧まで展開しない。
-expectCallsは定義時に記述子へ展開し、planから対象・キー・条件を取得できる。
-文脈から得る値は、その取得方法を実行前の計画に保持する。
-[実行計画とmetadata](./metadata.md)を参照。
+expectは遅延した処理として保持し、blueprint取得時にはその内部のアサーション一覧まで展開しない。
+expectCallsは定義時に記述子へ展開し、blueprintから対象・キー・条件を取得できる。
+文脈から得る値は、その取得方法をblueprintに保持する。
+[プラグイン向けblueprint](./metadata.md)を参照。
 
-計画はreadonlyだが、利用者から渡されたオブジェクト内部まで複製・凍結しない。
-ctxはnextへの追加フィールドを反映するたびに新しい入れ物へフィールドを引き継ぐが、フィールドが参照する資源や値は複製しない。
+blueprintはreadonlyだが、利用者から渡されたオブジェクト内部まで複製・凍結しない。
+コンテキストはnextへの追加フィールドを反映するたびに新しい入れ物へフィールドを引き継ぐが、フィールドが参照する資源や値は複製しない。
 ケース間で独立した値を使うには、middleware・argsFromで生成する。
 
 呼び出しの検証にはmock登録を要求しない。指定した参照そのものを記録対象にする。
 構造が同じ別オブジェクトを間違えて指定したかどうかまでは、型で判定できない。
 
-親ctxの要求はTypeScript上の契約であり、実行時のスキーマではない。
+親のコンテキストの要求はTypeScript上の契約であり、実行時のスキーマではない。
 `group` と `run` の型検査では不足を防ぐが、型チェックをしないCLIはexportされた定義の型引数を検査できない。
-収集するテストファイルには親ctxを要求しないルートをexportし、親ctxが必要な子は探索対象外に置く。
+収集するテストファイルには親のコンテキストを要求しないルートをexportし、親のコンテキストが必要な子は探索対象外に置く。
 
-middlewareの戻り値から後続ctxを推論するため、nextの完了値を返す必要がある。
+middlewareの戻り値から後続コンテキストを推論するため、nextの完了値を返す必要がある。
 `return await next(...)` のreturn忘れは型で防ぐが、nextの呼び出し回数や待機の正しさは実行時にも検査する。
 finally内の早すぎる解放を型で防ぐことはできない。後処理がある場合は `return next(...)` ではなくawaitしてから返す。
 
@@ -83,7 +83,7 @@ finally内の早すぎる解放を型で防ぐことはできない。後処理�
 初版の標準実行器は直列・宣言順で実行しますが、その順序は利用者が依存できる保証ではありません。
 将来のshuffle・parallel・sharding・複数process配置で順序や配置が変わっても意味が変わらないtestを前提とします。
 
-runnerはhanamaru自身が管理するctx・mock・呼び出し記録を各attemptで作り直します。
+runnerはhanamaru自身が管理するコンテキスト・mock・呼び出し記録を各attemptで作り直します。
 process.env、module state、global、filesystem、外部DB等の利用者側の共有状態を自動で複製・復元する保証はありません。必要な初期化と復元はcase自身の実行境界に含めます。
 
 順序を持つscenarioは通常case間の依存として表さず、将来のflowへ分離する方針です。
@@ -92,8 +92,8 @@ process.env、module state、global、filesystem、外部DB等の利用者側の
 ## 初版の実行契約
 
 宣言位置の自動取得、構造化した失敗、各試行の結果、timeout・retry、each、mock sequence、nthの呼び出し条件を含めます。
-timeout・retryはgroup・target・ケースで項目ごとに継承・上書きします。middlewareの前処理期限・後処理期限は `middleware(fn, { timeout })` に持たせます。
-標準CLIは期限超過後の停止を保証し、run(plan)単独は同一プロセスの処理と後始末を待ちます。
+timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継承・上書きします。middlewareの前処理期限・後処理期限は `middleware(fn, { timeout })` に持たせます。
+標準CLIは期限超過後の停止を保証し、run(test)単独は同一プロセスの処理と後始末を待ちます。
 未終了の処理・未完了の復元を次ケースへ持ち越しません。実装とランタイム検証はこれからです。
 
 ## 初版の実行器に含めないもの
@@ -108,6 +108,6 @@ timeout・retryはgroup・target・ケースで項目ごとに継承・上書き
 - ビルダーコールバックや任意の述語の静的解析
 - 型チェックの内蔵（通常のtest scriptから `tsc` を実行する）
 
-これらは標準の提供範囲であり、計画の利用方法を制限するものではありません。
-expectの事前構造化は書き心地を保つ方式が未決です。初版はe.ctxを含む現行の書き方と遅延評価を契約にします。
+これらは標準の提供範囲であり、プラグインによるblueprintの利用方法を制限するものではありません。
+expectの事前構造化は書き心地を保つ方式が未決です。初版は`e.ctx`を含む現行の書き方と遅延評価を契約にします。
 実行時依存0は実装目標。TypeScript等の開発依存まで0という意味ではない。
