@@ -9,7 +9,8 @@
 |---|---|---|
 | F: テスト対象の関数型 | `.target()` | args、argsFrom、result |
 | C: その段階のコンテキスト型 | 親への要求型、useでnextへ渡す値 | 次のuse、argsFrom、`e.ctx` |
-| R: 親に要求するコンテキスト型 | new Test<R>()。省略時は{} | groupの供給チェック、runのルートチェック |
+| R: 各attemptで親に要求するコンテキスト型 | new Test<R, G>()の第1型引数。省略時は{} | use・argsFrom・expect、groupの供給チェック |
+| G: group開始前に親に要求するコンテキスト型 | new Test<R, G>()の第2型引数。省略時は{} | group middleware、groupの供給チェック |
 
 引数は `Parameters<F>`、結果の期待値は `Awaited<ReturnType<F>>` です。
 `next(fields)` へ渡したフィールドの型SをCへ追加し、同名のフィールドは置き換えます。
@@ -48,7 +49,8 @@ useは `middleware()` が返す値からSを推論し、後続のCへ追加し�
 `next()` はフィールドを追加せずCを保ちます。同名フィールドは置き換えます。
 親のuseで供給したフィールドも、groupで子が要求する型と照合します。
 
-`.use()` / `.group()` の引数に直接書いたmiddlewareのコンテキストは、その位置のCから型付けします。注釈は不要です。
+`.use()` の引数に直接書いたmiddlewareはその位置のC、`.group()` のmiddlewareはGからコンテキストを型付けします。注釈は不要です。
+useが追加するフィールドはCだけを拡張し、group開始前に必要なGの供給には使いません。
 変数へ入れて使い回すmiddlewareには文脈がないため、引数を `Ctx<…>` で包んで要求を書きます。
 `Ctx<C>` は要求するフィールドとhanamaruがコンテキストへ足すフィールドを合わせた公開型で、Cはここから推論します。
 要求を型パラメータに書かないのは、TypeScriptが型引数の部分推論をできず、nextへ渡すSの推論が失われるためです。
@@ -57,8 +59,8 @@ useは `middleware()` が返す値からSを推論し、後続のCへ追加し�
 ## 設定とケース追加を分ける
 
 ```text
-Test<R> → .target() → TestBuilder<F, C, R> → it → Suite<F, C, R>
-        → group → GroupSuite<C, R>
+Test<R, G> → .target() → TestBuilder<F, C, R, G> → it → Suite<F, C, R, G>
+           → group → GroupSuite<C, R, G>
 ```
 
 TestBuilderはuse・mockとケース追加を持ち、Suiteはケース追加とblueprintだけを持ちます。
@@ -96,15 +98,21 @@ run(parent)
 ```
 
 childは親に `{ a: number }` を要求します。親に余分なフィールドがあっても合成できます。
-`group([first, second])` では配列内の全子について供給を検査します。group middlewareが値を渡す場合は、その値を全子の要求に使えます。
+`group([first, second])` では配列内の全子について、各attemptの要求RをCで、group開始前の要求Gを親のGで満たすか別々に検査します。
+group middlewareが `next(fields)` へ渡した型Sは、そのgroupの子へ供給するCとGの両方を拡張します。同じチェーンの次のgroupには供給しません。
 不足や型違い、必須フィールドに対するoptionalな供給は型エラーです。
 子が型パラメータを省略すれば、親のコンテキストへの要求はありません。
 
-Rは子の定義を作っている間ずっと親への要求として保持します。
-子自身のmiddlewareで同名のフィールドを供給しても、それより前のコードがRを利用し得るので要求は消しません。
-間のグループも `new Test<R>()` で必要なコンテキストを宣言し、さらに外側の親から受け取れます。
+RとGは子の定義を作っている間ずっと親への要求として保持します。
+子自身のmiddlewareで同名のフィールドを供給しても、それより前のコードが要求を利用し得るので消しません。
+間のグループも `new Test<R, G>()` で必要なコンテキストを宣言し、さらに外側の親から受け取れます。
 
-完成したテストとblueprintは親への要求を型として保持します。runへ渡せるのは `{}` から実行できるルートだけです。
+group middlewareが親のseedを使う場合は `new Test<{}, { seed: number }>()` と宣言します。
+親の `.use()` でseedを用意しても、その処理はgroup開始後なので要求を満たしません。外側のgroup middlewareから `next({ seed })` で渡します。
+Gだけに書いたフィールドは、use・argsFrom・expectで参照できる型には追加しません。各attemptでも親のseedを読む場合はRにも宣言します。
+具体例は[group開始前に必要な値](./grouping.md#group開始前に必要な値)を参照してください。
+
+完成したテストとblueprintは `TestDefinition<R, G>` / `TestBlueprint<R, G>` として両方の要求を保持します。runへ渡せるのはRとGの両方を `{}` で満たすルートだけです。
 親のコンテキストを要求する子もblueprintは取得できますが、単独実行やrunへ渡す配列への混入を型で防ぎます。
 
 ## モックの型と呼び出しの型
@@ -164,7 +172,7 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 ## 型の限界
 
 親のコンテキストの要求型はJavaScriptでは消えるため、CLIはexportされた子が親のコンテキストを要求するか検査できません。
-型が防ぐのはgroup・runを呼ぶ際の不足です。CLIへ公開するルートには必要なコンテキストを全て用意し、子は探索対象外のファイルに置きます。
+型が防ぐのはgroup・runを呼ぶ際のR・Gそれぞれの不足です。CLIへ公開するルートには必要なコンテキストを全て用意し、子は探索対象外のファイルに置きます。
 型引数を宣言するだけで値が生成されることはありません。
 
 同じ構造の別オブジェクトはTypeScriptの型だけでは区別できません。

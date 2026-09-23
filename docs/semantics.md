@@ -61,9 +61,12 @@ RunのPromiseは、そのRunが所有する開始済みのexecution processと�
 `group(middleware, [children])` のmiddlewareは、そのgroupの子全体を一度だけ囲みます。
 通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
 
-group middlewareへ渡すコンテキストは、そのgroup定義が外側から要求する安定したコンテキストです。
+group middlewareへ渡すコンテキストは、外側のgroup middlewareが渡したフィールドを重ねた安定したコンテキストです。ルートは新しい `{}` から始めます。
+`new Test<R, G>()` のGはこの時点の要求、Rは各attemptの要求です。通常の `.use()` は各attemptの型Cだけを拡張し、Gを供給しません。
 親ノードのmiddlewareは各attemptで実行されるため、そこで初めて作る値をgroup middlewareの前処理へ渡すことはしません。
 一方、group middlewareが `next(fields)` へ渡した値は、全子の各attemptで親の試行ごとのコンテキストと合成し、各子のargsFrom・expectから参照できます。
+各attemptではそのgroupに至る親のstepsを実行してから、保存した追加フィールドを浅く重ね、子のstepsへ進みます。group middleware自体を再実行することはありません。
+入れ子のgroup前処理にも、外側のgroupが渡した値を重ねて渡します。親のattempt用stepsによる同名フィールドの上書きは、この安定したコンテキストを変更しません。
 
 実行の概略は次のとおりです。
 
@@ -77,7 +80,9 @@ group middlewareの前処理
 group middlewareの後処理
 ```
 
-前処理が失敗した場合は全子のcaseを開始しません。後処理が失敗した場合はrunを失敗として後続を中断します。
+前処理が失敗した場合は全子の実行対象caseを開始せず、notRun: cancelledとします。失敗はgroup middlewareの結果へ記録し、runをfailedにします。
+通常の前処理例外で復元・後処理が完了した場合はgroup外の後続を続行し、他の中断原因がなければreasonはcompletedです。timeoutや後処理の失敗ではrun全体の後続を中断します。
+後処理が失敗した場合はrunを失敗として後続を中断します。
 共有資源を残したまま次のgroupへ進まないことは、通常のcleanup failureと同じ保証です。
 group middlewareはどのattemptにも含まれないため、効く期限は `middleware(fn, { timeout })` の前処理期限・後処理期限だけです。
 group middlewareに包まれた全子は、その共有資源のlifetime中は同じexecution processで実行します。

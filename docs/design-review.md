@@ -74,3 +74,12 @@ caseは他のcaseの実行有無・実行順に依存しない独立した実行
 ## ゼロ設定の探索
 
 CLIのinclude未指定時は `**/*.{test,spec}.ts` を使います。ゼロ設定の `hanamaru` で `.test.ts` と `.spec.ts` を収集できることを公開契約にします。
+
+## group開始前の要求と失敗集約
+
+`new Test<R, G>()` で、各attemptが親に要求するRと、group開始前に要求するGを分けます。どちらも既定は `{}` です。
+useは各attemptのコンテキストだけを拡張します。group middlewareの追加フィールドは、そのgroupの子に対して両方の要求を満たせます。
+group・runは両要求を別々に検査し、定義・blueprintの型注釈や入れ子で要求を消しません。group前処理が親のattemptで初めて生成される値に依存する合成を型で防ぎます。
+
+runの失敗条件には、階層内のgroup middlewareの失敗も含めます。前処理の通常例外で子の試行が一つも始まらなくても、runはfailed / completed、CLIはコード1です。
+復元・後処理が完了した通常の前処理失敗はgroup外の後続を続行し、timeout・後処理失敗は後続を中断します。状態の対応は[終了状態の表](./results.md#終了状態の表)で定めます。

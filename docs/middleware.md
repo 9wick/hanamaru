@@ -33,6 +33,7 @@ middlewareは `middleware(fn, options?)` で作ります。
 fnは `(ctx, next) => ...`、optionsは `{ timeout }` です。
 
 `.use()` / `.group()` の引数にそのまま書いた場合、コンテキストの型は書いた場所から決まります。注釈は不要です。
+`.use()` は各attemptの型C、`.group()` は `new Test<R, G>()` のGを使います。親のuseが作る値をgroup前処理では読めません。[group開始前に必要な値](./grouping.md#group開始前に必要な値)を参照してください。
 
 変数へ入れて使い回すmiddlewareが上流のコンテキストを読む場合だけ、引数を `Ctx<…>` で包んで要求を書きます。
 `Ctx<C>` は、利用者が要求するフィールドと、hanamaruがコンテキストへ足すフィールドを合わせた公開型です。

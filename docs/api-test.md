@@ -73,6 +73,7 @@ const tests = new Test()
 通常の `.use()` が各caseの各attemptを囲むのに対し、group middlewareは追加した子グループ全体を囲みます。
 
 子は元のコンテキストの型を保ちます。親のコンテキストが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
+group前処理で親の値が必要な場合は、第2型引数の `new Test<R, G>()` でGを宣言します。Gは外側のgroup middlewareから供給し、各attemptで動くuseでは満たせません。
 親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](./grouping.md)を参照してください。
 
 ## timeout / retry

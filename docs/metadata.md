@@ -89,6 +89,7 @@ for (const group of blueprint.children) {
 ```
 
 親のコンテキストを要求する子もblueprintを取得できますが、runに渡せるのは親のコンテキストを要求しない完成したルートのテストです。
+`TestDefinition<R, G>` と `TestBlueprint<R, G>` は各attemptの要求Rとgroup開始前の要求Gを別々に保持します。runでは両方を検査します。階層内のchildrenでは両要求を隠します。
 この区別は型上の契約であり、型引数から実行時のコンテキストスキーマを生成するものではありません。
 階層から取り出した子のblueprintは要求型を隠しており、そもそもblueprint自体はrunの入力ではありません。
 

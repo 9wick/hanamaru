@@ -144,7 +144,8 @@ middleware結果にはstatus・durationMs・failures・cleanupを保持します
 各failureはphaseにbefore / after / contractを持ち、期限超過ではその期限も残します。
 実行対象がなくmiddlewareを開始しなかった場合や、外側の中断で開始しなかった場合はnot-runとして理由を残します。
 前処理の失敗では全子の実行対象caseをnotRun: cancelledとし、後処理の失敗では既存の子の結果を保持したままrunをfailedにして後続を中断します。
-前処理期限・後処理期限の超過も同じ扱いです。
+通常の前処理例外で復元・後処理が完了した場合はgroup外の後続を続行します。runのstatusはfailed、他の中断原因がなければreasonはcompletedです。子に架空のfailed試行を追加しません。
+前処理期限・後処理期限の超過ではrunをfailed / timeoutとし、group外も含めて後続を中断します。
 caseの通常失敗やretryではgroup middlewareを終了・再作成せず、全子の実行が終わってから後処理へ進みます。
 
 ## run全体
@@ -171,6 +172,10 @@ case列は最後の試行またはnotRunから求める値であり、CaseResult
 | 最初の試行の開始前にCtrl+C | 試行なし | cancelled（notRun） | cancelled / interrupted | notRun: cancelled |
 | Ctrl+C後の復元・後始末で失敗 | failed | failed | failed / cleanup-failed | notRun: cancelled |
 | timeout後の復元・後始末で失敗 | failed | failed | failed / timeout | notRun: cancelled |
+| group前処理の通常例外（復元・後処理は完了） | 試行なし | 配下はcancelled（notRun） | failed / completed | 配下は開始せず、group外は続行 |
+| group後処理の失敗 | 既存の試行を保持 | 配下の既存結果を保持 | failed / cleanup-failed | notRun: cancelled |
+| group前処理のtimeout | 試行なし | 配下はcancelled（notRun） | failed / timeout | notRun: cancelled |
+| group後処理のtimeout | 既存の試行を保持 | 配下の既存結果を保持 | failed / timeout | notRun: cancelled |
 
 ### 状態の判定と事象が重なる場合
 
@@ -181,8 +186,9 @@ case列は最後の試行またはnotRunから求める値であり、CaseResult
 - 中断後はretry・次のケース・未開始の検証を開始しません。進行中の処理が戻れば復元・後始末へ進み、そこで実際に発生した失敗も記録します。
 - cleanupは全ての復元・後始末が成功すればcomplete、失敗や未完了があればincompleteです。必要な後始末がない場合はcompleteです。kind: timeoutのcleanupも、結果確定時の同じ値を保持します。
 
-runのstatusは、timeout・cleanup失敗・caseの派生値がfailed・failOnFlakyの条件に該当するケースのいずれかがあればfailedです。
+runのstatusは、timeout・cleanup失敗・caseの派生値がfailed・階層内のgroup middlewareがfailed・failOnFlakyの条件に該当するケースのいずれかがあればfailedです。
 それらがなくinterruptedならcancelled、通常完了ならpassedです。途中で失敗してもretryで成功したケースは、failOnFlakyを指定しない限りrunを失敗にしません。
+group前処理だけが失敗し、全ケースのattemptsが空でもrunはfailedです。group middlewareの失敗はcaseのretryでは取り消しません。先にgroupの失敗を記録してからCtrl+Cを受けた場合もstatusはfailedを保ち、他の優先する原因がなければreasonをinterruptedにします。
 公開型では `passed/completed` と `cancelled/interrupted`、および `failed` と上記の終了理由の組だけを許します。試行の `passed` は失敗記録なし・後処理完了、`failed` は失敗記録ありに制限します。ケースの `attempts` と `notRun` も排他的です。
 対象ケース群の状態はcasesから導き、TestResultにはstatusを保存しません。最後の試行がfailedのケースがあればfailed、そうでなく最後の試行がcancelledまたはnotRunがcancelledのケースがあればcancelled、それ以外はpassedです。skipped/todoのケースは集約に影響せず、それらだけならpassedです。
 グループの状態はchildrenとgroup middlewareの結果から導き、GroupResultにもstatusを保存しません。子の派生状態またはmiddlewareがfailedならfailed、失敗がなく子またはmiddlewareがcancelledならcancelled、それ以外はpassedです。middlewareのnot-runはreasonがcancelledならcancelled、no-runnable-casesなら集約に影響しません。
