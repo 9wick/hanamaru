@@ -1,9 +1,14 @@
-import { Test, run } from 'hanamaru'
+import { Test, middleware, run } from 'hanamaru'
 import { add } from '../examples/math.ts'
 import { createUser, userRepository, mailService } from '../examples/user.ts'
 
 const ready = new Test().target(add)
+const named = new Test().target('加算', add)
+const namedMethod = new Test().target('保存', userRepository, 'save')
+void [named, namedMethod]
 const suite = ready.it('足す', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
+// @ts-expect-error describe was removed; target and group accept optional names directly.
+new Test().describe('旧API')
 // @ts-expect-error target is fixed once selected.
 ready.target((s: string) => s)
 // @ts-expect-error no common configuration after the first case.
@@ -11,9 +16,9 @@ suite.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
 // @ts-expect-error suite cannot replace its target.
 suite.target((s: string) => s)
 // @ts-expect-error suite cannot replace its context.
-suite.setup(() => ({ n: 1 }))
-// @ts-expect-error incomplete builders cannot produce an executable plan.
-ready.plan()
+suite.use(middleware(async (_, next) => next({ n: 1 })))
+// @ts-expect-error incomplete builders cannot be run.
+run(ready)
 // @ts-expect-error target must precede cases.
 new Test().it('未設定', () => {})
 // @ts-expect-error arguments must precede expectations.
@@ -34,7 +39,7 @@ ready.it('未完了', t => t.args(1, 2).expect(e => [e.result]))
 ready.it('検証なし', t => t.args(1, 2).expect())
 // @ts-expect-error arguments stay fixed after expectations begin.
 ready.it('終端後', t => t.args(1, 2).expect(e => [e.result.toBe(3)]).args(1, 2))
-// @ts-expect-error no property is available without setup.
+// @ts-expect-error no property is available without a middleware.
 ready.it('ctx', t => t.args(1, 2).expect(e => [e.result.toBe(e.ctx.n)]))
 const mocked = ready.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
 // @ts-expect-error async behavior is unavailable for synchronous return types.
@@ -56,14 +61,14 @@ mocked.it('呼出引数型', t => t.args(1, 2).expectCalls(call => [call(userRep
 // @ts-expect-error a case replacement must preserve the original method's type.
 mocked.it('上書き型', t => t.mock(userRepository, 'save', m => m.resolves({ id: 1 })).args(1, 2).expect(e => [e.result.toBe(3)]))
 // @ts-expect-error all case methods freeze common configuration.
-ready.todo('未実装').setup(() => ({ n: 1 }))
+ready.todo('未実装').use(middleware(async (_, next) => next({ n: 1 })))
 // @ts-expect-error skip also freezes common configuration.
-ready.skip('保留', t => t.args(1, 2).expect(e => [e.result.toBe(3)])).setup(() => ({}))
+ready.skip('保留', t => t.args(1, 2).expect(e => [e.result.toBe(3)])).use(middleware(async (_, next) => next()))
 // @ts-expect-error only also freezes common configuration.
 ready.only('集中', t => t.args(1, 2).expect(e => [e.result.toBe(3)])).target(add)
-const plan = suite.plan()
-// @ts-expect-error the plan structure is readonly.
-plan.cases.push({})
+const blueprint = suite.blueprint()
+// @ts-expect-error blueprint structure is readonly.
+blueprint.cases.push({})
 
 // Call expectations have no mock-registration prerequisite.
 ready.it('登録なし', t => t.args(1, 2).expectCalls(call => [
@@ -98,7 +103,7 @@ ready.it('引数未定', t => t.expectCalls(call => [call(mailService, 'send').n
 ready.it('旧API', t => t.args(1, 2).expect(e => [e.mock(mailService, 'send').notCalled()]))
 // @ts-expect-error call builders are not outcome matchers.
 ready.it('結果の混入', t => t.args(1, 2).expectCalls(call => [call.result.toBe(3)]))
-// @ts-expect-error setup has not run when call assertions are defined.
+// @ts-expect-error middleware has not run when call assertions are defined.
 ready.it('実行時ctx', t => t.args(1, 2).expectCalls(call => [call(call.ctx.mail, 'send').notCalled()]))
 // @ts-expect-error outcome expectations are selected once.
 ready.it('結果の二重定義', t => t.args(1, 2).expect(e => [e.result.toBe(3)]).expect(e => [e.error.toThrow('bad')]))
@@ -111,10 +116,18 @@ ready.it('検証後の設定', t => t.args(1, 2).expectCalls(call => [call(mailS
 // @ts-expect-error an incomplete case is not a finished test.
 ready.it('期待未設定', t => t.args(1, 2))
 
+// A plain function is not a middleware value.
+// @ts-expect-error use accepts only the value returned by middleware().
+ready.use(async (_, next) => next({ a: 1 }))
+// @ts-expect-error group middleware is created with middleware() as well.
+new Test().group(async (_, next) => next({ a: 1 }), [suite])
+// @ts-expect-error named group middleware has the same requirement.
+new Test().group('名前付き', async (_, next) => next({ a: 1 }), [suite])
+
 // Context and mock replacement retain their original spelling.
 new Test().target(createUser)
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .setup(async () => ({ input: { name: 'Alice' }, expected: { id: 'u1' } }))
+  .use(middleware(async (_, next) => next({ input: { name: 'Alice' }, expected: { id: 'u1' } })))
   .it('ctxから引数と期待値', t => t.argsFrom(ctx => [ctx.input]).expect(e => [
     e.result.toEqual(e.ctx.expected),
     e.result.toSatisfy(user => user.id === e.ctx.expected.id),
@@ -125,10 +138,11 @@ new Test().target(createUser)
     .expectCalls(call => [call(mailService, 'send').notCalled()]))
   .it('呼び出しだけなら正常終了を期待', t => t.args({ name: 'Alice' })
     .expectCalls(call => [call(mailService, 'send').calledTimes(1)]))
-new Test().setup(() => ({ a: 1 })).target(add)
-  .it('setupを先に書ける', t => t.argsFrom(ctx => [ctx.a, 2]).expect(e => [e.result.toBe(3)]))
-ready.setup(() => ({ a: 1 })).setup(ctx => ({ expected: ctx.a + 2 }))
-  .it('ケース追加前に準備を重ねる', t => t.argsFrom(ctx => [ctx.a, 2]).expect(e => [e.result.toBe(e.ctx.expected)]))
+new Test().use(middleware(async (_, next) => next({ a: 1 }))).target(add)
+  .it('対象より前にも書ける', t => t.argsFrom(ctx => [ctx.a, 2]).expect(e => [e.result.toBe(3)]))
+ready.use(middleware(async (_, next) => next({ a: 1 })))
+  .use(middleware(async (ctx, next) => next({ expected: ctx.a + 2 })))
+  .it('ケース追加前にmiddlewareを重ねる', t => t.argsFrom(ctx => [ctx.a, 2]).expect(e => [e.result.toBe(e.ctx.expected)]))
 ready.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
   .mock(userRepository, 'save', m => m.resolves({ id: 'u2' }))
   .it('同じ登録先は後勝ち', t => t.args(1, 2).expectCalls(call => [call(userRepository, 'save').notCalled()]))
@@ -137,23 +151,15 @@ ready.it('argsの後にもmockを書ける', t => t.args(1, 2)
   .expect(e => [e.result.toBe(3)])
   .expectCalls(call => [call(userRepository, 'save').notCalled()]))
 ready.it('例外も同じexpect', t => t.args(1, 2).expect(e => [e.error.toThrow('bad')]))
-run(plan)
+run(suite)
 
 // A different object is an independent observation, even with the same type.
 const shadowRepository: typeof userRepository = { async save() { return { id: 'shadow' } } }
 mocked.it('別参照を記録する', t => t.args(1, 2).expectCalls(call => [
   call(shadowRepository, 'save').notCalled(),
 ]))
-const observed = ready.it('計画に記述子がある', t => t.args(1, 2)
-  .expectCalls(call => [call(mailService, 'send').notCalled()])).plan()
-for (const c of observed.cases) {
-  if (c.mode === 'todo') continue
-  for (const a of c.calls) {
-    const subject: 'call' = a.subject
-    const target: object = a.object
-    const key: string = a.key
-    void [subject, target, key]
-  }
-  // @ts-expect-error call descriptors are readonly.
-  c.calls.push({})
-}
+const observed = ready.it('呼び出し条件の記述子を持つ', t => t.args(1, 2)
+  .expectCalls(call => [call(mailService, 'send').notCalled()]))
+run(observed)
+// @ts-expect-error the old plan API is no longer public.
+observed.plan()

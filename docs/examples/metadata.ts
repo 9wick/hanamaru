@@ -1,10 +1,10 @@
 import { run } from 'hanamaru'
 import { users } from './user.test.ts'
 
-// 取得するのは、実行に必要な構造を持つ計画そのもの。
-export const plan = users.plan()
+// プラグインは実行前の構造を参照できる。
+export const blueprint = users.blueprint()
 
-// 計画を得ても実行は始まらない。
+// 通常の実行では完成したテストをそのまま渡す。
 export async function execute() {
-  return run(plan)
+  return run(users)
 }

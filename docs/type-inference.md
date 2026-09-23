@@ -1,24 +1,24 @@
 # 型推論
 
-通常は型パラメータを手書きする必要はありません。独立した子で親のctxを使う場合だけ、その要求型を宣言します。
+通常は型パラメータを手書きする必要はありません。独立した子で親のコンテキストを使う場合だけ、その要求型を宣言します。
 型の契約は[hanamaru.d.ts](./spec/hanamaru.d.ts)、型エラーの検証は[type-errors.ts](./spec/type-errors.ts)にあります。
 
 ## 対象とコンテキスト
 
 | 型 | 決まるところ | 使うところ |
 |---|---|---|
-| F: 対象の関数型 | target | args、argsFrom、result |
-| C: その段階のコンテキスト型 | 親への要求型、setupの戻り値、useでnextへ渡す値 | 次のsetup / use、argsFrom、e.ctx |
+| F: テスト対象の関数型 | `.target()` | args、argsFrom、result |
+| C: その段階のコンテキスト型 | 親への要求型、useでnextへ渡す値 | 次のuse、argsFrom、`e.ctx` |
 | R: 親に要求するコンテキスト型 | new Test<R>()。省略時は{} | groupの供給チェック、runのルートチェック |
 
 引数は `Parameters<F>`、結果の期待値は `Awaited<ReturnType<F>>` です。
-setupの戻り値 `Awaited<S>` のフィールドをCへ追加し、同名のフィールドは置き換えます。
-Promise自体をctxにはしません。各コールバックに渡るctxのフィールドはreadonlyです。
+`next(fields)` へ渡したフィールドの型SをCへ追加し、同名のフィールドは置き換えます。
+Promise自体をコンテキストにはしません。各コールバックに渡るコンテキストのフィールドはreadonlyです。
 
 ```ts
 new Test()
   .target(add)
-  .setup(async () => ({ a: 1, expected: 3 }))
+  .use(middleware(async (_, next) => next({ a: 1, expected: 3 })))
   .it('型が伝わる', t => t
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
@@ -28,36 +28,43 @@ new Test()
 
 ```ts
 new Test()
-  .use(async (_, next) => {
+  .use(middleware(async (_, next) => {
     const db = await createDatabase()
     try {
       return await next({ db, expected: 3 })
     } finally {
       await db.close()
     }
-  })
+  }))
   .target(countUsers)
   .it('型が伝わる', t => t.argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
 nextは渡されたフィールド型Sを保持する `Promise<MiddlewareResult<S>>` を返します。
-useはmiddlewareの戻り値からSを推論し、後続のCへ追加します。
+useは `middleware()` が返す値からSを推論し、後続のCへ追加します。
 ブランド付きの完了値なので、return忘れや通常のオブジェクトの返却は型エラーです。
-`next()` はフィールドを追加せずCを保ちます。setupと同様に、同名フィールドは置き換えます。
+`middleware()` を通さない素の関数も、ブランドを持たないため `.use()` / `.group()` で型エラーです。
+`next()` はフィールドを追加せずCを保ちます。同名フィールドは置き換えます。
 親のuseで供給したフィールドも、groupで子が要求する型と照合します。
+
+`.use()` / `.group()` の引数に直接書いたmiddlewareのコンテキストは、その位置のCから型付けします。注釈は不要です。
+変数へ入れて使い回すmiddlewareには文脈がないため、引数を `Ctx<…>` で包んで要求を書きます。
+`Ctx<C>` は要求するフィールドとhanamaruがコンテキストへ足すフィールドを合わせた公開型で、Cはここから推論します。
+要求を型パラメータに書かないのは、TypeScriptが型引数の部分推論をできず、nextへ渡すSの推論が失われるためです。
+要求を供給できるかは、使う場所で検査します。
 
 ## 設定とケース追加を分ける
 
 ```text
-Test<R> → target → TestBuilder<F, C, R> → it → Suite<F, C, R>
+Test<R> → .target() → TestBuilder<F, C, R> → it → Suite<F, C, R>
         → group → GroupSuite<C, R>
 ```
 
-TestBuilderはsetup・use・mockとケース追加を持ち、Suiteはケース追加とplanだけを持ちます。
-グループも最初のgroupで設定を固定し、GroupSuiteはgroupとplanだけを持ちます。
-既存ケースを書いた後のtargetやctxの変更を型で防ぎ、対象を選んだ後のtargetの再指定も禁止します。
-元のTestBuilderはイミュータブルなので、そこから別のsetup・use・mockを選ぶ派生は作れます。
+TestBuilderはuse・mockとケース追加を持ち、Suiteはケース追加とblueprintだけを持ちます。
+グループも最初のgroupで設定を固定し、GroupSuiteはgroupとblueprintだけを持ちます。
+既存ケースを書いた後のテスト対象やコンテキストの変更を型で防ぎ、テスト対象を選んだ後の `.target()` の再指定も禁止します。
+元のTestBuilderはイミュータブルなので、そこから別のuse・mockを選ぶ派生は作れます。
 
 ケースはargs / argsFromで引数を確定した後、expectとexpectCallsをそれぞれ一度だけ設定できます。
 一方でも完成したケースですが、もう一方を追加できます。両方を設定したら終端です。
@@ -73,7 +80,7 @@ TestBuilderはsetup・use・mockとケース追加を持ち、Suiteはケース�
 
 これにより、return忘れ、検証を書いていないケース、期待の二重定義を防ぎます。
 
-## グループ内のctx
+## グループ内のコンテキスト
 
 ```ts
 const child = new Test<{ a: number }>()
@@ -82,22 +89,23 @@ const child = new Test<{ a: number }>()
     .expect(e => [e.result.toBe(3)]))
 
 const parent = new Test()
-  .setup(() => ({ a: 1, extra: true }))
-  .group(child)
+  .use(middleware(async (_, next) => next({ a: 1, extra: true })))
+  .group([child])
 
-run(parent.plan())
+run(parent)
 ```
 
 childは親に `{ a: number }` を要求します。親に余分なフィールドがあっても合成できます。
+`group([first, second])` では配列内の全子について供給を検査します。group middlewareが値を渡す場合は、その値を全子の要求に使えます。
 不足や型違い、必須フィールドに対するoptionalな供給は型エラーです。
-子が型パラメータを省略すれば、親ctxへの要求はありません。
+子が型パラメータを省略すれば、親のコンテキストへの要求はありません。
 
 Rは子の定義を作っている間ずっと親への要求として保持します。
-子自身のsetup・useで同名のフィールドを供給しても、それより前のコードがRを利用し得るので要求は消しません。
-間のグループも `new Test<R>()` で必要なctxを宣言し、さらに外側の親から受け取れます。
+子自身のmiddlewareで同名のフィールドを供給しても、それより前のコードがRを利用し得るので要求は消しません。
+間のグループも `new Test<R>()` で必要なコンテキストを宣言し、さらに外側の親から受け取れます。
 
-planは親への要求を型として保持します。runへ渡せるのは `{}` から実行できるルートだけです。
-親ctxを要求する子はplanの取得まで可能ですが、単独実行や計画配列への混入を型で防ぎます。
+完成したテストとblueprintは親への要求を型として保持します。runへ渡せるのは `{}` から実行できるルートだけです。
+親のコンテキストを要求する子もblueprintは取得できますが、単独実行やrunへ渡す配列への混入を型で防ぎます。
 
 ## モックの型と呼び出しの型
 
@@ -146,17 +154,17 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 
 - 対象と引数・期待値の型の一致
 - モックの戻り値と、呼び出し条件のメソッドキー・引数の型
-- 未供給のctxプロパティ参照、setup・useの非同期処理から伝わる型
+- 未供給のコンテキストのプロパティ参照、middlewareの非同期処理から伝わる型
 - ケース・group追加後の共通設定変更
-- グループの親によるctxの供給、要求が残る計画の単独実行
-- setup・useを重ねたときのctxの型、middlewareのreturn忘れ
+- グループの親によるコンテキストの供給、要求が残るテストの単独実行
+- middlewareを重ねたときのコンテキストの型、middlewareのreturn忘れ、関数のままの登録
 - 引数の確定と期待の順序、未完了のケース、期待の二重定義
 - result/errorの混在、空配列、マッチャの呼び忘れ、非同期predicate
 
 ## 型の限界
 
-親ctxの要求型はJavaScriptでは消えるため、CLIはexportされた子が親ctxを要求するか検査できません。
-型が防ぐのはgroup・runを呼ぶ際の不足です。CLIへ公開するルートには必要なctxを全て用意し、子は探索対象外のファイルに置きます。
+親のコンテキストの要求型はJavaScriptでは消えるため、CLIはexportされた子が親のコンテキストを要求するか検査できません。
+型が防ぐのはgroup・runを呼ぶ際の不足です。CLIへ公開するルートには必要なコンテキストを全て用意し、子は探索対象外のファイルに置きます。
 型引数を宣言するだけで値が生成されることはありません。
 
 同じ構造の別オブジェクトはTypeScriptの型だけでは区別できません。
@@ -164,7 +172,7 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 テストが意図した参照を選んでいるかどうかは、型だけでは検査できません。
 
 anyや型アサーションで型検査を回避した値、プロパティの差し替え可否は実行時検査が必要です。
-setupの戻り値やnextへの追加フィールドがplain objectかどうかは、実行時に検査します。
+nextへの追加フィールドがplain objectかどうかは、実行時に検査します。
 nextを1回呼んでその完了を待つこと、返した完了値がその呼び出しのものかは、型だけでは保証できません。
 finallyがあるときに `return next(...)` で早く片付けてしまう誤りも型では防げないため、`return await next(...)` と書きます。
 省略可能なメソッドは、存在を保証する型へ絞ってから渡します。
@@ -178,16 +186,17 @@ tsc -p docs/spec/tsconfig.json
 ```
 
 このコマンドはサンプルの型チェックと、`@ts-expect-error` を付けた誤操作が型エラーになることを検証します。
-グループ・ctxの検証は[group-types.ts](./spec/group-types.ts)、middlewareの検証は[middleware-types.ts](./spec/middleware-types.ts)にあります。
+グループ・コンテキストの検証は[group-types.ts](./spec/group-types.ts)、middlewareの検証は[middleware-types.ts](./spec/middleware-types.ts)にあります。
 APIの実装を実行するものではありません。ランナー自体も型チェックはせず、通常のtest scriptからtscを呼ぶ想定です。
 
 ## each・実行設定・sequence
 
-eachは行からrowを、targetからargs/resultを推論し、各行に完成済みのケースを要求します。
+eachは行からrowを、テスト対象からargs/resultを推論し、各行に完成済みのケースを要求します。
 最初のeach・it・group以降は共通設定を固定します。ケースのtimeout/retryは期待の構築前まで変更できます。
 onceの列だけではモックは未完成で、最後に通常動作を指定する必要があります。
 calledNthWithの引数は、指定したメソッドのParametersに従います。
 
 型で防ぐ契約は[execution-contracts.ts](./spec/execution-contracts.ts)で検証します。
-数値の範囲・有限性、空の行配列、行から作る名前の実行結果などは定義時・計画受付時の検査です。
+数値の範囲・有限性、空の行配列、行から作る名前の実行結果などは定義時・実行受付時の検査です。
 SourceLocationの正しい取得、設定の継承結果、期限・再試行・復元・JSONの実動作は、この型検証では確認できません。
+middlewareのtimeoutも、型では数値であることだけを検査します。
