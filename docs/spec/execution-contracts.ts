@@ -19,7 +19,7 @@ ready.each(row => `${row.a} + ${row.b}`, rows, (t, row) => t.args(row.a, row.b).
 ready.each('タプル', [[1, 2, 3], [2, 3, 5]], (t, row) => t.args(row[0], row[1]).expect(e => [e.result.toBe(row[2])]))
 ready.use(middleware(async (_, next) => next({ expected: 3 }))).each('ctx', rows, (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(e.ctx.expected)]))
 suite.it('通常ケースも追加する', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
-new Test().timeout(5_000).retry(2).group(suite)
+new Test().timeout(5_000).retry(2).group([suite])
 run(suite, { failOnFlaky: true })
 // @ts-expect-error each requires a target.
 new Test().each('未設定', rows, () => {})
@@ -44,7 +44,7 @@ suite.timeout(100)
 // @ts-expect-error it freezes common retry.
 ready.todo('後で').retry(2)
 // @ts-expect-error group freezes common settings.
-new Test().group(suite).timeout(100)
+new Test().group([suite]).timeout(100)
 // @ts-expect-error timeout is a numeric duration.
 ready.timeout('100')
 // @ts-expect-error retry is a numeric count.

@@ -52,11 +52,11 @@ const child = new Test<{ db: Db; expected: number }>()
   .target(countUsers)
   .it('親から受け取る', t => t.argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
-run(configured.group(child))
+run(configured.group([child]))
 // @ts-expect-error a missing middleware cannot supply the child's required fields.
-new Test().group(child)
+new Test().group([child])
 // @ts-expect-error incomplete middleware output cannot satisfy all the requirements.
-new Test().use(middleware(async (_, next) => next({ db: await createDb() }))).group(child)
+new Test().use(middleware(async (_, next) => next({ db: await createDb() }))).group([child])
 // @ts-expect-error the child still cannot run without its parent.
 run(child)
 
@@ -73,7 +73,7 @@ new Test().use(middleware(async (_, next) => next({ value: 1 }), () => {}))
 new Test().use(middleware(async (_, next) => next({ value: 1 }), { retry: 2 }))
 // @ts-expect-error the middleware deadline is a numeric duration.
 new Test().use(middleware(async (_, next) => next({ value: 1 }), { timeout: '1000' }))
-const grouped = configured.group(child)
+const grouped = configured.group([child])
 // @ts-expect-error middleware scope is fixed after the first group.
 grouped.use(middleware(async (_, next) => next()))
 new Test().use(middleware(async (_, next) => {
@@ -130,7 +130,7 @@ const dependent = new Test<{ db: Db }>()
   .target(countUsers).todo('要求型を保持する')
 // @ts-expect-error middleware cannot discard a parent's required context.
 run(dependent)
-run(configured.group(dependent))
+run(configured.group([dependent]))
 
 for (const step of suite.blueprint().steps) {
   expectType<Function>(step.run)

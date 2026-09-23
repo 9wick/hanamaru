@@ -90,12 +90,13 @@ const child = new Test<{ a: number }>()
 
 const parent = new Test()
   .use(middleware(async (_, next) => next({ a: 1, extra: true })))
-  .group(child)
+  .group([child])
 
 run(parent)
 ```
 
 childは親に `{ a: number }` を要求します。親に余分なフィールドがあっても合成できます。
+`group([first, second])` では配列内の全子について供給を検査します。group middlewareが値を渡す場合は、その値を全子の要求に使えます。
 不足や型違い、必須フィールドに対するoptionalな供給は型エラーです。
 子が型パラメータを省略すれば、親のコンテキストへの要求はありません。
 

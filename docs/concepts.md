@@ -82,12 +82,12 @@ middlewareで用意する値に依存する引数や結果の期待は、それ�
 
 ## 関連するテストをグループにまとめる
 
-`group(child)` で関連するテストをまとめ、mock・use・timeout・retryの適用範囲を作ります。
-必要なら `group(name, child)` で説明を添えられますが、名前は必須ではありません。
+`group([children])` で一つ以上の子をまとめ、mock・use・timeout・retryの適用範囲を作ります。
+必要なら `group(name, [children])` でまとまりに見出しを付けられますが、名前は必須ではありません。
 親の設定を配下のケースへ適用し、内側のmockは外側のmockを上書きします。
 middlewareは親から子へコンテキストを渡し、後処理は逆順です。コンテキストと呼び出し記録は各ケースの試行ごとに用意します。
 
-高価な資源を配下全体で一度だけ用意する場合は、`group(middleware, child)` でgroup追加箇所をmiddlewareで囲みます。通常のuseは各attempt、group middlewareはchild全体という実行境界がAPI構造から分かれます。
+高価な資源を配下全体で一度だけ用意する場合は、`group(middleware, [children])` でまとまり全体をmiddlewareで囲みます。通常のuseは各attempt、group middlewareは子のまとまり全体という実行境界がAPI構造から分かれます。
 
 ビルダーはイミュータブルです。グループへ追加しても元の子の定義は変わりません。
 blueprintには各階層の設定と子の関係を保持します。

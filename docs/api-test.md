@@ -53,25 +53,24 @@ new Test().target('保存', userService, 'create')
 後者は `this` をそのオブジェクトに束縛します。非関数のキーや省略可能なメソッドは型エラーです。
 関数の型から、argsの `Parameters<F>` とresultの `Awaited<ReturnType<F>>` が決まります。
 名前を省略すると関数名、メソッド形式ではメソッド名を使います。名前のない関数には `anonymous` を使います。
-名前は表示用であり、ソース上の識別情報とは扱いません。グループ自身は無名です。
+名前は表示用であり、ソース上の識別情報とは扱いません。ルートグループは無名です。
 
 ## group
 
 ```ts
 const tests = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group(userTests)
-  .group('退会', deletionTests)
+  .group('ユーザー', [userTests, deletionTests])
 ```
 
-関連するテストをまとめ、共通設定の範囲を作ります。完成済みのテストまたはグループを渡します。
+関連するテストを一つのグループにまとめ、共通設定の範囲を作ります。完成済みの対象ケース群またはグループを、空でない配列で渡します。子が一つでも配列にします。
 名前は任意で、一意性も要求しません。
-`group(name, child)` の名前はその追加箇所の見出しであり、元の子の名前を変更しません。
+`group(name, [children])` の名前はそのまとまりの見出しであり、元の子の名前を変更しません。一回の呼び出しで一つの子グループを追加します。
 親のmock・use・timeout・retryは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
 同じ子を別の親や同じ親の複数箇所へ合成することもでき、それぞれ独立した実行箇所になります。
 
-`group(middleware, child)` では、middlewareをそのchild全体に一度だけ適用できます。`next(fields)` が渡す型はchildのコンテキストへ供給されます。名前付きは `group(name, middleware, child)` です。
-通常の `.use()` が各caseの各attemptを囲むのに対し、group middlewareはその追加箇所のchild全体を囲みます。
+`group(middleware, [children])` では、middlewareをそのまとまり全体に一度だけ適用できます。`next(fields)` が渡す型は全子のコンテキストへ供給されます。名前付きは `group(name, middleware, [children])` です。
+通常の `.use()` が各caseの各attemptを囲むのに対し、group middlewareは追加した子グループ全体を囲みます。
 
 子は元のコンテキストの型を保ちます。親のコンテキストが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
 親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](./grouping.md)を参照してください。

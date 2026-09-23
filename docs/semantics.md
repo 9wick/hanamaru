@@ -15,6 +15,7 @@ expectのコールバックは保存し、この時点では呼びません。
 expectCallsが返す空配列・不正な記述子や定義コールバックのthrowは定義エラーです。
 実行時に返るexpectの不正な配列やthrowは、そのケースの失敗です。
 eachは行順でケースに展開します。空の行配列、不正なtimeout/retry/nth、宣言位置の取得不能も定義エラーです。
+`group(name?, [children])` の子配列も空にできません。各group呼び出しは渡した子を順に持つ一つの子グループを追加し、元の子の定義は変更しません。
 
 ## テストの受付
 
@@ -57,29 +58,29 @@ RunのPromiseは、そのRunが所有する開始済みのexecution processと�
 
 ## group middleware
 
-`group(middleware, child)` のmiddlewareは、そのgroup追加箇所のchild全体を一度だけ囲みます。
+`group(middleware, [children])` のmiddlewareは、そのgroup追加箇所の子全体を一度だけ囲みます。
 通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
 
 group middlewareへ渡すコンテキストは、そのgroup定義が外側から要求する安定したコンテキストです。
 親ノードのmiddlewareは各attemptで実行されるため、そこで初めて作る値をgroup middlewareの前処理へ渡すことはしません。
-一方、group middlewareが `next(fields)` へ渡した値は、各child attemptで親の試行ごとのコンテキストと合成し、childのargsFrom・expectから参照できます。
+一方、group middlewareが `next(fields)` へ渡した値は、全子の各attemptで親の試行ごとのコンテキストと合成し、各子のargsFrom・expectから参照できます。
 
 実行の概略は次のとおりです。
 
 ```text
 group middlewareの前処理
-  child case A
+  first child のcase A
     attemptのmiddleware前処理 → テスト対象の呼び出し → assertions → 復元とmiddleware後処理
     retryがあれば次のattempt
-  child case B
+  second child のcase B
     attemptのmiddleware前処理 → テスト対象の呼び出し → assertions → 復元とmiddleware後処理
 group middlewareの後処理
 ```
 
-前処理が失敗した場合はchildのcaseを開始しません。後処理が失敗した場合はrunを失敗として後続を中断します。
+前処理が失敗した場合は全子のcaseを開始しません。後処理が失敗した場合はrunを失敗として後続を中断します。
 共有資源を残したまま次のgroupへ進まないことは、通常のcleanup failureと同じ保証です。
 group middlewareはどのattemptにも含まれないため、効く期限は `middleware(fn, { timeout })` の前処理期限・後処理期限だけです。
-group middlewareを持つchildは、その共有資源のlifetime中は同じexecution processで実行します。
+group middlewareに包まれた全子は、その共有資源のlifetime中は同じexecution processで実行します。
 
 ## 実行設定の解決
 

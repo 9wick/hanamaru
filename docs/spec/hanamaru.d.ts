@@ -121,12 +121,13 @@ export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends 
   use<S extends object>(m: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
+export type GroupChildren<C extends object> = readonly [TestDefinition<C>, ...TestDefinition<C>[]]
 export interface GroupMethods<C extends object, R extends object = {}> {
   /** middlewareを取る形を先に並べ、その場で書いたmiddlewareのctxを文脈から型付けする。 */
-  group<S extends object>(m: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
-  group<S extends object>(name: string, m: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
-  group(child: TestDefinition<C>): GroupSuite<C, R>
-  group(name: string, child: TestDefinition<C>): GroupSuite<C, R>
+  group<S extends object>(m: Middleware<R, S>, children: GroupChildren<ExtendContext<C, S>>): GroupSuite<C, R>
+  group<S extends object>(name: string, m: Middleware<R, S>, children: GroupChildren<ExtendContext<C, S>>): GroupSuite<C, R>
+  group(children: GroupChildren<C>): GroupSuite<C, R>
+  group(name: string, children: GroupChildren<C>): GroupSuite<C, R>
 }
 export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
   blueprint(): GroupBlueprint<R>
@@ -148,10 +149,10 @@ export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   target<F extends AnyFn>(name: string, fn: F): TestBuilder<F, R, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
   target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
-  group<S extends object>(m: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
-  group<S extends object>(name: string, m: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
-  group(child: TestDefinition<R>): GroupSuite<R, R>
-  group(name: string, child: TestDefinition<R>): GroupSuite<R, R>
+  group<S extends object>(m: Middleware<R, S>, children: GroupChildren<ExtendContext<R, S>>): GroupSuite<R, R>
+  group<S extends object>(name: string, m: Middleware<R, S>, children: GroupChildren<ExtendContext<R, S>>): GroupSuite<R, R>
+  group(children: GroupChildren<R>): GroupSuite<R, R>
+  group(name: string, children: GroupChildren<R>): GroupSuite<R, R>
 }
 
 export interface ExecutionSettings<Self> {
@@ -287,7 +288,7 @@ export interface GroupBlueprint<R extends object = {}> extends BlueprintBase<R> 
 export interface GroupEntry {
   readonly origin: SourceLocation
   readonly name: string | null
-  /** group(middleware, child) のmiddleware。通常のgroupではnull。 */
+  /** group(middleware, [children]) で子のまとまり全体を囲むmiddleware。指定しなければnull。 */
   readonly middleware: GroupMiddlewareBlueprint | null
   /** 子の要求型は階層内では隠す。取り出して単独実行はできない。 */
   readonly blueprint: TestBlueprint<never>

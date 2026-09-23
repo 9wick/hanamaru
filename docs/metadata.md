@@ -34,10 +34,10 @@ blueprintを取得してもmiddleware・テスト対象は呼ばず、メソッ�
 | SuiteBlueprint.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
 | SuiteBlueprint.cases | 宣言順のケース |
 | GroupBlueprint.children | 追加した順の子。各要素はname・origin・blueprintを持つ |
-| GroupEntry.name | group(name, child)の説明。省略時はnull |
-| GroupEntry.origin | その親へ追加したgroupの宣言位置 |
-| GroupEntry.middleware | group追加箇所を一度囲むmiddleware。通常のgroupではnull |
-| GroupEntry.blueprint | 子のblueprint。さらにグループでもよい |
+| GroupEntry.name | group(name, [children])で追加したまとまりの見出し。省略時と配列内の子ではnull |
+| GroupEntry.origin | 子を追加したgroup呼び出しの宣言位置。配列内の各子にも同じ位置を使う |
+| GroupEntry.middleware | 子のまとまり全体を一度囲むmiddleware。指定しなければnull。配列内の各子ではnull |
+| GroupEntry.blueprint | group呼び出しの追加箇所では子グループ、配列内の追加箇所では渡した子のblueprint |
 | Case.name / mode | ケース名とrun / only / skip / todo |
 | Case.origin | it / only / skip / todo / eachの宣言位置 |
 | Case.row | eachの元の行と0始まりのindex。通常ケースとtodoはnull |
@@ -62,19 +62,25 @@ todoは実行本体を持たず、name・mode・origin・config・row: nullを�
 ## グループの階層
 
 `TestBlueprint` は対象ケース群を表す `kind: 'test'` のSuiteBlueprintと、グループを表す `kind: 'group'` のGroupBlueprintのunionです。
-各ノードがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。group追加箇所だけに適用するmiddlewareは `GroupEntry.middleware` に保持します。
+一回の `group(name, [first, second])` は、親のchildrenに一つの追加箇所を作り、その下の子グループにfirst・secondを順に保持します。子を一つ渡しても同じ階層です。名前と、配列全体を囲むmiddlewareは親から見た追加箇所に保持します。子グループ自体のnameはnullです。
+各ノードがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。
 名前のないグループも構造として残ります。
 
 ```ts
 import { registrations } from './groups.test.ts'
 
 const blueprint = registrations.blueprint()
-for (const entry of blueprint.children) {
-  const child = entry.blueprint
-  if (child.kind === 'group') {
-    // child.steps、child.mocks、child.childrenを取得できる。
-  } else {
-    // child.target、child.casesを取得できる。
+for (const placement of blueprint.children) {
+  const bundle = placement.blueprint
+  if (bundle.kind === 'group') {
+    for (const entry of bundle.children) {
+      const child = entry.blueprint
+      if (child.kind === 'group') {
+        // 子グループのsteps・mocks・childrenを取得できる。
+      } else {
+        // 対象ケース群のtarget・casesを取得できる。
+      }
+    }
   }
 }
 ```

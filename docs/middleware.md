@@ -29,7 +29,7 @@ export const userCount = new Test()
 ## middlewareを作る
 
 middlewareは `middleware(fn, options?)` で作ります。
-`.use(m)` と `.group(m, child)` はこの値だけを受け取り、関数をそのまま渡すと型エラーです。
+`.use(m)` と `.group(m, [children])` はこの値だけを受け取り、関数をそのまま渡すと型エラーです。
 fnは `(ctx, next) => ...`、optionsは `{ timeout }` です。
 
 `.use()` / `.group()` の引数にそのまま書いた場合、コンテキストの型は書いた場所から決まります。注釈は不要です。
@@ -96,7 +96,7 @@ nextは1回呼び、その完了値を返します。未呼び出し・複数回
 ## 前処理期限・後処理期限
 
 前処理はmiddlewareが呼ばれてからnextを呼ぶまで、後処理はnextが完了してからmiddlewareが完了するまでです。
-nextの中で配下（`.use()` ではケース、`.group()` ではchild）を実行している時間は、どちらにも含めません。
+nextの中で配下（`.use()` ではケース、`.group()` では渡した子全体）を実行している時間は、どちらにも含めません。
 
 ```ts
 .use(middleware(async (_, next) => {
@@ -118,7 +118,7 @@ nextの中で配下（`.use()` ではケース、`.group()` ではchild）を実
 `.group()` のmiddlewareはどの試行にも含まれないため、効くのはmiddleware自身の期限だけです。
 
 超過したときの扱いは試行期限と同じです。後続を開始せずそのrunを中断し、runはfailed / timeoutになります。
-`.group()` の前処理が超過した場合はchild配下の実行対象ケースをcancelledにし、後処理が超過した場合は既存のchildの結果を保持したまま後続を中断します。
+`.group()` の前処理が超過した場合は全子の実行対象ケースをcancelledにし、後処理が超過した場合は既存の子の結果を保持したまま後続を中断します。
 `.use()` のmiddlewareの超過は、その試行をfailed / timeoutとして試行期限の超過と同じに扱い、再試行しません。
 結果には期限と、前処理・後処理のどちらで超えたかを残します。
 同一プロセスの `run(test)` が任意コードを強制停止できないことと、標準CLIのshutdownGraceは、試行期限と同じく当てはまります。

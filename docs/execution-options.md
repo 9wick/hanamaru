@@ -22,7 +22,7 @@ const addition = new Test()
 export const tests = new Test()
   .timeout(5_000)
   .retry(2)
-  .group(addition)
+  .group([addition])
 ```
 
 | ケース | timeout | retry |

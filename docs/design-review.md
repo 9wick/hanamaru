@@ -67,7 +67,7 @@ caseは他のcaseの実行有無・実行順に依存しない独立した実行
 
 実行モデルは Run > Process * N とします。各execution processは一つのRunに所属し、同じhost runtimeでactiveなRunを重複させません。完了したRunの後に次のRunを開始することはできます。
 
-通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。shared fixtureはscope引数を `.use()` に増やさず、`group(middleware, child)` でgroup追加箇所そのものを一度囲む形にします。これにより共有コンテキストの型と実行順をtree構造から読めるようにします。shared fixtureは共有資源を用意するコストの共有であり、case間の順序依存を許す仕組みではありません。
+通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。shared fixtureはscope引数を `.use()` に増やさず、`group(middleware, [children])` で子のまとまり全体を一度囲む形にします。これにより共有コンテキストの型と実行順をtree構造から読めるようにします。shared fixtureは共有資源を用意するコストの共有であり、case間の順序依存を許す仕組みではありません。
 
 順序を持つ一連の操作は通常case間の依存として扱わず、flowというordered scenarioへ分離する方針を維持します。flow自体のAPIは今回確定しません。
 

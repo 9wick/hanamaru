@@ -100,7 +100,7 @@ timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継
 
 - 並列実行、自動的な実行順変更
 - watch、カバレッジ計測
-- process・run単位のshared fixture。group単位のshared fixtureは `group(middleware, child)` で提供する
+- process・run単位のshared fixture。group単位のshared fixtureは `group(middleware, [children])` で提供する
 - fake timers / Date（次verで検討）、呼び出しの順序・部分一致（後続）
 - flow（今回の計画外）
 - each専用のonly/skip/todo表記（未採用）

@@ -7,6 +7,7 @@
 
 it / only / skip / todo / eachには、宣言したテストソースの `origin: { file, line, column }` を保持します。
 groupには、その親へ子を追加した位置をGroupEntry.originに保持します。結果のgroup追加箇所にも同じoriginを残します。
+一回の `group(name, [first, second])` で追加した子のまとまりと、その配列内の各子の追加位置は、同じgroup呼び出しの位置です。first・second自身が定義された位置は変更しません。
 fileは絶対パス、ソース行番号・列番号は1始まりです。wrapper内でitを呼んだ場合は、そのitの位置を指します。
 blueprint/runの呼出位置では上書きしません。同じ子を複数回追加しても子の宣言位置は変えません。
 
@@ -38,6 +39,7 @@ blueprint/runの呼出位置では上書きしません。同じ子を複数回�
 同名・同じ位置・同じ子の複数追加を別ケースとして扱います。
 結果のpathは、ルートの番号、経路上のchildrenの番号、casesの番号を並べた0始まりの配列です。
 グループとテストの結果も、そのノードまでのpathを持ちます。
+例えば `new Test().group('基本', [addition, subtraction])` を最初のルートとして実行した場合、subtractionの最初のケースのpathは `[0, 0, 1, 0]` です。二番目の0は「基本」の追加箇所、1は配列内のsubtractionの位置です。
 CLIは収集した全テストで番号を定め、filterや表示の並べ替えでも元のpathを保持します。
 ライブラリのrunでは渡したテスト配列を基準にします。別の配列を渡し直した後まで同じpathを保証するものではありません。
 
@@ -133,16 +135,16 @@ getterや利用者のtoJSONを診断のために実行しません。
 
 ## group middlewareの結果
 
-`group(middleware, child)` を使ったgroup追加箇所では、GroupResult.childrenの各要素にmiddlewareの実行結果を保持します。
+`group(middleware, [children])` を使ったgroup追加箇所では、親のGroupResult.childrenの該当要素に、子のまとまり全体を一度囲んだmiddlewareの結果を保持します。子グループのchildrenには配列の各子を順に残します。
 通常のgroupではmiddlewareはnullです。
 
 middleware結果にはstatus・durationMs・failures・cleanupを保持します。
 公開型ではpassedに失敗記録を付けられず、failedには一件以上の失敗記録が必要です。not-runは開始しなかった理由を必ず持ちます。
 各failureはphaseにbefore / after / contractを持ち、期限超過ではその期限も残します。
 実行対象がなくmiddlewareを開始しなかった場合や、外側の中断で開始しなかった場合はnot-runとして理由を残します。
-前処理の失敗ではchild配下の実行対象caseをnotRun: cancelledとし、後処理の失敗では既存のchild結果を保持したままrunをfailedにして後続を中断します。
+前処理の失敗では全子の実行対象caseをnotRun: cancelledとし、後処理の失敗では既存の子の結果を保持したままrunをfailedにして後続を中断します。
 前処理期限・後処理期限の超過も同じ扱いです。
-caseの通常失敗やretryではgroup middlewareを終了・再作成せず、child全体が完了してから後処理へ進みます。
+caseの通常失敗やretryではgroup middlewareを終了・再作成せず、全子の実行が終わってから後処理へ進みます。
 
 ## run全体
 

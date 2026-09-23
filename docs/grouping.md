@@ -13,27 +13,31 @@
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
+const creation = new Test()
+  .target(createUser)
+  .mock(userRepository, 'save', m => m.resolves({ id: 'mock-user' }))
+  .it('保存して通知する', t => t
+    .args({ name: 'Alice' })
+    .expect(e => [e.result.toEqual({ id: 'mock-user' })])
+    .expectCalls(call => [
+      call(mailService, 'send').calledOnceWith({ id: 'mock-user' }),
+    ]))
+  .it('保存に失敗したら通知しない', t => t
+    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
+    .args({ name: 'Alice' })
+    .expect(e => [e.error.toThrow('save failed')])
+    .expectCalls(call => [call(mailService, 'send').notCalled()]))
+
+const saving = new Test()
+  .target(userRepository, 'save')
+  .it('ユーザーを保存する', t => t
+    .args({ name: 'Alice' })
+    .expect(e => [e.result.toEqual({ id: 'u1' })]))
+
 export const registrations = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group('作成', new Test()
-    .target(createUser)
-    .mock(userRepository, 'save', m => m.resolves({ id: 'mock-user' }))
-    .it('保存して通知する', t => t
-      .args({ name: 'Alice' })
-      .expect(e => [e.result.toEqual({ id: 'mock-user' })])
-      .expectCalls(call => [
-        call(mailService, 'send').calledOnceWith({ id: 'mock-user' }),
-      ]))
-    .it('保存に失敗したら通知しない', t => t
-      .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-      .args({ name: 'Alice' })
-      .expect(e => [e.error.toThrow('save failed')])
-      .expectCalls(call => [call(mailService, 'send').notCalled()])))
-  .group(new Test()
-    .target(userRepository, 'save')
-    .it('ユーザーを保存する', t => t
-      .args({ name: 'Alice' })
-      .expect(e => [e.result.toEqual({ id: 'u1' })])))
+  .group('作成', [creation])
+  .group([saving])
 ```
 
 外側のsendのモックは、グループ内の全ケースに適用します。
@@ -43,13 +47,9 @@ export const registrations = new Test()
 
 ## group全体をmiddlewareで囲む
 
-`group(middleware, child)` は、childの実行全体を一度だけmiddlewareで囲みます。
+`group(middleware, [children])` は、渡した子のまとまり全体を一度だけmiddlewareで囲みます。
 
 ```ts
-const userTests = new Test<{ server: Server }>()
-  .group(createUserTests)
-  .group(deleteUserTests)
-
 export const tests = new Test()
   .group(middleware(async (_, next) => {
     const server = await startServer()
@@ -58,7 +58,7 @@ export const tests = new Test()
     } finally {
       await server.stop()
     }
-  }), userTests)
+  }), [createUserTests, deleteUserTests])
 ```
 
 実行順は次の形です。
@@ -70,36 +70,46 @@ startServer
 stopServer
 ```
 
-通常の `.use()` は各attemptを囲み、`group(middleware, child)` のmiddlewareはそのchild全体を一度だけ囲みます。
-middlewareが `next({ server })` へ渡したフィールドは、childの要求コンテキストとして型検査され、child配下の各attemptのコンテキストから参照できます。
-同じchildを別のgroupへ追加した場合は、追加箇所ごとに独立してmiddlewareを実行します。
+通常の `.use()` は各attemptを囲み、`group(middleware, [children])` のmiddlewareは子のまとまり全体を一度だけ囲みます。
+middlewareが `next({ server })` へ渡したフィールドは、全子の要求コンテキストとして型検査され、各子のattemptのコンテキストから参照できます。
+同じ子を別のgroupへ追加した場合は、追加箇所ごとに独立してmiddlewareを実行します。
 
 group middlewareは共有資源のlifetimeを表します。配下のcaseが互いの実行結果や状態に依存してよいことを意味しません。
 順序を持つ一連の操作はflowとして表し、shared group fixtureとは区別します。
 
-group middlewareの前処理が失敗した場合、そのchildの実行は開始せず、配下の実行対象caseをcancelledとしてrunを失敗させます。
+group middlewareの前処理が失敗した場合、渡した全子の実行は開始せず、配下の実行対象caseをcancelledとしてrunを失敗させます。
 後処理が失敗した場合もrunを失敗させ、片付いていない共有状態を次のgroupへ持ち越さないため後続の実行を中断します。
 前処理・後処理の期限は `middleware(fn, { timeout })` で指定し、超過も同じ扱いです。
-通常のcase失敗やretryではgroup middlewareを作り直さず、child全体の実行が終わるまで同じ共有資源を保持します。
+通常のcase失敗やretryではgroup middlewareを作り直さず、子全体の実行が終わるまで同じ共有資源を保持します。
 
-名前を付ける場合は `group(name, middleware, child)` と書けます。
+名前を付ける場合は `group(name, middleware, [children])` と書けます。
 
 ## 名前は任意
 
-`group(child)` なら追加の名前は不要です。
-見出しを付けたい場合は `group('作成', child)` と書けます。middleware付きでも `group(middleware, child)` / `group('作成', middleware, child)` の同じ規則です。
+`group([children])` なら追加の名前は不要です。
+見出しを付けたい場合は `group('作成', [children])` と書けます。middleware付きでも `group(middleware, [children])` / `group('作成', middleware, [children])` の同じ規則です。
+子が一つでも配列で渡します。空配列は完成したグループになりません。
 名前の有無で設定の範囲は変わらず、一意性も要求しません。
-子の対象ケース群の名前もそのまま保持します。グループ自身は無名です。
+子の対象ケース群の名前もそのまま保持します。ルートグループは無名で、追加した子のまとまりを名前付きで表示できます。
+
+```ts
+const tests = new Test()
+  .group('基本', [addition, subtraction])
+  .group('再確認', [addition])
+```
+
+「基本」はadditionとsubtractionを包む一つのグループです。「再確認」は別のグループで、同じadditionをもう一度含みます。additionの定義は変わらず、二つの実行箇所はそれぞれの経路の設定で実行します。
 
 ## 入れ子にして設定の範囲を分ける
 
 ```ts
+const userGroup = new Test()
+  .mock(mailService, 'send', m => m.resolves(undefined))
+  .group([createTests, saveTests])
+
 const tests = new Test()
-  .group('ユーザー', new Test()
-    .mock(mailService, 'send', m => m.resolves(undefined))
-    .group(createTests)
-    .group(saveTests))
-  .group('メール', mailTests)
+  .group('ユーザー', [userGroup])
+  .group('メール', [mailTests])
 ```
 
 このsendのモックは「ユーザー」の配下だけに適用し、「メール」には適用しません。
@@ -150,7 +160,7 @@ const tests = new Test()
   .use(middleware(async (_, next) => next({ input: { name: 'Alice' }, expectedId: 'u1' })))
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group(userCases)
+  .group([userCases])
 
 run(tests)
 ```
@@ -170,7 +180,7 @@ import { userCases } from './user-cases.ts'
 
 const tests = new Test()
   .use(middleware(async (_, next) => next({ input: { name: 'Alice' }, expectedId: 'u1' })))
-  .group(userCases)
+  .group([userCases])
 ```
 
 ビルダーはイミュータブルです。同じ子を複数のグループへ追加しても、元の定義は変わりません。
@@ -178,7 +188,7 @@ const tests = new Test()
 
 ## 定義と実行の条件
 
-- groupには、1ケース以上あるテストか、子を持つグループを渡します。
+- groupには、1ケース以上ある対象ケース群か、子を持つグループを、空でない配列で渡します。
 - グループ自体はテスト対象・ケースを持たず、それぞれの子がテスト対象を持ちます。
 - 共通のuse・mockは最初のgroupより前に書きます。以降はgroupの追加とblueprintの取得ができます。
 - 対象を持つテストをまとめたいときは、新しい親からgroupへ渡します。
@@ -196,5 +206,5 @@ CLIには必要なコンテキストを用意したルートだけをexportし�
 グループ全体の時間制限や、成功した兄弟まで再実行する意味にはしません。
 [設定例と解決順](./execution-options.md)を参照してください。
 
-useのmiddlewareは各ケースの各試行を囲みます。`group(middleware, child)` のmiddlewareだけは、そのgroup追加箇所のchild全体を一度囲みます。
+useのmiddlewareは各ケースの各試行を囲みます。`group(middleware, [children])` のmiddlewareだけは、そのgroup追加箇所の子全体を一度囲みます。
 groupへの追加位置は自動取得し、blueprintと実行結果の階層へ保持します。詳しくは[宣言位置](./results.md)を参照してください。

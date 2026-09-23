@@ -120,9 +120,9 @@ ready.it('期待未設定', t => t.args(1, 2))
 // @ts-expect-error use accepts only the value returned by middleware().
 ready.use(async (_, next) => next({ a: 1 }))
 // @ts-expect-error group middleware is created with middleware() as well.
-new Test().group(async (_, next) => next({ a: 1 }), suite)
+new Test().group(async (_, next) => next({ a: 1 }), [suite])
 // @ts-expect-error named group middleware has the same requirement.
-new Test().group('名前付き', async (_, next) => next({ a: 1 }), suite)
+new Test().group('名前付き', async (_, next) => next({ a: 1 }), [suite])
 
 // Context and mock replacement retain their original spelling.
 new Test().target(createUser)

@@ -96,12 +96,11 @@ export const calls = new Test()
 ```ts
 const tests = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group(userTests)
-  .group('退会', deletionTests)
+  .group('ユーザー', [userTests, deletionTests])
 ```
 
-groupで関連するテストをまとめ、配下へ共通のmock・use・timeout・retryを適用できます。
-名前は任意です。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
+groupで関連するテストを一つのまとまりにし、配下へ共通のmock・use・timeout・retryを適用できます。
+名前は任意です。子が一つでも配列で渡します。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
 グループ化と共通設定の範囲は[テストをグループにまとめる](./docs/grouping.md)を参照してください。
 
 ## group全体で資源を共有する
@@ -118,10 +117,10 @@ const tests = new Test()
     } finally {
       await server.stop()
     }
-  }), userTests)
+  }), [userTests, deletionTests])
 ```
 
-middlewareは一度だけserverを用意し、`next({ server })` の値をuserTests配下の各attemptへ渡します。
+middlewareは一度だけserverを用意し、`next({ server })` の値を両方の子の各attemptへ渡します。
 共有資源のlifetimeを表すだけで、case間の順序依存は許しません。
 
 ## 実行設定を下流へ渡す

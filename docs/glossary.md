@@ -44,10 +44,10 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 ### グループ
 
-- 識別子: `.group(child)`、`.group(name, child)`、middlewareを伴う同じ形。
-- 定義: 子の対象ケース群やグループをまとめ、共通設定の範囲を作る構造。
-- 文脈: テストを書く人が複数の子をまとめるときに使います。
-- ルール: グループ自身は無名です。`group(name, child)` の名前は、その親へ子を追加した箇所の表示名です。名前を省略すると追加箇所も無名になり、子自身の名前は変わりません。
+- 識別子: `.group([children])`、`.group(name, [children])`、middlewareを伴う同じ形。
+- 定義: 一つ以上の対象ケース群やグループを束ね、共通設定の範囲を作る構造。
+- 文脈: テストを書く人が複数の子、または一つの子を明示的なまとまりにするときに使います。
+- ルール: 一回の `.group()` は空でない子配列を一つの子グループにまとめ、親へ追加します。子が一つでも配列で渡します。ルートグループ自身は無名です。`group(name, [children])` の名前は、そのまとまりを親へ追加した箇所の表示名です。名前を省略すると追加箇所も無名になり、元の子自身の名前は変わりません。
 
 ### テスト対象
 
@@ -150,14 +150,14 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 ### middleware
 
-- 識別子: `middleware(fn, { timeout })`、`.use(m)`、`.group(m, child)`、`Ctx<…>`
+- 識別子: `middleware(fn, { timeout })`、`.use(m)`、`.group(m, [children])`、`Ctx<…>`
 - 定義: ケースを支える準備と後片付けを、ケースの実行を囲む形で書いたもの。共通の下ごしらえを複数のケースで使い回すために使います。
 - 文脈: テストを書く人が、DB・サーバー・テナントなどの前提を整えるときに使います。
 - ルール:
   - すべて `middleware()` で作ります。関数をそのまま `.use()` や `.group()` に渡しません。
   - `next(fields)` でケースへ値を渡せます。値を渡さず状態を整えるだけでも構いません。ケースへ値を渡す手段はmiddlewareだけです。
   - 複数のmiddlewareは入れ子になり、後処理は逆順に動きます。
-  - `.use(m)` では各試行を囲み、`.group(m, child)` ではchild全体を一度だけ囲みます。どちらでも同じmiddlewareを使えます。
+  - `.use(m)` では各試行を囲み、`.group(m, [children])` では子のまとまり全体を一度だけ囲みます。どちらでも同じmiddlewareを使えます。
   - HonoやExpressのmiddlewareと違い、nextを呼ばずに打ち切ることはできません。nextは必ず1回呼びます。nextの失敗をcatchしても、テストの失敗は取り消せません。
   - 単独で定義して上流の値を読む場合は、引数を `Ctx<…>` で包んで要求を書きます。渡す値は書きません（推論されます）。
 - 使わない語: setup、fixture。
@@ -207,7 +207,7 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 | setup | xUnitのsetUpと同じく環境の準備に読めるが、実態は値の提供だった。middlewareの前処理の呼び名とも衝突していた | middleware、前処理 |
 | `.setup()` | middlewareの `next(fields)` と役割が重なるため廃止した | middleware |
 | fixture | 意味が伝わりにくい | middleware |
-| `.describe()` | 対象ケース群の名前とグループ追加箇所の名前を別の操作で指定する必要がない | `.target(name, fn)`、`.group(name, child)` |
+| `.describe()` | 対象ケース群の名前とグループ追加箇所の名前を別の操作で指定する必要がない | `.target(name, fn)`、`.group(name, [children])` |
 | groupのtimeout / targetのtimeout | groupやテスト対象に期限があるように読める | 試行期限 |
 | `e.mock()` | 呼び出しの検証をモックに限定してしまう | `call(obj, key)` |
 
