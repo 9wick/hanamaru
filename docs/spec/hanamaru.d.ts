@@ -11,6 +11,7 @@ declare const definitionBrand: unique symbol
 declare const behaviorBrand: unique symbol
 declare const planBrand: unique symbol
 declare const middlewareBrand: unique symbol
+declare const middlewareDefBrand: unique symbol
 export interface ItDone { readonly [doneBrand]: true }
 export interface TestDefinition<R extends object = {}> {
   /** 親に要求するctx。関数プロパティで反変にし、供給できない合成を防ぐ。 */
@@ -19,7 +20,6 @@ export interface TestDefinition<R extends object = {}> {
 export type ExtendContext<C, S> = C extends unknown
   ? S extends unknown ? Omit<C, keyof S> & S : never
   : never
-type SetupReturn<S> = S & (Awaited<S> extends object ? unknown : never)
 /** nextの完了値。追加フィールドの型をmiddlewareの戻り値まで伝える。 */
 export interface MiddlewareResult<S extends object> {
   readonly [middlewareBrand]: S
@@ -28,8 +28,19 @@ export interface Next {
   (): Promise<MiddlewareResult<{}>>
   <S extends object>(fields: S): Promise<MiddlewareResult<S>>
 }
-export type Middleware<C, S extends object> =
+export type MiddlewareFn<C, S extends object> =
   (ctx: Readonly<C>, next: Next) => Promise<MiddlewareResult<S>>
+export interface MiddlewareOptions {
+  /** 前処理と後処理のそれぞれへ独立に適用する期限。 */
+  readonly timeout?: number
+}
+/** middleware()が返す値。関数をそのまま.use/.groupへ渡せないようにする。 */
+export interface Middleware<C = unknown, S extends object = object> {
+  readonly [middlewareDefBrand]: MiddlewareFn<C, S>
+}
+export declare function middleware<C, S extends object>(
+  fn: MiddlewareFn<C, S>, options?: MiddlewareOptions
+): Middleware<C, S>
 export type Behavior<F extends AnyFn> = BehaviorPlan & {
   readonly [behaviorBrand]: (fn: F) => F
 }
@@ -104,23 +115,22 @@ export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMe
 }
 export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, ExecutionSettings<TestBuilder<F, C, R>> {
   describe(name: string): TestBuilder<F, C, R>
-  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TestBuilder<F, ExtendContext<C, Awaited<S>>, R>
-  use<S extends object>(middleware: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
+  use<S extends object>(m: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
 export interface GroupMethods<C extends object, R extends object = {}> {
+  /** middlewareを取る形を先に並べ、その場で書いたmiddlewareのctxを文脈から型付けする。 */
+  group<S extends object>(m: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
+  group<S extends object>(name: string, m: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
   group(child: TestDefinition<C>): GroupSuite<C, R>
   group(name: string, child: TestDefinition<C>): GroupSuite<C, R>
-  group<S extends object>(middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
-  group<S extends object>(name: string, middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
 }
 export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
   plan(): GroupPlan<R>
 }
 export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R>, ExecutionSettings<TargetStage<C, R>> {
   describe(name: string): TargetStage<C, R>
-  setup<S>(create: (ctx: Readonly<C>) => SetupReturn<S>): TargetStage<ExtendContext<C, Awaited<S>>, R>
-  use<S extends object>(middleware: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
+  use<S extends object>(m: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
@@ -129,15 +139,14 @@ export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   timeout(ms: number): TargetStage<R, R>
   retry(count: number): TargetStage<R, R>
   describe(name: string): TargetStage<R, R>
-  setup<S>(create: (ctx: Readonly<R>) => SetupReturn<S>): TargetStage<ExtendContext<R, Awaited<S>>, R>
-  use<S extends object>(middleware: Middleware<R, S>): TargetStage<ExtendContext<R, S>, R>
+  use<S extends object>(m: Middleware<R, S>): TargetStage<ExtendContext<R, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<R, R>
   target<F extends AnyFn>(fn: F): TestBuilder<F, R, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
+  group<S extends object>(m: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
+  group<S extends object>(name: string, m: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
   group(child: TestDefinition<R>): GroupSuite<R, R>
   group(name: string, child: TestDefinition<R>): GroupSuite<R, R>
-  group<S extends object>(middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
-  group<S extends object>(name: string, middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
 }
 
 export interface ExecutionSettings<Self> {
@@ -169,19 +178,18 @@ export type ValuePlan<V, C> =
 export type TargetPlan<F extends AnyFn> =
   | { readonly kind: 'function'; readonly fn: F }
   | { readonly kind: 'method'; readonly object: object; readonly key: string; readonly fn: F }
-export interface SetupPlan<C = any, S extends object = any> {
-  readonly kind: 'setup'
-  readonly create: (ctx: Readonly<C>) => S | Promise<S>
-}
 export interface MiddlewarePlan<C = any, S extends object = any> {
   readonly kind: 'middleware'
-  readonly run: Middleware<C, S>
+  readonly run: MiddlewareFn<C, S>
+  /** middlewareの定義で指定した前処理・後処理の期限。未指定はundefined。 */
+  readonly timeout: number | undefined
 }
 export interface GroupMiddlewarePlan<C = any, S extends object = any> {
   readonly kind: 'middleware'
-  readonly run: Middleware<C, S>
+  readonly run: MiddlewareFn<C, S>
+  readonly timeout: number | undefined
 }
-export type StepPlan = SetupPlan | MiddlewarePlan
+export type StepPlan = MiddlewarePlan
 export type BehaviorAction =
   | { readonly kind: 'returns' | 'resolves'; readonly value: unknown }
   | { readonly kind: 'throws' | 'rejects'; readonly error: unknown }
@@ -305,7 +313,9 @@ export type DiagnosticValue =
   | { readonly kind: 'reference'; readonly id: number }
   | { readonly kind: 'accessor'; readonly get: boolean; readonly set: boolean }
   | { readonly kind: 'omitted'; readonly reason: string }
-export type ExecutionPhase = 'setup' | 'middleware' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
+export type ExecutionPhase = 'middleware' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
+/** middlewareの区間。前処理はnextを呼ぶまで、後処理はnextの完了後。 */
+export type MiddlewareStage = 'before' | 'after'
 export type AssertionReference = {
   readonly index: number
 } & (
@@ -323,7 +333,7 @@ export type Failure = {
   | { readonly kind: 'assertion'; readonly phase: 'assertion'; readonly assertion: AssertionReference; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
   | { readonly kind: 'outcome'; readonly phase: 'target'; readonly expected: 'return' | 'throw'; readonly actual: TargetOutcome }
   | { readonly kind: 'execution'; readonly phase: ExecutionPhase; readonly cause: DiagnosticValue; readonly assertion?: AssertionReference }
-  | { readonly kind: 'timeout'; readonly phase: ExecutionPhase; readonly timeoutMs: number; readonly cleanup: 'complete' | 'incomplete' }
+  | { readonly kind: 'timeout'; readonly phase: ExecutionPhase; readonly timeoutMs: number; readonly cleanup: 'complete' | 'incomplete'; readonly stage?: MiddlewareStage }
 )
 export type AssertionResult = {
   readonly assertion: AssertionReference
@@ -360,9 +370,11 @@ export interface TestResult {
 }
 export type GroupMiddlewareFailure = {
   readonly message: string
-  readonly phase: 'setup' | 'cleanup' | 'contract'
-  readonly cause: DiagnosticValue
-}
+  readonly phase: MiddlewareStage | 'contract'
+} & (
+  | { readonly kind: 'execution'; readonly cause: DiagnosticValue }
+  | { readonly kind: 'timeout'; readonly timeoutMs: number }
+)
 export type GroupMiddlewareResult =
   | {
       readonly status: 'passed' | 'failed' | 'cancelled'

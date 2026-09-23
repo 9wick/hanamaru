@@ -15,6 +15,8 @@
 | each | each(name, rows, body)をitと並ぶ入口にする。[each](./each.md) |
 | mock sequence | onceを順に指定し、最後に通常動作を必須とする。[モック](./api-mock.md) |
 | nth | 指定メソッドのn回目の引数を検証する。spy登録を要求しない。[マッチャ](./api-expect.md) |
+| middleware | `middleware(fn, { timeout })` で作り、関数のままでは登録できない。ケースへ値を渡す手段は `next(fields)` だけにする。[middleware](./middleware.md) / [用語集](./glossary.md) |
+| 前処理期限・後処理期限 | middlewareの定義に持たせ、前処理と後処理へ独立に適用する。既定値は10,000ms。[middleware](./middleware.md) |
 
 軽量なチェーン、値と状態遷移の型安全、実行計画と実行の分離を保ちます。
 metadataを特定の表示・解析・実行戦略の用途へ限定しません。
@@ -65,7 +67,7 @@ caseは他のcaseの実行有無・実行順に依存しない独立した実行
 
 実行モデルは Run > Process * N とします。各execution processは一つのRunに所属し、同じhost runtimeでactiveなRunを重複させません。完了したRunの後に次のRunを開始することはできます。
 
-通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。shared fixtureはscope引数を `.use()` に増やさず、`group(middleware, child)` でgroup追加箇所そのものを一度囲む形にします。これにより共有ctxの型と実行順をtree構造から読めるようにします。shared fixtureはsetup costの共有であり、case間の順序依存を許す仕組みではありません。
+通常の `.use()` は各attemptを囲むHono型のmiddlewareとして維持します。shared fixtureはscope引数を `.use()` に増やさず、`group(middleware, child)` でgroup追加箇所そのものを一度囲む形にします。これにより共有ctxの型と実行順をtree構造から読めるようにします。shared fixtureは共有資源を用意するコストの共有であり、case間の順序依存を許す仕組みではありません。
 
 順序を持つ一連の操作は通常case間の依存として扱わず、flowというordered scenarioへ分離する方針を維持します。flow自体のAPIは今回確定しません。
 

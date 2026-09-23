@@ -48,7 +48,7 @@ CaseResultにはname・origin・path・row・適用したconfig・durationMs・a
 通常ケースのrowはnullです。eachのrow.valueはケースの最初の試行開始前、未実行なら結果作成時に診断値へ取り込みます。eachの行番号はrow.indexに残し、表示するときだけ1始まりにします。
 
 durationMsは最初の試行開始からケース終了・中断までの実時間で、未実行なら0です。
-attemptsは実行順で、attemptは1始まりです。各試行のdurationMsも準備開始から後始末終了・中断までを測ります。各試行に状態・時間・targetの終了・アサーションの評価・失敗・後始末の状態を残します。
+attemptsは実行順で、attemptは1始まりです。各試行のdurationMsもmiddlewareの前処理開始から後始末終了・中断までを測ります。各試行に状態・時間・targetの終了・アサーションの評価・失敗・後始末の状態を残します。
 失敗は各試行のfailuresにだけ保持します。最後に成功しても過去の試行を消しません。
 
 ### 試行の有無と未実行の理由
@@ -86,7 +86,7 @@ Promiseの完了を観測できない中断でもnullとし、成功の戻り値
 | assertion | 条件の参照、expected、actual |
 | outcome | 期待したreturn/throwと、実際の終了・値 |
 | execution | 発生段階、原因。条件評価中ならその条件の参照も保持 |
-| timeout | 発生段階、timeoutMs、後始末の完了状態 |
+| timeout | 発生段階、timeoutMs、後始末の完了状態。middlewareでは前処理・後処理の区別も残す |
 
 全てにphaseと人間向けmessageを保持します。messageを解析しなくても、条件・期待・観測・原因が分かります。
 アサーションの参照にはsource（expect / expectCalls）、その配列内の0始まりのindex、subject、matcherを持ちます。
@@ -94,7 +94,7 @@ callにはkeyも残し、sourceとindexから計画内のオブジェクト参�
 expectの配列は遅延するため、評価後に得た配列との対応です。呼び出し条件のindexはexpectの成功・失敗でずれません。
 
 各条件はpassed / failed / not-evaluatedとして記録し、未評価には理由を残します。
-準備に失敗してtargetを呼べない場合、既知の呼び出し条件はnot-evaluatedです。まだ構築できないexpectの条件を捏造しません。
+middlewareの失敗でtargetを呼べない場合、既知の呼び出し条件はnot-evaluatedです。まだ構築できないexpectの条件を捏造しません。
 呼び出し0回の成功と、検証していない状態を区別します。
 複数条件の失敗・原因・後始末の失敗を全て残し、最後の例外で前の失敗を消しません。
 
@@ -137,9 +137,11 @@ getterや利用者のtoJSONを診断のために実行しません。
 通常のgroupではmiddlewareはnullです。
 
 middleware結果にはstatus・durationMs・failures・cleanupを保持します。
-setup前に実行対象がなくmiddlewareを開始しなかった場合や、外側の中断で開始しなかった場合はnot-runとして理由を残します。
-setup failureではchild配下の実行対象caseをnotRun: cancelledとし、cleanup failureでは既存のchild結果を保持したままrunをfailedにして後続を中断します。
-caseの通常失敗やretryではgroup middlewareを終了・再作成せず、child全体が完了してからcleanupします。
+各failureはphaseにbefore / after / contractを持ち、期限超過ではその期限も残します。
+実行対象がなくmiddlewareを開始しなかった場合や、外側の中断で開始しなかった場合はnot-runとして理由を残します。
+前処理の失敗ではchild配下の実行対象caseをnotRun: cancelledとし、後処理の失敗では既存のchild結果を保持したままrunをfailedにして後続を中断します。
+前処理期限・後処理期限の超過も同じ扱いです。
+caseの通常失敗やretryではgroup middlewareを終了・再作成せず、child全体が完了してから後処理へ進みます。
 
 ## run全体
 
@@ -154,9 +156,9 @@ case列は最後の試行またはnotRunから求める値であり、CaseResult
 | event | AttemptResult.status | case（派生値） | RunResult.status / reason | 後続 |
 |---|---|---|---|---|
 | 全検証と後始末が成功 | passed | passed | passed / completed | 続行 |
-| assertion不一致・期待しない例外・準備や検証の失敗 | failed | failed | failed / completed | 続行 |
+| assertion不一致・期待しない例外・middlewareや検証の失敗 | failed | failed | failed / completed | 続行 |
 | 通常の失敗後、retryで成功 | failed → passed | passed（flaky） | passed / completed（failOnFlakyならfailed） | 続行 |
-| 試行のtimeout（準備・対象・検証・後始末のいずれでも） | failed | failed | failed / timeout | notRun: cancelled |
+| 試行のtimeout（middlewareの前処理・対象・検証・後処理のいずれでも） | failed | failed | failed / timeout | notRun: cancelled |
 | 復元・後始末の失敗 | failed | failed | failed / cleanup-failed | notRun: cancelled |
 | Ctrl+C（実行中の試行に失敗なし） | cancelled | cancelled | cancelled / interrupted | notRun: cancelled |
 | 失敗を記録した試行の後始末中にCtrl+C | failed | failed | failed / interrupted | notRun: cancelled |
@@ -168,7 +170,7 @@ case列は最後の試行またはnotRunから求める値であり、CaseResult
 
 ### 状態の判定と事象が重なる場合
 
-- 試行に失敗が一つでもあればfailedです。timeoutはkind: timeoutの失敗を記録し、cancelledにはしません。Ctrl+Cでも記録済みの失敗を取り消しません。
+- 試行に失敗が一つでもあればfailedです。timeoutはkind: timeoutの失敗を記録し、cancelledにはしません。middleware自身の期限を超えた場合も同じ失敗として記録します。Ctrl+Cでも記録済みの失敗を取り消しません。
 - 失敗のない試行を外部から中断した場合はcancelledです。passedは検証と後始末が全て成功してから確定します。完了済みの試行は後から書き換えません。
 - runのreasonは、記録された事象のうちtimeout → cleanup-failed → interrupted → completedの順で決めます。例えばtimeoutとcleanup失敗が重なればreasonはtimeoutですが、両方の失敗を保持します。
 - runの中断が始まった時点で、期限に達していればtimeoutも記録します。それ以降は試行の時計による新しいtimeoutを発生させず、CLIでは終了猶予を使います。猶予切れは別のtimeoutやcleanup失敗を作りません。

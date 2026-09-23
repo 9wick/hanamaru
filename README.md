@@ -100,7 +100,7 @@ const tests = new Test()
   .group('退会', deletionTests)
 ```
 
-groupで関連するテストをまとめ、配下へ共通のmock・setup・use・timeout・retryを適用できます。
+groupで関連するテストをまとめ、配下へ共通のmock・use・timeout・retryを適用できます。
 名前は任意です。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
 グループ化と共通設定の範囲は[テストをグループにまとめる](./docs/grouping.md)を参照してください。
 
@@ -111,14 +111,14 @@ groupで関連するテストをまとめ、配下へ共通のmock・setup・use
 
 ```ts
 const tests = new Test()
-  .group(async (_, next) => {
+  .group(middleware(async (_, next) => {
     const server = await startServer()
     try {
       return await next({ server })
     } finally {
       await server.stop()
     }
-  }, userTests)
+  }), userTests)
 ```
 
 middlewareは一度だけserverを用意し、`next({ server })` の値をuserTests配下の各attemptへ渡します。
@@ -134,24 +134,24 @@ retryは失敗したケースだけを再試行し、各試行を結果に残し
 ## ケースは独立して実行できる
 
 各caseは、他のcaseが実行されたか、どの順序で実行されたかに依存しないものとして扱います。
-宣言順は表示・metadataの順序であり、case間の依存を表しません。setup・middleware・mock・ctx・呼び出し記録は各attemptで作り直します。
+宣言順は表示・metadataの順序であり、case間の依存を表しません。middleware・mock・ctx・呼び出し記録は各attemptで作り直します。
 将来のshuffle・並列実行・複数processへの配置でも意味が変わらないtestを基本にし、順序を持つ一連の操作は通常のcaseとは分けてflowとして扱う方針です。
 
-## 準備と後始末を同じ場所に書く
+## 資源の取得と解放を同じ場所に書く
 
 ```ts
-.use(async (_, next) => {
+.use(middleware(async (_, next) => {
   const db = await createDatabase()
   try {
     return await next({ db })
   } finally {
     await db.close()
   }
-})
+}))
 ```
 
-nextへ渡した値の型は、後続のargsFromやe.ctxへ伝わります。
-値を用意するだけなら `.setup(() => ({ expected: 3 }))` も使えます。
+middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型は後続のargsFromやe.ctxへ伝わります。
+値を渡すだけなら `.use(middleware(async (_, next) => next({ expected: 3 })))` と書けます。
 詳しくは[middleware](./docs/middleware.md)を参照してください。
 
 ## 定義は実行計画になる
@@ -164,7 +164,7 @@ const plan = users.plan()
 const result = await run(plan)
 ```
 
-`.plan()` はテストを実行せず、グループの階層、対象、準備やmiddleware、各スコープの実行設定・モック、引数、呼び出し条件、結果の期待の組み立て方、宣言位置を返します。
+`.plan()` はテストを実行せず、グループの階層、対象、middleware、各スコープの実行設定・モック、引数、呼び出し条件、結果の期待の組み立て方、宣言位置を返します。
 この実行計画がmetadataです。定義することと、実行することを分離します。
 テストを書くために、識別子やソース位置を別途登録する必要はありません。
 
@@ -192,6 +192,7 @@ expectは現在の書き方と実行時のctxを保つため、計画では遅�
 - [実行計画とmetadata](./docs/metadata.md) / [宣言位置と実行結果](./docs/results.md)
 - [実行セマンティクス](./docs/semantics.md) / [CLI](./docs/cli.md)
 - [型推論](./docs/type-inference.md) / [制約と実装状況](./docs/limitations.md)
+- [用語集](./docs/glossary.md)
 
 ## 現在の状態
 

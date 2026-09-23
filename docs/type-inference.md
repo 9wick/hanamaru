@@ -8,17 +8,17 @@
 | 型 | 決まるところ | 使うところ |
 |---|---|---|
 | F: 対象の関数型 | target | args、argsFrom、result |
-| C: その段階のコンテキスト型 | 親への要求型、setupの戻り値、useでnextへ渡す値 | 次のsetup / use、argsFrom、e.ctx |
+| C: その段階のコンテキスト型 | 親への要求型、useでnextへ渡す値 | 次のuse、argsFrom、e.ctx |
 | R: 親に要求するコンテキスト型 | new Test<R>()。省略時は{} | groupの供給チェック、runのルートチェック |
 
 引数は `Parameters<F>`、結果の期待値は `Awaited<ReturnType<F>>` です。
-setupの戻り値 `Awaited<S>` のフィールドをCへ追加し、同名のフィールドは置き換えます。
+`next(fields)` へ渡したフィールドの型SをCへ追加し、同名のフィールドは置き換えます。
 Promise自体をctxにはしません。各コールバックに渡るctxのフィールドはreadonlyです。
 
 ```ts
 new Test()
   .target(add)
-  .setup(async () => ({ a: 1, expected: 3 }))
+  .use(middleware(async (_, next) => next({ a: 1, expected: 3 })))
   .it('型が伝わる', t => t
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
@@ -28,24 +28,29 @@ new Test()
 
 ```ts
 new Test()
-  .use(async (_, next) => {
+  .use(middleware(async (_, next) => {
     const db = await createDatabase()
     try {
       return await next({ db, expected: 3 })
     } finally {
       await db.close()
     }
-  })
+  }))
   .target(countUsers)
   .it('型が伝わる', t => t.argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
 nextは渡されたフィールド型Sを保持する `Promise<MiddlewareResult<S>>` を返します。
-useはmiddlewareの戻り値からSを推論し、後続のCへ追加します。
+useは `middleware()` が返す値からSを推論し、後続のCへ追加します。
 ブランド付きの完了値なので、return忘れや通常のオブジェクトの返却は型エラーです。
-`next()` はフィールドを追加せずCを保ちます。setupと同様に、同名フィールドは置き換えます。
+`middleware()` を通さない素の関数も、ブランドを持たないため `.use()` / `.group()` で型エラーです。
+`next()` はフィールドを追加せずCを保ちます。同名フィールドは置き換えます。
 親のuseで供給したフィールドも、groupで子が要求する型と照合します。
+
+`.use()` / `.group()` の引数に直接書いたmiddlewareのctxは、その位置のCから型付けします。注釈は不要です。
+変数へ入れて使い回すmiddlewareには文脈がないため、必要なctxを引数の型に書きます。
+その型を供給できるかは、使う場所で検査します。
 
 ## 設定とケース追加を分ける
 
@@ -54,10 +59,10 @@ Test<R> → target → TestBuilder<F, C, R> → it → Suite<F, C, R>
         → group → GroupSuite<C, R>
 ```
 
-TestBuilderはsetup・use・mockとケース追加を持ち、Suiteはケース追加とplanだけを持ちます。
+TestBuilderはuse・mockとケース追加を持ち、Suiteはケース追加とplanだけを持ちます。
 グループも最初のgroupで設定を固定し、GroupSuiteはgroupとplanだけを持ちます。
 既存ケースを書いた後のtargetやctxの変更を型で防ぎ、対象を選んだ後のtargetの再指定も禁止します。
-元のTestBuilderはイミュータブルなので、そこから別のsetup・use・mockを選ぶ派生は作れます。
+元のTestBuilderはイミュータブルなので、そこから別のuse・mockを選ぶ派生は作れます。
 
 ケースはargs / argsFromで引数を確定した後、expectとexpectCallsをそれぞれ一度だけ設定できます。
 一方でも完成したケースですが、もう一方を追加できます。両方を設定したら終端です。
@@ -82,7 +87,7 @@ const child = new Test<{ a: number }>()
     .expect(e => [e.result.toBe(3)]))
 
 const parent = new Test()
-  .setup(() => ({ a: 1, extra: true }))
+  .use(middleware(async (_, next) => next({ a: 1, extra: true })))
   .group(child)
 
 run(parent.plan())
@@ -93,7 +98,7 @@ childは親に `{ a: number }` を要求します。親に余分なフィール�
 子が型パラメータを省略すれば、親ctxへの要求はありません。
 
 Rは子の定義を作っている間ずっと親への要求として保持します。
-子自身のsetup・useで同名のフィールドを供給しても、それより前のコードがRを利用し得るので要求は消しません。
+子自身のmiddlewareで同名のフィールドを供給しても、それより前のコードがRを利用し得るので要求は消しません。
 間のグループも `new Test<R>()` で必要なctxを宣言し、さらに外側の親から受け取れます。
 
 planは親への要求を型として保持します。runへ渡せるのは `{}` から実行できるルートだけです。
@@ -146,10 +151,10 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 
 - 対象と引数・期待値の型の一致
 - モックの戻り値と、呼び出し条件のメソッドキー・引数の型
-- 未供給のctxプロパティ参照、setup・useの非同期処理から伝わる型
+- 未供給のctxプロパティ参照、middlewareの非同期処理から伝わる型
 - ケース・group追加後の共通設定変更
 - グループの親によるctxの供給、要求が残る計画の単独実行
-- setup・useを重ねたときのctxの型、middlewareのreturn忘れ
+- middlewareを重ねたときのctxの型、middlewareのreturn忘れ、関数のままの登録
 - 引数の確定と期待の順序、未完了のケース、期待の二重定義
 - result/errorの混在、空配列、マッチャの呼び忘れ、非同期predicate
 
@@ -164,7 +169,8 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 テストが意図した参照を選んでいるかどうかは、型だけでは検査できません。
 
 anyや型アサーションで型検査を回避した値、プロパティの差し替え可否は実行時検査が必要です。
-setupの戻り値やnextへの追加フィールドがplain objectかどうかは、実行時に検査します。
+nextへの追加フィールドがplain objectかどうかは、実行時に検査します。
+変数へ入れたmiddlewareの引数に書いたctxの型は、書いたとおりに扱います。readonlyにしたい場合は `Readonly<...>` と書きます。
 nextを1回呼んでその完了を待つこと、返した完了値がその呼び出しのものかは、型だけでは保証できません。
 finallyがあるときに `return next(...)` で早く片付けてしまう誤りも型では防げないため、`return await next(...)` と書きます。
 省略可能なメソッドは、存在を保証する型へ絞ってから渡します。
@@ -191,3 +197,4 @@ calledNthWithの引数は、指定したメソッドのParametersに従います
 型で防ぐ契約は[execution-contracts.ts](./spec/execution-contracts.ts)で検証します。
 数値の範囲・有限性、空の行配列、行から作る名前の実行結果などは定義時・計画受付時の検査です。
 SourceLocationの正しい取得、設定の継承結果、期限・再試行・復元・JSONの実動作は、この型検証では確認できません。
+middlewareのtimeoutも、型では数値であることだけを検査します。

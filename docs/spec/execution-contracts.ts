@@ -1,4 +1,4 @@
-import { Test, defineConfig, run } from 'hanamaru'
+import { Test, defineConfig, middleware, run } from 'hanamaru'
 import type { AttemptResult, CaseResult, DiagnosticValue, Failure, SourceLocation } from 'hanamaru'
 import { add } from '../examples/math.ts'
 
@@ -17,7 +17,7 @@ const suite = ready.each('足す', rows, (t, row) => t
   .expect(e => [e.result.toBe(row.expected)]))
 ready.each(row => `${row.a} + ${row.b}`, rows, (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(row.expected)]))
 ready.each('タプル', [[1, 2, 3], [2, 3, 5]], (t, row) => t.args(row[0], row[1]).expect(e => [e.result.toBe(row[2])]))
-ready.setup(() => ({ expected: 3 })).each('ctx', rows, (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(e.ctx.expected)]))
+ready.use(middleware(async (_, next) => next({ expected: 3 }))).each('ctx', rows, (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(e.ctx.expected)]))
 suite.it('通常ケースも追加する', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
 new Test().timeout(5_000).retry(2).group(suite)
 run(suite.plan(), { failOnFlaky: true })
@@ -38,7 +38,7 @@ ready.each('未完成', rows, (t, row) => t.args(row.a, row.b))
 // @ts-expect-error definition callbacks are synchronous.
 ready.each('非同期', rows, async (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(3)]))
 // @ts-expect-error each freezes common context.
-suite.setup(() => ({ x: 1 }))
+suite.use(middleware(async (_, next) => next({ x: 1 })))
 // @ts-expect-error each freezes common timeout.
 suite.timeout(100)
 // @ts-expect-error it freezes common retry.

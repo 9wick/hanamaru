@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, middleware } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export interface UserContext {
@@ -8,7 +8,7 @@ export interface UserContext {
 
 export const userCases = new Test<UserContext>()
   .target(createUser)
-  .setup(ctx => ({ expected: { id: ctx.expectedId } }))
+  .use(middleware(async (ctx, next) => next({ expected: { id: ctx.expectedId } })))
   .it('保存して通知する', t => t
     .argsFrom(ctx => [ctx.input])
     .expect(e => [e.result.toEqual(e.ctx.expected)])

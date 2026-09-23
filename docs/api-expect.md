@@ -1,7 +1,7 @@
 # マッチャ
 
 `.expect(e => [...])` に戻り値・例外の条件を、`.expectCalls(call => [...])` に呼び出しの条件を並べます。
-`e.result`、`e.error`、`call(obj, key)` は記述子を作る入口で、`e.ctx` はそのケースのsetup・useで渡した値を順に反映したctxです。
+`e.result`、`e.error`、`call(obj, key)` は記述子を作る入口で、`e.ctx` はそのケースのmiddlewareが渡した値を順に反映したctxです。
 
 ## result
 
@@ -81,13 +81,13 @@ calledNthWithは合計回数を制約しないため、必要ならcalledTimes�
 ```ts
 new Test()
   .target(add)
-  .setup(() => ({ input: [1, 2] as const, expected: 3 }))
+  .use(middleware(async (_, next) => next({ input: [1, 2] as const, expected: 3 })))
   .it('ctxを使う', t => t
     .argsFrom(ctx => [...ctx.input])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-ctxには親から子までのsetupの戻り値とnextへ渡したフィールドが入り、同名のものは内側を優先します。
+ctxには親から子までのmiddlewareがnextへ渡したフィールドが入り、同名のものは内側を優先します。
 フィールド自体は読み取り専用ですが、参照先は同じ値なので、対象が変更したオブジェクトの状態も見えます。
 expectのコールバックはtarget終了後に呼ぶため、コールバックで参照した値もその時点の値です。
 predicateもctxをクロージャで参照できます。追加のラベルや専用マッチャは不要です。

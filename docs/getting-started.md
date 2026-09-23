@@ -115,22 +115,22 @@ export const calls = new Test()
 `call` はexpectCallsのコールバック引数です。追加の関数をimportする必要はありません。
 コールバックが返す配列から、実行前にどのメソッドを記録するかを決められます。
 
-## setupから値を渡す
+## middlewareから値を渡す
 
 ```ts
-import { Test } from 'hanamaru'
+import { Test, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
   .target(add)
-  .setup(() => ({ a: 1, b: 2, expected: 3 }))
-  .it('準備した値を使う', t => t
+  .use(middleware(async (_, next) => next({ a: 1, b: 2, expected: 3 })))
+  .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, ctx.b])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
 
-setupは各ケースの各試行で実行します。戻り値の型が `argsFrom` と `e.ctx` に伝わります。
-非同期setupも使えます。準備と後始末を同じ場所に書く場合は、[`use(...)` のmiddleware](./middleware.md)で各試行を囲みます。
+middlewareは各ケースの各試行で実行します。`next(fields)` に渡した型が `argsFrom` と `e.ctx` に伝わります。
+資源の取得と解放を同じ場所に書く場合は、nextをtry / finallyで囲みます。詳しくは[middleware](./middleware.md)を参照してください。
 共通設定は最初のケース・groupの前に書き、追加した後の変更は型で防ぎます。
 
 ## 実行環境とコマンド

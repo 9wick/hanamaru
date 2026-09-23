@@ -23,7 +23,7 @@ Vitest/JestのAPI全体との互換性は提供しません。
 
 ## チェーンが型を積み上げる
 
-`.target()` で引数と戻り値、`.setup()` や `.use(...)` でctxが決まります。
+`.target()` で引数と戻り値、`.use(...)` のmiddlewareでctxが決まります。
 呼び出しの検証では、`call(obj, key)` からそのメソッドの引数型が決まります。
 通常は型パラメータを手書きせず、エディタ上で次に書ける内容が絞られます。
 独立した子が親のctxを使う場合だけ、必要な型を宣言します。
@@ -38,7 +38,7 @@ Vitest/JestのAPI全体との互換性は提供しません。
 宣言順は表示とmetadata上の順序であり、利用者が意味を持たせる実行順ではありません。
 標準実行器の初版は直列に実行しますが、将来のshuffle・並列実行・複数processへの配置で順序や配置が変わっても、caseの意味が変わらないことを前提にします。
 
-setup、`use(...)`、mock、ctx、呼び出し記録は各attemptで作り直します。
+`use(...)` のmiddleware、mock、ctx、呼び出し記録は各attemptで作り直します。
 利用者がprocess.env、module state、global、外部DB等を変更する場合も、別caseの実行結果へ依存せず、必要な初期化と復元をそのcaseの実行境界で行います。
 高価な環境の共有と、case間の意味的な依存は別の問題として扱います。
 
@@ -72,17 +72,17 @@ expectCallsのコールバックで、対象のオブジェクト・キー・回
 metadataの構造はテストの意味に沿って定め、その利用目的は受け取る側に委ねます。
 
 実行計画には関数やオブジェクト参照も含みます。JSONに変換できることは要求しません。
-setup・useで用意する値に依存する引数や結果の期待は、それを組み立てる関数として保持します。
+middlewareで用意する値に依存する引数や結果の期待は、それを組み立てる関数として保持します。
 呼び出し条件は定義時に構造化し、実行前の計画から取得できます。
 任意の関数内部を解析して、まだ評価していない値まで取得できるとはしません。
 [実行計画とmetadata](./metadata.md)で、保持する構造と評価時点を定めます。
 
 ## 関連するテストをグループにまとめる
 
-`group(child)` で関連するテストをまとめ、mock・setup・use・timeout・retryの適用範囲を作ります。
+`group(child)` で関連するテストをまとめ、mock・use・timeout・retryの適用範囲を作ります。
 必要なら `group(name, child)` で説明を添えられますが、名前は必須ではありません。
 親の設定を配下のケースへ適用し、内側のmockは外側のmockを上書きします。
-setup・useは親から子へctxを渡し、useの後処理は逆順です。ctxと呼び出し記録は各ケースの試行ごとに用意します。
+middlewareは親から子へctxを渡し、後処理は逆順です。ctxと呼び出し記録は各ケースの試行ごとに用意します。
 
 高価な資源を配下全体で一度だけ用意する場合は、`group(middleware, child)` でgroup追加箇所をmiddlewareで囲みます。通常のuseは各attempt、group middlewareはchild全体という実行境界がAPI構造から分かれます。
 
@@ -92,10 +92,10 @@ metadataには各階層の設定と子の関係を保持します。
 
 ## middlewareでケースを囲む
 
-`.use((ctx, next) => ...)` で、資源の取得と解放を同じスコープに書けます。
+`.use(middleware((ctx, next) => ...))` で、資源の取得と解放を同じスコープに書けます。
 `return await next({ db })` で後続へ値と型を渡し、finallyで片付けます。
-準備した値を返すだけなら、`.setup(() => ({ expected: 3 }))` で書けます。
-[準備と後始末の例](./middleware.md)を参照してください。
+値を渡すだけなら、`middleware(async (_, next) => next({ expected: 3 }))` と書けます。
+middleware自身の前処理期限・後処理期限もその定義に書きます。[middlewareの例](./middleware.md)を参照してください。
 
 ## 設定とケースの入口
 

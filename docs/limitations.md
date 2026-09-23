@@ -57,8 +57,8 @@ expectCallsは定義時に記述子へ展開し、planから対象・キー・�
 [実行計画とmetadata](./metadata.md)を参照。
 
 計画はreadonlyだが、利用者から渡されたオブジェクト内部まで複製・凍結しない。
-ctxはsetupの戻り値やnextへの追加フィールドを反映するたびに新しい入れ物へフィールドを引き継ぐが、フィールドが参照する資源や値は複製しない。
-ケース間で独立した値を使うには、setup・use・argsFromで生成する。
+ctxはnextへの追加フィールドを反映するたびに新しい入れ物へフィールドを引き継ぐが、フィールドが参照する資源や値は複製しない。
+ケース間で独立した値を使うには、middleware・argsFromで生成する。
 
 呼び出しの検証にはmock登録を要求しない。指定した参照そのものを記録対象にする。
 構造が同じ別オブジェクトを間違えて指定したかどうかまでは、型で判定できない。
@@ -69,7 +69,7 @@ ctxはsetupの戻り値やnextへの追加フィールドを反映するたび�
 
 middlewareの戻り値から後続ctxを推論するため、nextの完了値を返す必要がある。
 `return await next(...)` のreturn忘れは型で防ぐが、nextの呼び出し回数や待機の正しさは実行時にも検査する。
-finally内の早すぎる解放を型で防ぐことはできない。後始末がある場合は `return next(...)` ではなくawaitしてから返す。
+finally内の早すぎる解放を型で防ぐことはできない。後処理がある場合は `return next(...)` ではなくawaitしてから返す。
 
 ## モックと呼び出し記録の範囲
 
@@ -92,7 +92,7 @@ process.env、module state、global、filesystem、外部DB等の利用者側の
 ## 初版の実行契約
 
 宣言位置の自動取得、構造化した失敗、各試行の結果、timeout・retry、each、mock sequence、nthの呼び出し条件を含めます。
-timeout・retryはgroup・target・ケースで項目ごとに継承・上書きします。
+timeout・retryはgroup・target・ケースで項目ごとに継承・上書きします。middlewareの前処理期限・後処理期限は `middleware(fn, { timeout })` に持たせます。
 標準CLIは期限超過後の停止を保証し、run(plan)単独は同一プロセスの処理と後始末を待ちます。
 未終了の処理・未完了の復元を次ケースへ持ち越しません。実装とランタイム検証はこれからです。
 

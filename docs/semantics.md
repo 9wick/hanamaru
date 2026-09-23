@@ -8,7 +8,7 @@
 `new Test()` のチェーンは、it・each・mock・expectCallsの定義コールバックを評価して計画を組み立てます。
 expectのコールバックは保存し、この時点では呼びません。
 `.plan()` は計画を取得し、`run()` が実行します。
-setup・use・target・argsFrom・fake・述語は、計画取得だけでは呼びません。
+middleware・target・argsFrom・fake・述語は、計画取得だけでは呼びません。
 定義中はメソッドを差し替えず、呼び出しの記録も開始しません。
 テストモジュールのトップレベルコードは通常のimportと同様に動きます。
 
@@ -34,7 +34,7 @@ skip/todoも結果に残すため、名前がなくても、重複していて�
 version・計画構造・呼び出し条件の妥当性を階層全体について実行前に検査します。
 循環、空のchildren/cases、不正なsteps・mock・config・origin・sequenceの終端動作等も受付エラーです。同じ子を別の経路から参照することは循環ではありません。
 空の計画配列や、同じhost runtimeでactiveなrunがある間のrunの重複実行は受付エラーです。先のrunをawaitして完了した後に次のrunを開始することはできます。
-受付エラーではsetup・useを開始せずPromiseをrejectします。ケース中の失敗は結果に残します。通常はretryの規則に従ってそのケースを完了し、他のケースを続けます。
+受付エラーではmiddlewareを開始せずPromiseをrejectします。ケース中の失敗は結果に残します。通常はretryの規則に従ってそのケースを完了し、他のケースを続けます。
 timeout・外部中断・復元や後始末の失敗では後続を中断します。
 
 ## Runとprocess
@@ -61,23 +61,24 @@ RunのPromiseは、そのRunが所有する開始済みのexecution processと�
 通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
 
 group middlewareへ渡すctxは、そのgroup定義が外側から要求する安定したctxです。
-親ノードのsetup/useは各attemptで実行されるため、そこで初めて作る値をgroup middlewareのsetupに渡すことはしません。
+親ノードのmiddlewareは各attemptで実行されるため、そこで初めて作る値をgroup middlewareの前処理へ渡すことはしません。
 一方、group middlewareが `next(fields)` へ渡した値は、各child attemptで親のper-attempt ctxと合成し、childのargsFrom・expectから参照できます。
 
 実行の概略は次のとおりです。
 
 ```text
-group middleware setup
+group middlewareの前処理
   child case A
-    attempt setup/use → target → assertions → cleanup
+    attemptのmiddleware前処理 → target → assertions → 復元とmiddleware後処理
     retryがあれば次のattempt
   child case B
-    attempt setup/use → target → assertions → cleanup
-group middleware cleanup
+    attemptのmiddleware前処理 → target → assertions → 復元とmiddleware後処理
+group middlewareの後処理
 ```
 
-setupが失敗した場合はchildのcaseを開始しません。cleanupが失敗した場合はrunを失敗として後続を中断します。
+前処理が失敗した場合はchildのcaseを開始しません。後処理が失敗した場合はrunを失敗として後続を中断します。
 共有資源を残したまま次のgroupへ進まないことは、通常のcleanup failureと同じ保証です。
+group middlewareはどのattemptにも含まれないため、効く期限は `middleware(fn, { timeout })` の前処理期限・後処理期限だけです。
 group middlewareを持つchildは、その共有資源のlifetime中は同じexecution processで実行します。
 
 ## 実行設定の解決
@@ -88,44 +89,43 @@ group → target → ケースの経路でtimeoutとretryを項目ごとに重�
 
 ## 一試行の手順
 
-1. **準備**: 期限の計測を開始し、新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。setupは戻り値をawaitしてctxを拡張し、次へ進む。`use(...)` は直前のctxとnextを受け取り、nextで後続のstepsとケース本体を実行する。
+1. **middleware**: 期限の計測を開始し、新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。各middlewareは直前のctxとnextを受け取り、nextで後続のstepsとケース本体を実行する。
 2. **instrumentation**: 経路上の共通mockとケースのmockを解決し、callsと参照・キーでまとめる。元のdescriptorを保存して差し替えと記録を設定する。
 3. **args**: 静的な引数を使うか、argsFromにctxを渡して引数タプルを得る。
 4. **target**: 対象を呼び、Promise/thenableならawaitする。戻り値か例外をタグ付きで保持する。
 5. **expect**: 設定があれば、ctxと記述子ビルダーで結果の期待を組み立てて検査する。
 6. **assertion**: 期待する終了を照合し、結果の条件、呼び出しの条件の順に、各配列の順で検証する。
-7. **cleanup**: finallyで差し替えを逆順に復元する。その後、内側から外側へuseのnextが完了し、各middlewareの後処理をawaitする。
+7. **cleanup**: finallyで差し替えを逆順に復元する。その後、内側から外側へnextが完了し、各middlewareの後処理をawaitする。
 
-ctxの拡張は、直前のctxとsetupの戻り値またはnextに渡した値の列挙可能なownフィールドを新しいオブジェクトへ浅くコピーします。
+ctxの拡張は、直前のctxとnextに渡した値の列挙可能なownフィールドを新しいオブジェクトへ浅くコピーします。
 同名のフィールドは後の値を優先します。入れ物のフィールドは変更不可とし、参照先の値は複製・凍結しません。
 argsFromとexpectは同じ最終ctxを受けます。middlewareが受け取ったctxは、その呼び出し時点のままです。
 新しく追加したフィールドだけを返せばよく、親のctxを手動でspreadする必要はありません。
-setupの戻り値とnextの追加フィールドはplain objectとし、null・プリミティブ・配列・クラスインスタンス等はそれぞれsetup・middlewareの失敗です。
+nextの追加フィールドはplain objectとし、null・プリミティブ・配列・クラスインスタンス等はmiddlewareの失敗です。
 DBなどの資源は `{ db }` のようにフィールドへ入れます。prototypeは通常のObjectかnullを受け付けます。
 
-親のsetup・useも、グループ全体で1回ではなく、実行する各ケースの各試行で呼びます。
-setupとuseの前処理・後処理にはモックも記録用のラッパーも適用しません。
+親のmiddlewareも、グループ全体で1回ではなく、実行する各ケースの各試行で呼びます。
+middlewareの前処理・後処理にはモックも記録用のラッパーも適用しません。
 記録は全ラッパーの適用後からtargetの終了までです。argsFromでの呼び出しも含まれるため、argsFromは引数を作る処理に留めます。
 expect・述語・後始末中の呼び出しは記録に含めません。
 
 ## middlewareとnext
 
-`use((ctx, next) => ...)` はケースの一試行を囲むmiddlewareです。
+`use(middleware((ctx, next) => ...))` はケースの一試行を囲むmiddlewareです。
 `next(fields)` はctxを拡張して後続を呼び、`next()` は現在のctxをそのまま渡します。
 後続はnextを呼んだ非同期コンテキスト内で実行するため、AsyncLocalStorageやコールバック型トランザクションで囲めます。
-setupとuseを混ぜた場合も登録順を保ちます。
+複数のmiddlewareは登録順を保ちます。
 
 ```text
-親useの前処理
-  親setup
-    子useの前処理
-      子setup → 差し替え → args → target → 期待の検証 → 復元
-    子useの後処理
-親useの後処理
+親middlewareの前処理
+  子middlewareの前処理
+    差し替え → args → target → 期待の検証 → 復元
+  子middlewareの後処理
+親middlewareの後処理
 ```
 
 middlewareはnextを1回呼び、その呼び出しが返す完了値を返します。
-後始末には `try { return await next({ db }) } finally { await db.close() }` を使います。
+後処理には `try { return await next({ db }) } finally { await db.close() }` を使います。
 `return next(...)` ではfinallyが下流の完了前に動くため、この形ではawaitが必要です。
 
 下流でケースの失敗が確定した場合、失敗を結果へ記録した上でnextをrejectします。外側のfinallyは引き続き実行します。
@@ -187,7 +187,6 @@ expectの構築・妥当性検査や結果の照合が失敗しても、取得�
 
 | 失敗した段階 | 扱い |
 |---|---|
-| setup | 下流を開始せず、外側のmiddlewareのfinallyへ戻る |
 | middleware | 未開始の下流は実行せず、開始済みなら完了・後始末を待つ。外側のfinallyへ戻る |
 | 差し替え・記録の設定 | targetを呼ばず、適用済みラッパーを復元し、middlewareのfinallyへ戻る |
 | args | targetを呼ばず、復元してmiddlewareのfinallyへ戻る |
@@ -196,10 +195,10 @@ expectの構築・妥当性検査や結果の照合が失敗しても、取得�
 | assertion | 失敗を記録し、後続を検証して後始末する |
 | cleanup | 元の失敗も残し、残りの復元を試み、middlewareのfinallyへ戻る |
 
-準備・差し替え設定・argsの失敗で対象を呼んでいない場合、アサーションを評価しません。
+middleware・差し替え設定・argsの失敗で対象を呼んでいない場合、アサーションを評価しません。
 これを「0回だったのでnotCalledに成功した」とは扱いません。
 target以外の段階の失敗は、targetに対するerrorの期待を満たしません。
-資源の取得と解放はuseの同じスコープに書き、取得途中で失敗した場合の後始末もそこで扱います。
+資源の取得と解放は同じmiddlewareに書き、取得途中で失敗した場合の解放もそこで扱います。
 
 ## 適用と復元
 
@@ -218,18 +217,19 @@ target以外の段階の失敗は、targetに対するerrorの期待を満たし
 
 ## ケース間の状態
 
-各ケースの各試行で経路上のsetup・`use(...)`を呼び、モックのsequenceと呼び出し記録を作り直します。同じ計画の再実行でも同様です。
+各ケースの各試行で経路上のmiddlewareを呼び、モックのsequenceと呼び出し記録を作り直します。同じ計画の再実行でも同様です。
 caseは、他のcaseが実行されたか、どの順序で実行されたかに依存してはいけません。process.env、module state、global、filesystem、DB等の共有状態を変更する場合は、そのcase自身の境界で必要な初期化・復元を行います。
-静的に渡したオブジェクトや、factoryが返した共有値までrunnerが複製する保証はありません。独立性が必要な値はsetup・`use(...)`・argsFromで毎回生成してください。
+静的に渡したオブジェクトや、factoryが返した共有値までrunnerが複製する保証はありません。独立性が必要な値はmiddleware・argsFromで毎回生成してください。
 
 ## 期限・再試行・中断
 
-試行の期限には準備・検証・後始末を含めます。timeoutはe.errorで成功にできません。
+試行の期限にはmiddlewareの前処理・検証・後処理を含めます。timeoutはe.errorで成功にできません。
+middleware自身の期限は前処理と後処理へ独立に適用し、`.use()` では試行期限と両方が効きます。超過の扱いは試行期限と同じで、再試行しません。
 標準CLIは設定したshutdownGraceの経過後に未完了の実行環境を終了させ、次のケースへ未停止の処理を持ち越しません。設定方法は[CLIの時間制限](./cli.md#時間制限)を参照してください。
 run(plan)単独は同じプロセスの任意コードを停止できず、開始済みの処理と後始末を待ち続ける場合があります。signalの公開APIはありません。
 
 通常の失敗は、後始末が成功し、retryの残りがあれば同じケースを最初から実行します。
-定義は再評価せず、準備・モックの動作列・引数の生成・対象・期待を新しい試行として実行します。
+定義は再評価せず、middleware・モックの動作列・引数の生成・対象・期待を新しい試行として実行します。
 timeout・中断・復元や後始末の失敗・定義エラー・middleware契約違反はretryしません。
 
 復元・後始末の失敗では、元の失敗も全て保持して試行をfailedにし、runを中断します。reasonはcleanup-failedですが、timeoutも発生していればtimeoutを優先します。
@@ -241,7 +241,7 @@ timeout・中断・復元や後始末の失敗・定義エラー・middleware契
 
 runに渡された全ルートとその子孫のどこかにonlyがあれば、onlyだけを実行します。
 他のrunケースはskipped、明示skipはskipped、todoはtodoとして結果に残します。
-実行しないケースではsetup・use・target・差し替え・記録を開始しません。
+実行しないケースではmiddleware・target・差し替え・記録を開始しません。
 定義時のケース・mock・expectCallsコールバックは、skipでも計画を組み立てるために評価します。
 
 `run(plans, { forbidOnly: true })` はonlyを受付エラーにします。
