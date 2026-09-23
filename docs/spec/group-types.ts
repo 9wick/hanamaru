@@ -1,5 +1,5 @@
 import { Test, middleware, run } from 'hanamaru'
-import type { GroupEntry, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
+import type { GroupEntry, GroupMiddlewareResult, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
 import { add } from '../examples/math.ts'
 import { mailService } from '../examples/user.ts'
 import { registrations } from '../examples/groups.test.ts'
@@ -26,6 +26,19 @@ const nested = new Test<{ seed: number }>().group([child])
 run(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group([nested]))
 const independent = new Test().target(add)
   .it('ctxを要求しない', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
+const nestedGroups = new Test().group('外側', [
+  new Test().group('内側', [independent]),
+])
+expectType<'definition'>(nestedGroups.blueprint().kind)
+const outerGroup = nestedGroups.blueprint().children[0]
+expectType<'group'>(outerGroup.kind)
+expectType<string | null>(outerGroup.name)
+const nestedDefinition = outerGroup.children[0].blueprint
+if (nestedDefinition.kind === 'definition') {
+  const innerGroup = nestedDefinition.children[0]
+  expectType<'group'>(innerGroup.kind)
+  expectType<string | null>(innerGroup.name)
+}
 const combined = new Test<{ seed: number }>().group('複数の対象をまとめる', [child, independent])
 run(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group([combined]))
 new Test().group([independent])
@@ -86,11 +99,13 @@ run(new Test())
 // @ts-expect-error group names are strings when present.
 new Test().group(123, [independent])
 const parentBlueprint: TestBlueprint = parent.blueprint()
-const firstEntry: GroupEntry = parent.blueprint().children[0]
+expectType<'definition'>(parent.blueprint().kind)
+const firstGroup = parent.blueprint().children[0]
+expectType<'group'>(firstGroup.kind)
 // @ts-expect-error run accepts a completed test, not its blueprint.
 run(parentBlueprint)
 // @ts-expect-error blueprint structure is readonly.
-parent.blueprint().children.push({ name: null, middleware: null, blueprint: independent.blueprint() })
+parent.blueprint().children.push(independent.blueprint())
 
 // Each middleware receives the accumulated context; later fields replace earlier ones.
 new Test()
@@ -125,19 +140,30 @@ new Test().use(middleware(async (_, next) => next({ value: 1 })))
   }).expect(e => [e.result.toBe(1)]))
 
 const blueprint = registrations.blueprint()
-expectType<'group'>(blueprint.kind)
-expectType<string | null>(blueprint.name)
+expectType<'definition'>(blueprint.kind)
+// @ts-expect-error a definition container is not a named group.
+blueprint.name
 for (const entry of blueprint.children) {
+  expectType<'group'>(entry.kind)
   expectType<string | null>(entry.name)
-  if (entry.blueprint.kind === 'test') {
-    expectType<readonly unknown[]>(entry.blueprint.cases)
-  } else {
-    expectType<readonly unknown[]>(entry.blueprint.children)
+  expectType<Function | null>(entry.middleware?.run ?? null)
+  for (const childEntry of entry.children) {
+    expectType<GroupEntry>(childEntry)
+    // @ts-expect-error the name belongs to the group, not its placement in the parent.
+    childEntry.name
   }
 }
 const result = await run(registrations)
+expectType<'passed' | 'failed' | 'cancelled'>(result.status)
 for (const node of result.tests) {
-  if (node.kind === 'group') expectType<readonly unknown[]>(node.children)
+  // @ts-expect-error aggregate status is derived from cases or children, not stored.
+  node.status
+  if (node.kind === 'group') {
+    expectType<string | null>(node.name)
+    expectType<number>(node.origin.line)
+    expectType<GroupMiddlewareResult | null>(node.middleware)
+    expectType<readonly unknown[]>(node.children)
+  }
   else expectType<readonly unknown[]>(node.cases)
 }
 

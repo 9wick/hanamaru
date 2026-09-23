@@ -6,8 +6,8 @@
 ## 宣言位置
 
 it / only / skip / todo / eachには、宣言したテストソースの `origin: { file, line, column }` を保持します。
-groupには、その親へ子を追加した位置をGroupEntry.originに保持します。結果のgroup追加箇所にも同じoriginを残します。
-一回の `group(name, [first, second])` で追加した子のまとまりと、その配列内の各子の追加位置は、同じgroup呼び出しの位置です。first・second自身が定義された位置は変更しません。
+groupには、そのgroup呼び出しの位置をGroupBlueprint.originとGroupResult.originに保持します。親から子を追加した位置はGroupEntry.originと結果の子要素にも残します。
+一回の `group(name, [first, second])` で作ったグループと、その配列内の各子の追加位置は、同じgroup呼び出しの位置です。first・second自身が定義された位置は変更しません。
 fileは絶対パス、ソース行番号・列番号は1始まりです。wrapper内でitを呼んだ場合は、そのitの位置を指します。
 blueprint/runの呼出位置では上書きしません。同じ子を複数回追加しても子の宣言位置は変えません。
 
@@ -32,14 +32,15 @@ blueprint/runの呼出位置では上書きしません。同じ子を複数回�
 標準CLIはcwdからの相対パスを `file:line:column` で失敗ケースの名前に添えます。
 成功・skip・todoは名前を中心に表示し、位置はデータとして保持します。
 入れ子のgroupの追加位置は外側から内側へ表示し、無名のgroupも省略しません。
-ルートには存在しないgroup追加位置を作りません。
+`new Test()` 自身にはgroup追加位置を作りません。
 
 ## blueprintと結果の対応
 
 同名・同じ位置・同じ子の複数追加を別ケースとして扱います。
-結果のpathは、ルートの番号、経路上のchildrenの番号、casesの番号を並べた0始まりの配列です。
+グループ名とgroup middlewareの結果はGroupResultに保持します。親のGroupResult.childrenには子の追加位置を残し、同じ情報を重複して持たせません。
+結果のpathは、実行階層に並べたルートの番号、経路上のchildrenの番号、casesの番号を並べた0始まりの配列です。DefinitionBlueprintは設定を引き継いで子を順に展開しますが、実行階層の番号を増やしません。
 グループとテストの結果も、そのノードまでのpathを持ちます。
-例えば `new Test().group('基本', [addition, subtraction])` を最初のルートとして実行した場合、subtractionの最初のケースのpathは `[0, 0, 1, 0]` です。二番目の0は「基本」の追加箇所、1は配列内のsubtractionの位置です。
+例えば `new Test().group('基本', [addition, subtraction])` を実行した場合、subtractionの最初のケースのpathは `[0, 1, 0]` です。0は「基本」グループ、1は配列内のsubtraction、最後の0は最初のケースの位置です。
 CLIは収集した全テストで番号を定め、filterや表示の並べ替えでも元のpathを保持します。
 ライブラリのrunでは渡したテスト配列を基準にします。別の配列を渡し直した後まで同じpathを保証するものではありません。
 
@@ -135,7 +136,7 @@ getterや利用者のtoJSONを診断のために実行しません。
 
 ## group middlewareの結果
 
-`group(middleware, [children])` を使ったgroup追加箇所では、親のGroupResult.childrenの該当要素に、子のまとまり全体を一度囲んだmiddlewareの結果を保持します。子グループのchildrenには配列の各子を順に残します。
+`group(middleware, [children])` で作ったGroupResultには、子全体を一度囲んだmiddlewareの結果を保持します。そのchildrenには配列の各子を順に残します。子のチェーンに複数のgroupがあれば、それらを同じ階層へ順に展開します。
 通常のgroupではmiddlewareはnullです。
 
 middleware結果にはstatus・durationMs・failures・cleanupを保持します。
@@ -183,7 +184,8 @@ case列は最後の試行またはnotRunから求める値であり、CaseResult
 runのstatusは、timeout・cleanup失敗・caseの派生値がfailed・failOnFlakyの条件に該当するケースのいずれかがあればfailedです。
 それらがなくinterruptedならcancelled、通常完了ならpassedです。途中で失敗してもretryで成功したケースは、failOnFlakyを指定しない限りrunを失敗にしません。
 公開型では `passed/completed` と `cancelled/interrupted`、および `failed` と上記の終了理由の組だけを許します。試行の `passed` は失敗記録なし・後処理完了、`failed` は失敗記録ありに制限します。ケースの `attempts` と `notRun` も排他的です。
-グループ・対象ケース群は配下のfailedを優先し、次にcancelled、それ以外はpassedとします。skip/todoだけならpassedです。
+対象ケース群の状態はcasesから導き、TestResultにはstatusを保存しません。最後の試行がfailedのケースがあればfailed、そうでなく最後の試行がcancelledまたはnotRunがcancelledのケースがあればcancelled、それ以外はpassedです。skipped/todoのケースは集約に影響せず、それらだけならpassedです。
+グループの状態はchildrenとgroup middlewareの結果から導き、GroupResultにもstatusを保存しません。子の派生状態またはmiddlewareがfailedならfailed、失敗がなく子またはmiddlewareがcancelledならcancelled、それ以外はpassedです。middlewareのnot-runはreasonがcancelledならcancelled、no-runnable-casesなら集約に影響しません。
 failOnFlakyはrunのstatusだけへ作用し、ケースのattemptsや各階層の結果を書き換えません。
 収集のtimeoutはrun開始前の読込エラーです。この表の試行timeoutとは区別し、RunResultや架空の試行を作りません。
 表示と終了コードは[CLI](./cli.md)、実行順は[実行セマンティクス](./semantics.md)を参照してください。

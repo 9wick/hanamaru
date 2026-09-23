@@ -13,6 +13,7 @@ declare const blueprintBrand: unique symbol
 declare const middlewareBrand: unique symbol
 declare const middlewareDefBrand: unique symbol
 export interface ItDone { readonly [doneBrand]: true }
+/** run()やgroup()へ渡す完成したチェーンの値。blueprintそのものではない。 */
 export interface TestDefinition<R extends object = {}> {
   /** 親に要求するctx。関数プロパティで反変にし、供給できない合成を防ぐ。 */
   readonly [definitionBrand]: (ctx: R) => void
@@ -130,7 +131,8 @@ export interface GroupMethods<C extends object, R extends object = {}> {
   group(name: string, children: GroupChildren<C>): GroupSuite<C, R>
 }
 export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
-  blueprint(): GroupBlueprint<R>
+  /** チェーン内の複数groupと共通設定を取得する。GroupSuite自体は実行階層ではない。 */
+  blueprint(): DefinitionBlueprint<R>
 }
 export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R>, ExecutionSettings<TargetStage<C, R>> {
   use<S extends object>(m: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
@@ -214,11 +216,13 @@ export type ValueCheck<V> =
   | { readonly matcher: 'toBe' | 'toEqual'; readonly expected: V }
   | { readonly matcher: 'toMatchObject'; readonly expected: V extends object ? Partial<V> : never }
   | { readonly matcher: 'toSatisfy'; readonly predicate: (value: V) => boolean }
+/** 検証前の条件を表す記述子。判定後の結果ではない。 */
 export type ResultAssertion<V = any> = {
   readonly [assertionBrand]: true
   readonly subject: 'result'
   readonly check: ValueCheck<V>
 }
+/** 例外について照合する条件の記述子。判定後の結果ではない。 */
 export type ErrorAssertion = {
   readonly [assertionBrand]: true
   readonly subject: 'error'
@@ -228,6 +232,7 @@ export type ErrorAssertion = {
     | { readonly matcher: 'toMatchObject'; readonly expected: Record<string, unknown> }
     | { readonly matcher: 'toSatisfy'; readonly predicate: (error: unknown) => boolean }
 }
+/** 呼び出し記録について照合する条件の記述子。判定後の結果ではない。 */
 export type CallAssertion = {
   readonly [assertionBrand]: true
   readonly subject: 'call'
@@ -239,6 +244,7 @@ export type CallAssertion = {
     | { readonly matcher: 'calledWith' | 'calledOnceWith'; readonly args: readonly unknown[] }
     | { readonly matcher: 'calledNthWith'; readonly n: number; readonly args: readonly unknown[] }
 }
+/** 結果または例外について照合する条件の記述子。 */
 export type Assertion = ResultAssertion | ErrorAssertion
 export type Assertions =
   | readonly [ResultAssertion, ...ResultAssertion[]]
@@ -282,18 +288,22 @@ export interface SuiteBlueprint<F extends AnyFn = AnyFn, C = any, R extends obje
 }
 export interface GroupBlueprint<R extends object = {}> extends BlueprintBase<R> {
   readonly kind: 'group'
-  readonly name: null
+  readonly name: string | null
+  readonly origin: SourceLocation
+  readonly middleware: GroupMiddlewareBlueprint | null
   readonly children: readonly GroupEntry[]
+}
+/** new Test()から続くgroup呼び出しを保持する。実行階層のノードではない。 */
+export interface DefinitionBlueprint<R extends object = {}> extends BlueprintBase<R> {
+  readonly kind: 'definition'
+  readonly children: readonly [GroupBlueprint, ...GroupBlueprint[]]
 }
 export interface GroupEntry {
   readonly origin: SourceLocation
-  readonly name: string | null
-  /** group(middleware, [children]) で子のまとまり全体を囲むmiddleware。指定しなければnull。 */
-  readonly middleware: GroupMiddlewareBlueprint | null
   /** 子の要求型は階層内では隠す。取り出して単独実行はできない。 */
   readonly blueprint: TestBlueprint<never>
 }
-export type TestBlueprint<R extends object = {}> = SuiteBlueprint<AnyFn, any, R> | GroupBlueprint<R>
+export type TestBlueprint<R extends object = {}> = SuiteBlueprint<AnyFn, any, R> | GroupBlueprint<R> | DefinitionBlueprint<R>
 /** JSONにも同じ形で出す診断値。id/referenceは一つの診断値の中で対応する。 */
 export type DiagnosticKey =
   | { readonly kind: 'string'; readonly value: string }
@@ -390,7 +400,6 @@ export interface TestResult {
   readonly kind: 'test'
   readonly name: string
   readonly path: readonly number[]
-  readonly status: 'passed' | 'failed' | 'cancelled'
   readonly cases: readonly CaseResult[]
 }
 export type GroupMiddlewareFailure = {
@@ -428,13 +437,12 @@ export type GroupMiddlewareResult =
     }
 export interface GroupResult {
   readonly kind: 'group'
-  readonly name: null
+  readonly name: string | null
+  readonly origin: SourceLocation
+  readonly middleware: GroupMiddlewareResult | null
   readonly path: readonly number[]
-  readonly status: 'passed' | 'failed' | 'cancelled'
   readonly children: readonly {
-    readonly name: string | null
     readonly origin: SourceLocation
-    readonly middleware: GroupMiddlewareResult | null
     readonly result: TestResult | GroupResult
   }[]
 }

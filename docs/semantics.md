@@ -28,8 +28,8 @@ const results = await run([first, second])
 ただしこの順序は利用者が依存できるテストの意味ではありません。各caseは他のcaseの実行有無・実行順に依存せず、将来のshuffle・並列実行・複数processへの配置で順序が変わっても同じ意味を持つものとします。
 同じ子を複数箇所に合成しても参照で重複排除せず、それぞれの経路の設定で実行します。
 
-結果のtestsはルートテストと同じ順・同じ件数です。
-グループの結果はchildren、対象ケース群の結果はcasesを持ち、それぞれblueprintと同じ階層・順・件数です。
+結果のtestsには、渡された定義に含まれる最上位のgroupまたは対象ケース群を宣言順に並べます。`new Test()` 由来のdefinitionは実行階層に数えず、子に含まれるgroupを順に展開します。
+グループの結果はchildren、対象ケース群の結果はcasesを持ち、実行階層での順序を保ちます。両者の集約状態は結果に重複保存せず、配下とgroup middlewareの結果から導きます。
 skip/todoも結果に残すため、名前がなくても、重複していても配列の位置で対応します。
 
 version・blueprint構造・呼び出し条件の妥当性を階層全体について実行前に検査します。
@@ -58,7 +58,7 @@ RunのPromiseは、そのRunが所有する開始済みのexecution processと�
 
 ## group middleware
 
-`group(middleware, [children])` のmiddlewareは、そのgroup追加箇所の子全体を一度だけ囲みます。
+`group(middleware, [children])` のmiddlewareは、そのgroupの子全体を一度だけ囲みます。
 通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
 
 group middlewareへ渡すコンテキストは、そのgroup定義が外側から要求する安定したコンテキストです。
@@ -250,8 +250,8 @@ CLIの `--ci` はこの設定を使います。通常実行ではskip/todoだけ
 
 ## 結果
 
-RunResultは定義順のtestsを持ち、各要素はkindで対象ケース群（test）とgroupを区別します。
-CaseResultには宣言位置・元のblueprint内のpath・適用した設定・全試行を残します。構造化した失敗は各試行のfailuresに保持します。
+RunResultは実行階層に展開した順のtestsを持ち、各要素はkindで対象ケース群（test）とgroupを区別します。
+CaseResultには宣言位置・実行階層上のpath・適用した設定・全試行を残します。構造化した失敗は各試行のfailuresに保持します。
 ケースの成否・flaky・失敗一覧はattemptsから求め、CaseResultに写しを持たせません。
 試行が空のケースにだけnotRunを必須とし、skipped / todo / 実行前のcancelledを区別します。
 各試行のアサーションはexpect / expectCallsの区別と、その配列内の0始まりのindexで対応します。

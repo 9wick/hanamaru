@@ -25,19 +25,20 @@ blueprintを取得してもmiddleware・テスト対象は呼ばず、メソッ�
 
 | 構造 | 保持するもの |
 |---|---|
-| TestBlueprint.version / kind | blueprint形式のバージョンとtest / group |
-| TestBlueprint.name | 対象ケース群ではtargetで指定した名前、または省略時の関数名・メソッド名。グループ自身ではnull |
+| TestBlueprint.version / kind | blueprint形式のバージョンとtest / group / definition |
+| SuiteBlueprint.name | targetで指定した名前、または省略時の関数名・メソッド名 |
+| GroupBlueprint.name | groupで指定した名前、または省略時のnull |
 | TestBlueprint.config | そのノードで明示したtimeout・retry。未指定は親から継承 |
 | TestBlueprint.steps | そのノードのuseを登録順に並べた配列。未登録なら空配列 |
 | MiddlewareBlueprint | kind: middleware、run関数、middlewareの定義で指定したtimeout |
 | TestBlueprint.mocks | そのノードの共通モック |
 | SuiteBlueprint.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
 | SuiteBlueprint.cases | 宣言順のケース |
-| GroupBlueprint.children | 追加した順の子。各要素はname・origin・blueprintを持つ |
-| GroupEntry.name | group(name, [children])で追加したまとまりの見出し。省略時と配列内の子ではnull |
+| DefinitionBlueprint.children | 一つのチェーンに追加したgroupの列。共通設定を保持するが、実行階層のグループではない |
+| GroupBlueprint.origin / middleware | group呼び出しの宣言位置と、そのグループ全体を一度囲むmiddleware |
+| GroupBlueprint.children | groupに渡した子を配列順に保持する |
 | GroupEntry.origin | 子を追加したgroup呼び出しの宣言位置。配列内の各子にも同じ位置を使う |
-| GroupEntry.middleware | 子のまとまり全体を一度囲むmiddleware。指定しなければnull。配列内の各子ではnull |
-| GroupEntry.blueprint | group呼び出しの追加箇所では子グループ、配列内の追加箇所では渡した子のblueprint |
+| GroupEntry.blueprint | groupに渡した子のblueprint。group()で完成した子はdefinition、targetで完成した子はtest |
 | Case.name / mode | ケース名とrun / only / skip / todo |
 | Case.origin | it / only / skip / todo / eachの宣言位置 |
 | Case.row | eachの元の行と0始まりのindex。通常ケースとtodoはnull |
@@ -57,29 +58,31 @@ sequenceはkind: sequenceとonceの動作列・fallbackを保持します。
 todoは実行本体を持たず、name・mode・origin・config・row: nullを持ちます。
 他のケースにはexpectかcallsの少なくとも一方が必要です。
 ケース名とグループ名は表示名であり、一意性を要求しません。
-結果はblueprintと同じ階層・順・件数で返すため、無名のグループや同名のケースも位置で対応します。
+結果ではdefinitionを実行階層に数えず、そこに含まれるgroupを順に並べます。groupとtestの階層・順は保持し、無名のグループや同名のケースも位置で対応します。
+TestResultとGroupResultに集約状態の写しは持たず、各ケース・子グループ・group middlewareの結果から導きます。
 
 ## グループの階層
 
-`TestBlueprint` は対象ケース群を表す `kind: 'test'` のSuiteBlueprintと、グループを表す `kind: 'group'` のGroupBlueprintのunionです。
-一回の `group(name, [first, second])` は、親のchildrenに一つの追加箇所を作り、その下の子グループにfirst・secondを順に保持します。子を一つ渡しても同じ階層です。名前と、配列全体を囲むmiddlewareは親から見た追加箇所に保持します。子グループ自体のnameはnullです。
-各ノードがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。
+`TestBlueprint` は対象ケース群を表す `kind: 'test'` のSuiteBlueprint、グループを表す `kind: 'group'` のGroupBlueprint、チェーンのgroup呼び出しと共通設定を保持する `kind: 'definition'` のDefinitionBlueprintのunionです。
+`new Test()` 自身は実行階層を作りません。`group(name, [first, second])` が一つのGroupBlueprintを作り、first・secondをchildrenに順に保持します。子を一つ渡しても同じ階層です。名前・宣言位置・配列全体を囲むmiddlewareはそのGroupBlueprintに保持します。名前を省略したグループのnameはnullです。
+一つのチェーンで複数回groupを呼ぶと、DefinitionBlueprint.childrenに複数のGroupBlueprintを順に保持します。別のチェーンを子に渡したときもDefinitionBlueprintに保持した設定を子へ引き継ぎますが、実行結果にdefinitionの階層は作りません。
+各blueprintがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。
 名前のないグループも構造として残ります。
 
 ```ts
 import { registrations } from './groups.test.ts'
 
 const blueprint = registrations.blueprint()
-for (const placement of blueprint.children) {
-  const bundle = placement.blueprint
-  if (bundle.kind === 'group') {
-    for (const entry of bundle.children) {
-      const child = entry.blueprint
-      if (child.kind === 'group') {
-        // 子グループのsteps・mocks・childrenを取得できる。
-      } else {
-        // 対象ケース群のtarget・casesを取得できる。
-      }
+for (const group of blueprint.children) {
+  // このチェーンの各group呼び出し。group.nameとgroup.middlewareを取得できる。
+  for (const entry of group.children) {
+    const child = entry.blueprint
+    if (child.kind === 'definition') {
+      // 子チェーンの共通設定と、その中のgroup呼び出しを取得できる。
+    } else if (child.kind === 'group') {
+      // 子グループのsteps・mocks・childrenを取得できる。
+    } else {
+      // 対象ケース群のtarget・casesを取得できる。
     }
   }
 }

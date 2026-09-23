@@ -86,11 +86,11 @@ group middlewareの前処理が失敗した場合、渡した全子の実行は�
 
 ## 名前は任意
 
-`group([children])` なら追加の名前は不要です。
-見出しを付けたい場合は `group('作成', [children])` と書けます。middleware付きでも `group(middleware, [children])` / `group('作成', middleware, [children])` の同じ規則です。
+`group([children])` ならグループの名前は不要です。
+名前を付けたい場合は `group('作成', [children])` と書けます。middleware付きでも `group(middleware, [children])` / `group('作成', middleware, [children])` の同じ規則です。
 子が一つでも配列で渡します。空配列は完成したグループになりません。
 名前の有無で設定の範囲は変わらず、一意性も要求しません。
-子の対象ケース群の名前もそのまま保持します。ルートグループは無名で、追加した子のまとまりを名前付きで表示できます。
+子の対象ケース群の名前もそのまま保持します。`new Test()` はグループを作らず、各 `group()` 呼び出しが名前付きまたは無名のグループを作ります。
 
 ```ts
 const tests = new Test()
@@ -101,6 +101,13 @@ const tests = new Test()
 「基本」はadditionとsubtractionを包む一つのグループです。「再確認」は別のグループで、同じadditionをもう一度含みます。additionの定義は変わらず、二つの実行箇所はそれぞれの経路の設定で実行します。
 
 ## 入れ子にして設定の範囲を分ける
+
+```ts
+const inner = new Test().group('内側', [addition])
+const outer = new Test().group('外側', [inner])
+```
+
+この実行階層は「外側 → 内側 → additionの対象ケース群」です。二つの `new Test()` は定義の起点であり、階層を増やしません。
 
 ```ts
 const userGroup = new Test()
@@ -206,5 +213,5 @@ CLIには必要なコンテキストを用意したルートだけをexportし�
 グループ全体の時間制限や、成功した兄弟まで再実行する意味にはしません。
 [設定例と解決順](./execution-options.md)を参照してください。
 
-useのmiddlewareは各ケースの各試行を囲みます。`group(middleware, [children])` のmiddlewareだけは、そのgroup追加箇所の子全体を一度囲みます。
+useのmiddlewareは各ケースの各試行を囲みます。`group(middleware, [children])` のmiddlewareだけは、そのグループの子全体を一度囲みます。
 groupへの追加位置は自動取得し、blueprintと実行結果の階層へ保持します。詳しくは[宣言位置](./results.md)を参照してください。

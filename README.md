@@ -106,7 +106,7 @@ groupで関連するテストを一つのまとまりにし、配下へ共通の
 ## group全体で資源を共有する
 
 通常の `.use()` は各caseの各attemptを囲みます。
-高価な資源を一つのgroup全体で共有したい場合は、group追加箇所をmiddlewareで囲めます。
+高価な資源を一つのgroup全体で共有したい場合は、そのgroupの子全体をmiddlewareで囲めます。
 
 ```ts
 const tests = new Test()
