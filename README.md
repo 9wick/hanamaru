@@ -104,12 +104,38 @@ groupで関連するテストをまとめ、配下へ共通のmock・setup・use
 名前は任意です。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
 グループ化と共通設定の範囲は[テストをグループにまとめる](./docs/grouping.md)を参照してください。
 
+## group全体で資源を共有する
+
+通常の `.use()` は各caseの各attemptを囲みます。
+高価な資源を一つのgroup全体で共有したい場合は、group追加箇所をmiddlewareで囲めます。
+
+```ts
+const tests = new Test()
+  .group(async (_, next) => {
+    const server = await startServer()
+    try {
+      return await next({ server })
+    } finally {
+      await server.stop()
+    }
+  }, userTests)
+```
+
+middlewareは一度だけserverを用意し、`next({ server })` の値をuserTests配下の各attemptへ渡します。
+共有資源のlifetimeを表すだけで、case間の順序依存は許しません。
+
 ## 実行設定を下流へ渡す
 
 `.timeout(1_000)` と `.retry(2)` はgroup・target・ケースで設定できます。
 内側で指定した項目だけを上書きし、未指定の項目は親から引き継ぎます。
 retryは失敗したケースだけを再試行し、各試行を結果に残します。
 [timeoutとretry](./docs/execution-options.md)に設定例と停止の保証を記載しています。
+
+## ケースは独立して実行できる
+
+各caseは、他のcaseが実行されたか、どの順序で実行されたかに依存しないものとして扱います。
+宣言順は表示・metadataの順序であり、case間の依存を表しません。setup・middleware・mock・ctx・呼び出し記録は各attemptで作り直します。
+将来のshuffle・並列実行・複数processへの配置でも意味が変わらないtestを基本にし、順序を持つ一連の操作は通常のcaseとは分けてflowとして扱う方針です。
 
 ## 準備と後始末を同じ場所に書く
 

@@ -111,6 +111,8 @@ export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends 
 export interface GroupMethods<C extends object, R extends object = {}> {
   group(child: TestDefinition<C>): GroupSuite<C, R>
   group(name: string, child: TestDefinition<C>): GroupSuite<C, R>
+  group<S extends object>(middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
+  group<S extends object>(name: string, middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<C, S>>): GroupSuite<C, R>
 }
 export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
   plan(): GroupPlan<R>
@@ -134,6 +136,8 @@ export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
   group(child: TestDefinition<R>): GroupSuite<R, R>
   group(name: string, child: TestDefinition<R>): GroupSuite<R, R>
+  group<S extends object>(middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
+  group<S extends object>(name: string, middleware: Middleware<R, S>, child: TestDefinition<ExtendContext<R, S>>): GroupSuite<R, R>
 }
 
 export interface ExecutionSettings<Self> {
@@ -170,6 +174,10 @@ export interface SetupPlan<C = any, S extends object = any> {
   readonly create: (ctx: Readonly<C>) => S | Promise<S>
 }
 export interface MiddlewarePlan<C = any, S extends object = any> {
+  readonly kind: 'middleware'
+  readonly run: Middleware<C, S>
+}
+export interface GroupMiddlewarePlan<C = any, S extends object = any> {
   readonly kind: 'middleware'
   readonly run: Middleware<C, S>
 }
@@ -266,6 +274,8 @@ export interface GroupPlan<R extends object = {}> extends PlanBase<R> {
 export interface GroupEntry {
   readonly origin: SourceLocation
   readonly name: string | null
+  /** group(middleware, child) のmiddleware。通常のgroupではnull。 */
+  readonly middleware: GroupMiddlewarePlan | null
   /** 子の要求型は階層内では隠す。取り出して単独実行はできない。 */
   readonly plan: TestPlan<never>
 }
@@ -348,12 +358,36 @@ export interface TestResult {
   readonly status: 'passed' | 'failed' | 'cancelled'
   readonly cases: readonly CaseResult[]
 }
+export type GroupMiddlewareFailure = {
+  readonly message: string
+  readonly phase: 'setup' | 'cleanup' | 'contract'
+  readonly cause: DiagnosticValue
+}
+export type GroupMiddlewareResult =
+  | {
+      readonly status: 'passed' | 'failed' | 'cancelled'
+      readonly durationMs: number
+      readonly failures: readonly GroupMiddlewareFailure[]
+      readonly cleanup: 'complete' | 'incomplete'
+    }
+  | {
+      readonly status: 'not-run'
+      readonly reason: 'no-runnable-cases' | 'cancelled'
+      readonly durationMs: 0
+      readonly failures: readonly []
+      readonly cleanup: 'complete'
+    }
 export interface GroupResult {
   readonly kind: 'group'
   readonly name: string | null
   readonly path: readonly number[]
   readonly status: 'passed' | 'failed' | 'cancelled'
-  readonly children: readonly { readonly name: string | null; readonly origin: SourceLocation; readonly result: TestResult | GroupResult }[]
+  readonly children: readonly {
+    readonly name: string | null
+    readonly origin: SourceLocation
+    readonly middleware: GroupMiddlewareResult | null
+    readonly result: TestResult | GroupResult
+  }[]
 }
 export interface RunResult {
   readonly version: 1

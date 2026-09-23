@@ -3,7 +3,7 @@ import type { AttemptResult, CaseResult, DiagnosticValue, Failure, SourceLocatio
 import { add } from '../examples/math.ts'
 
 defineConfig({
-  include: ['**/*.test.ts'],
+  include: ['**/*.{test,spec}.ts'],
   exclude: ['**/node_modules/**', '**/dist/**'],
   reporter: 'pretty',
   collectionTimeout: 120_000,

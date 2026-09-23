@@ -130,13 +130,15 @@ export const addition = new Test()
 ```
 
 setupは各ケースの各試行で実行します。戻り値の型が `argsFrom` と `e.ctx` に伝わります。
-非同期setupも使えます。準備と後始末を同じ場所に書く場合は、[useのmiddleware](./middleware.md)でケースを囲みます。
+非同期setupも使えます。準備と後始末を同じ場所に書く場合は、[`use(...)` のmiddleware](./middleware.md)で各試行を囲みます。
 共通設定は最初のケース・groupの前に書き、追加した後の変更は型で防ぎます。
 
 ## 実行環境とコマンド
 
 実装後の利用では、JavaScriptと型定義を含むhanamaruパッケージとTypeScriptを開発依存に追加します。
 初版の対応目標はNode.js 22.18以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
+
+設定ファイルがなくても、CLIは `**/*.{test,spec}.ts` を既定の探索対象にします。
 
 `package.json` の設定例。
 
