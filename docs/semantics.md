@@ -62,7 +62,7 @@ RunのPromiseは、そのRunが所有する開始済みのexecution processと�
 通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
 
 group middlewareへ渡すコンテキストは、外側のgroup middlewareが渡したフィールドを重ねた安定したコンテキストです。ルートは新しい `{}` から始めます。
-`new Test<R, G>()` のGはこの時点の要求、Rは各attemptの要求です。通常の `.use()` は各attemptの型Cだけを拡張し、Gを供給しません。
+依存の要求は `new Test<R>()` のRだけです。必要になる時点はmiddlewareの配置から追跡し、合成時に供給が間に合うか型で検査します。
 親ノードのmiddlewareは各attemptで実行されるため、そこで初めて作る値をgroup middlewareの前処理へ渡すことはしません。
 一方、group middlewareが `next(fields)` へ渡した値は、全子の各attemptで親の試行ごとのコンテキストと合成し、各子のargsFrom・expectから参照できます。
 各attemptではそのgroupに至る親のstepsを実行してから、保存した追加フィールドを浅く重ね、子のstepsへ進みます。group middleware自体を再実行することはありません。

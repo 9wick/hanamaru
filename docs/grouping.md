@@ -85,11 +85,24 @@ group middlewareの前処理が失敗した場合、渡した全子の実行は�
 
 名前を付ける場合は `group(name, middleware, [children])` と書けます。
 
-## group開始前に必要な値
+## 依存の要求と供給
 
-`new Test<R, G>()` のRは各attemptで親に要求する値、Gはgroup開始前に親に要求する値です。どちらも省略時は `{}` です。
-通常の `.use()` はRから始まる各attemptのコンテキストを読み、group middlewareはGを読みます。
-Gを供給できるのは外側のgroup middlewareです。各attemptで動く親の `.use()` は、子のgroup前処理より後なのでGを供給できません。
+子が宣言するのは `new Test<Ctx>()` の依存だけです。値をgroupで作るか、各attemptのmiddlewareで作るかは供給する側が決めます。
+同じ子を、次のどちらの構成でも使えます。
+
+```ts
+const child = new Test<{ seed: number }>()
+  .target((value: number) => value)
+  .it('渡された値を使う', t => t.argsFrom(ctx => [ctx.seed])
+    .expect(e => [e.result.toBe(e.ctx.seed)]))
+
+const provideSeed = middleware(async (_, next) => next({ seed: 2 }))
+run(new Test().use(provideSeed).group([child]))
+run(new Test().group(provideSeed, [child]))
+```
+
+middlewareも `Ctx<…>` に必要な値だけを宣言し、`.use()` と `.group()` で使い回せます。
+配置先によって実行回数と実行時点が決まります。供給は、その値を使う処理の開始に間に合う必要があります。
 
 ```ts
 const expectedChild = new Test<{ expected: number }>()
@@ -97,19 +110,17 @@ const expectedChild = new Test<{ expected: number }>()
   .it('groupが渡す期待値', t => t.argsFrom(ctx => [ctx.expected])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 
-const seededGroup = new Test<{}, { seed: number }>()
+const seededGroup = new Test<{ seed: number }>()
   .group(middleware(async (ctx, next) =>
     next({ expected: ctx.seed + 1 })), [expectedChild])
 
-const tests = new Test()
-  .group(middleware(async (_, next) => next({ seed: 2 })), [seededGroup])
-run(tests)
+run(new Test().group(provideSeed, [seededGroup]))
 ```
 
-親を `.use(middleware(async (_, next) => next({ seed: 2 }))).group([seededGroup])` に変えると型エラーです。
-名前付きgroup、入れ子、複数の子、同じ子の再利用でもこの検査を行います。間のグループもGを宣言して引き継ぎます。
-group middlewareの追加フィールドは、そのgroupの子について各attemptの要求とgroup開始前の要求の両方を満たせます。同じチェーンの兄弟groupには渡しません。
-Gにだけ書いた値を各attemptでも読みたい場合はRにも宣言します。Rだけの要求は、従来どおり親の `.use()` で満たせます。
+seededGroupも要求は `{ seed: number }` だけです。group前処理で入力を使うことは、定義の構造から自動で追跡します。
+親を `.use(provideSeed).group([seededGroup])` に変えると、seedの供給が子のgroup開始に間に合わないため、合成箇所で型エラーになります。
+名前付きgroup、入れ子、複数の子、同じ子の再利用でもこの検査を行います。間のグループの要求も `new Test<Ctx>()` で宣言します。
+group middlewareが渡す値は、そのgroup内で使えます。同じチェーンの兄弟groupには渡しません。
 
 ## 名前は任意
 
