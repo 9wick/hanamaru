@@ -1,6 +1,6 @@
 # はじめる
 
-このページは実装予定のAPIを使った入門例です。現在は型契約とサンプルを検証でき、ランナーは未実装です。
+このページはhanamaruのAPIを使った入門例です。リポジトリ内の実装をNode.js 22.18・24とBun 1.3.5で実行し、TypeScript 5.8.3で型検証しています。
 
 ## 最初のテスト
 
@@ -172,8 +172,7 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 
 この例ではソースとテストを `src` 以下に置き、importに `.ts` 拡張子を付けます。
 ランナー単独では型チェックしないため、通常のtest scriptで両方を実行します。
-上記のインストール・CLI実行は、公開パッケージがまだないため未検証です。
-リポジトリ内の例は `tsc -p docs/spec/tsconfig.json` で検証できます。
+公開npmレジストリへの配布は未検証です。リポジトリ内の例は `npm run check` と `node dist/cli.js docs/examples/math.test.ts` で検証できます。`npm run check` はビルドも行います。
 
 次は[テストをグループにまとめる](./grouping.md)と[プラグイン向けblueprint](./metadata.md)を参照してください。
 

@@ -2,19 +2,18 @@
 
 ## 現在の成果物
 
-このリポジトリはドキュメントを先に作っている段階である。
-READMEとAPIページは、実装する公開契約を記述している。
+このリポジトリには公開契約を記述したドキュメントと、Node.js向けのローカル実装があります。
 
 | 対象 | 状態 |
 |---|---|
 | ビルダー・プラグイン向けblueprint・実行のAPI仕様 | 文書化済み |
 | 公開APIの設計用型契約 | `docs/spec/hanamaru.d.ts` |
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
-| ビルダー・ランナー・CLIの実装 | 未実装 |
-| npmパッケージのインストールと実行 | このリポジトリでは未検証 |
-| モックの復元、middleware、失敗集約等の実行時保証 | 実装後に検証する契約 |
+| ビルダー・ランナー・CLIの実装 | `src/` に実装。`npm test` で実行テストを検証 |
+| npmパッケージのインストールと実行 | ローカルtarballのインストール・型解決・CLI起動を確認。公開npmレジストリへの配布は未検証 |
+| モックの復元、middleware、失敗集約等の実行時保証 | 実行テストで主な経路を検証。全ての入力・環境は未検証 |
 
-型検証が通ることは、実行時セマンティクスの実装が存在することを意味しない。
+型検証と実行テストは別々に実施します。`npm run check` は型・lint・format・実行・文書を検証し、tsdownで配布物をビルドします。`npm run build` でもビルドできます。
 
 ## 対応する環境
 
@@ -23,7 +22,7 @@ Nodeのtype strippingは22.18で既定有効になった。設定例では5.8で
 [Nodeの公式説明](https://nodejs.org/docs/latest-v22.x/api/typescript.html)、[TypeScript 5.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html)を参照。
 
 Bun 1.3以上での実行も対応目標とする。Nodeと同じblueprint・実行セマンティクスを使う。
-最低バージョンでの動作とNode/Bun間の同等性は、ランナー実装後に検証する。現時点の対応実績とは区別する。
+Node.js 22.18・24とBun 1.3.5で実行テストを通しています。両ランタイムの全ての入力・周辺環境での同等性まで保証するものではありません。
 
 ## TypeScriptの実行
 
@@ -41,7 +40,7 @@ Nodeのネイティブtype strippingを使い、ランタイムにトランス�
 Nodeはtsconfigのpathsによる解決を行わない。
 `.js` から `.ts` への置換、拡張子省略、pathsによるエイリアスは、Node向けの解決処理で吸収する設計目標である。
 Bunではランタイムの解決を使い、同じimportが同じ対象を読むことを受入条件にする。
-これらの解決処理は未実装・未検証なので、入門例はネイティブに解決できる `.ts` 形式を使う。
+CLIには `.js` から `.ts`、拡張子省略、同じtsconfig内の `paths` の解決処理があります。Node.js 22.18・24とBun 1.3.5で実行テスト済みです。複雑なtsconfig継承は未検証です。
 [Node単体の型importとpathsの制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html)と、hanamaru側で実装する互換性を区別する。
 
 Nodeはnode_modules内のTypeScript実行も制限するため、配布パッケージはJavaScriptと型定義を含む形を想定する。
@@ -95,7 +94,7 @@ process.env、module state、global、filesystem、外部DB等の利用者側の
 宣言位置の自動取得、構造化した失敗、各試行の結果、timeout・retry、each、mock sequence、nthの呼び出し条件を含めます。
 timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継承・上書きします。middlewareの前処理期限・後処理期限は `middleware(fn, { timeout })` に持たせます。
 標準CLIは期限超過後の停止を保証し、run(test)単独は同一プロセスの処理と後始末を待ちます。
-未終了の処理・未完了の復元を次ケースへ持ち越しません。実装とランタイム検証はこれからです。
+未終了の処理・未完了の復元を次ケースへ持ち越しません。CLIは猶予超過後にworkerを終了し、得られた結果を中断・後処理未完了として報告します。
 
 ## 初版の実行器に含めないもの
 

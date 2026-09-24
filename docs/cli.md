@@ -1,7 +1,7 @@
 # CLIと設定ファイル
 
 CLIは、テストファイルの読込・完成したテストの収集・実行・結果表示を行う入口である。
-ここに記載するコマンドは設計仕様。ランナー実装はまだない。
+CLIの実装は `src/cli.js` にあります。`npm run build` 後は `node dist/cli.js` で起動できます。
 
 ```text
 hanamaru [files...] [options]
