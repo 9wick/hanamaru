@@ -1,5 +1,5 @@
 import { Test, middleware, run } from 'hanamaru'
-import type { GroupEntry, GroupMiddlewareResult, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
+import type { Ctx, GroupEntry, GroupMiddlewareResult, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
 import { add } from '../examples/math.ts'
 import { mailService } from '../examples/user.ts'
 import { registrations } from '../examples/groups.test.ts'
@@ -223,3 +223,98 @@ for (const entry of groupedWithMiddleware.blueprint().children) {
     expectType<number | undefined>(entry.middleware.timeout)
   }
 }
+
+// Consumers declare the same dependency regardless of the provider.
+type Seed = { seed: number }
+const seedProvider = middleware(async (_, next) => next({ seed: 2 }))
+const readsSeed = middleware(async (ctx: Ctx<Seed>, next) =>
+  next({ expected: ctx.seed + 1 }))
+const expectedChild = new Test<{ expected: number }>()
+  .target((value: number) => value)
+  .it('渡された期待値', t => t.argsFrom(ctx => [ctx.expected])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+const attemptConsumer = new Test<Seed>()
+  .use(readsSeed)
+  .target(add)
+  .it('要求はseedだけ', t => t.argsFrom(ctx => [ctx.seed, 1])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
+run(new Test().use(seedProvider).group([attemptConsumer]))
+run(new Test().group(seedProvider, [attemptConsumer]))
+
+const groupConsumer = new Test<Seed>()
+  .group(middleware(async (ctx, next) => {
+    expectType<number>(ctx.seed)
+    return await next({ expected: ctx.seed + 1 })
+  }), [expectedChild])
+run(new Test().group(seedProvider, [groupConsumer]))
+run(new Test().group('同じ要求を持つ子', seedProvider, [groupConsumer, attemptConsumer]))
+// @ts-expect-error the group would start before its provider's first attempt.
+new Test().use(seedProvider).group([groupConsumer])
+// @ts-expect-error names do not change execution ordering.
+new Test().use(seedProvider).group('早すぎる参照', [groupConsumer])
+// @ts-expect-error unrelated siblings cannot supply a dependency.
+new Test().group([independent, groupConsumer])
+// @ts-expect-error this group supplies server, while seed is still supplied too late.
+new Test().use(seedProvider).group(sharedServer, [groupConsumer])
+// @ts-expect-error field types still have to match the dependency requirement.
+new Test().group(middleware(async (_, next) => next({ seed: '2' })), [groupConsumer])
+// @ts-expect-error an optional field cannot satisfy a required dependency.
+new Test().group(middleware(async (_, next) => next({} as { seed?: number })), [groupConsumer])
+
+const relay = new Test<Seed>().group([groupConsumer]).group('再利用', [groupConsumer])
+run(new Test().group(seedProvider, [relay]))
+// @ts-expect-error ordinary containers must preserve their children's input timing.
+new Test().use(seedProvider).group([relay])
+const appendedAttempt = groupConsumer.group([attemptConsumer])
+run(new Test().group(seedProvider, [appendedAttempt]))
+// @ts-expect-error adding a later attempt-only group must preserve earlier input timing.
+new Test().use(seedProvider).group([appendedAttempt])
+// @ts-expect-error group-local values are not supplied to sibling groups.
+new Test().group(seedProvider, [groupConsumer]).group([groupConsumer])
+// @ts-expect-error the requirement cannot be erased by a type annotation.
+const erasedGroup: TestDefinition = groupConsumer
+const annotatedConsumer: TestDefinition<Seed> = groupConsumer
+const annotatedAttempt: TestDefinition<Seed> = attemptConsumer
+run(new Test().group(seedProvider, [annotatedConsumer]))
+run(new Test().use(seedProvider).group([annotatedAttempt]))
+// @ts-expect-error a narrowed definition annotation must preserve input timing.
+new Test().use(seedProvider).group([annotatedConsumer])
+// @ts-expect-error blueprint annotations must also preserve dependency requirements.
+const erasedBlueprint: TestBlueprint = groupConsumer.blueprint()
+expectType<TestBlueprint<Seed>>(groupConsumer.blueprint())
+// @ts-expect-error run has no provider for seed.
+run(groupConsumer)
+// @ts-expect-error arrays cannot hide an unsatisfied requirement.
+run([independent, groupConsumer])
+// @ts-expect-error dependency requirements have one type parameter.
+new Test<{}, Seed>()
+// @ts-expect-error completed definitions have one dependency requirement too.
+type SplitDefinition = TestDefinition<{}, Seed>
+// @ts-expect-error blueprints do not split requirements by provider either.
+type SplitBlueprint = TestBlueprint<{}, Seed>
+
+const reusedMiddleware = new Test<Seed>()
+  .timeout(1_000).retry(1)
+  .mock(mailService, 'send', m => m.resolves(undefined))
+  .group(readsSeed, [expectedChild])
+run(new Test().group(seedProvider, [reusedMiddleware]))
+// @ts-expect-error settings must not erase the inferred input timing.
+new Test().use(seedProvider).group([reusedMiddleware])
+
+const localAttempt = new Test<Seed>()
+  .use(middleware(async (ctx, next) => next({ seed: String(ctx.seed) })))
+  .group(readsSeed, [expectedChild])
+run(new Test().group(seedProvider, [localAttempt]))
+// @ts-expect-error a local use does not make the outer dependency optional.
+run(localAttempt)
+
+const appendedGroup = new Test<Seed>().group([attemptConsumer]).group(readsSeed, [expectedChild])
+// @ts-expect-error a later group can move the required input before the first attempt.
+new Test().use(seedProvider).group([appendedGroup])
+run(new Test().group(seedProvider, [appendedGroup]))
+
+declare const opaqueDefinition: TestDefinition<Seed>
+run(new Test().group(seedProvider, [opaqueDefinition]))
+// @ts-expect-error an unknown definition may need seed before the first attempt.
+new Test().use(seedProvider).group([opaqueDefinition])

@@ -78,11 +78,49 @@ group middlewareは共有資源のlifetimeを表します。配下のcaseが互�
 順序を持つ一連の操作はflowとして表し、group middlewareによる共有資源の管理とは区別します。
 
 group middlewareの前処理が失敗した場合、渡した全子の実行は開始せず、配下の実行対象caseをcancelledとしてrunを失敗させます。
+通常の例外で復元・後処理が完了した場合は、そのgroupの外の後続を続行し、runはfailed / completedです。caseの試行を捏造せず、失敗はgroup middlewareの結果に残します。
 後処理が失敗した場合もrunを失敗させ、片付いていない共有状態を次のgroupへ持ち越さないため後続の実行を中断します。
-前処理・後処理の期限は `middleware(fn, { timeout })` で指定し、超過も同じ扱いです。
+前処理・後処理の期限は `middleware(fn, { timeout })` で指定します。どちらの超過もrunをfailed / timeoutとし、group外も含めて後続を中断します。
 通常のcase失敗やretryではgroup middlewareを作り直さず、子全体の実行が終わるまで同じ共有資源を保持します。
 
 名前を付ける場合は `group(name, middleware, [children])` と書けます。
+
+## 依存の要求と供給
+
+子が宣言するのは `new Test<Ctx>()` の依存だけです。値をgroupで作るか、各attemptのmiddlewareで作るかは供給する側が決めます。
+同じ子を、次のどちらの構成でも使えます。
+
+```ts
+const child = new Test<{ seed: number }>()
+  .target((value: number) => value)
+  .it('渡された値を使う', t => t.argsFrom(ctx => [ctx.seed])
+    .expect(e => [e.result.toBe(e.ctx.seed)]))
+
+const provideSeed = middleware(async (_, next) => next({ seed: 2 }))
+run(new Test().use(provideSeed).group([child]))
+run(new Test().group(provideSeed, [child]))
+```
+
+middlewareも `Ctx<…>` に必要な値だけを宣言し、`.use()` と `.group()` で使い回せます。
+配置先によって実行回数と実行時点が決まります。供給は、その値を使う処理の開始に間に合う必要があります。
+
+```ts
+const expectedChild = new Test<{ expected: number }>()
+  .target((value: number) => value)
+  .it('groupが渡す期待値', t => t.argsFrom(ctx => [ctx.expected])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+const seededGroup = new Test<{ seed: number }>()
+  .group(middleware(async (ctx, next) =>
+    next({ expected: ctx.seed + 1 })), [expectedChild])
+
+run(new Test().group(provideSeed, [seededGroup]))
+```
+
+seededGroupも要求は `{ seed: number }` だけです。group前処理で入力を使うことは、定義の構造から自動で追跡します。
+親を `.use(provideSeed).group([seededGroup])` に変えると、seedの供給が子のgroup開始に間に合わないため、合成箇所で型エラーになります。
+名前付きgroup、入れ子、複数の子、同じ子の再利用でもこの検査を行います。間のグループの要求も `new Test<Ctx>()` で宣言します。
+group middlewareが渡す値は、そのgroup内で使えます。同じチェーンの兄弟groupには渡しません。
 
 ## 名前は任意
 

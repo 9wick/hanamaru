@@ -13,13 +13,19 @@ declare const blueprintBrand: unique symbol
 declare const middlewareBrand: unique symbol
 declare const middlewareDefBrand: unique symbol
 export interface ItDone { readonly [doneBrand]: true }
-/** run()やgroup()へ渡す完成したチェーンの値。blueprintそのものではない。 */
-export interface TestDefinition<R extends object = {}> {
-  /** 親に要求するctx。関数プロパティで反変にし、供給できない合成を防ぐ。 */
-  readonly [definitionBrand]: (ctx: R) => void
-  /** プラグイン向け。定義から実行前の構造を取得する。 */
+type InputPhase = 'attempt' | 'group'
+interface DefinitionHandle<R extends object, P extends InputPhase> {
+  /** 要求する値と、配置から推論した最初の使用時点を保持する。 */
+  readonly [definitionBrand]: {
+    readonly input: (ctx: R) => void
+    readonly phase: P
+  }
   blueprint(): TestBlueprint<R>
 }
+/** run()やgroup()へ渡す完成したチェーンの値。要求は供給元によらず一つ。 */
+export type TestDefinition<R extends object = {}> =
+  | DefinitionHandle<R, 'attempt'>
+  | DefinitionHandle<R, 'group'>
 export type ExtendContext<C, S> = C extends unknown
   ? S extends unknown ? Omit<C, keyof S> & S : never
   : never
@@ -115,7 +121,7 @@ export interface CaseMethods<F extends AnyFn, C, R extends object = {}> {
   skip(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
   todo(name: string): Suite<F, C, R>
 }
-export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, TestDefinition<R> {
+export interface Suite<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, DefinitionHandle<R, 'attempt'> {
   blueprint(): SuiteBlueprint<F, C, R>
 }
 export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends CaseMethods<F, C, R>, ExecutionSettings<TestBuilder<F, C, R>> {
@@ -123,17 +129,27 @@ export interface TestBuilder<F extends AnyFn, C, R extends object = {}> extends 
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
 export type GroupChildren<C extends object> = readonly [TestDefinition<C>, ...TestDefinition<C>[]]
-export interface GroupMethods<C extends object, R extends object = {}> {
+type CompatibleChild<C extends object, Before extends object> =
+  | DefinitionHandle<C, 'attempt'>
+  | DefinitionHandle<Before, 'group'>
+type CompatibleChildren<C extends object, Before extends object> =
+  readonly [CompatibleChild<C, Before>, ...CompatibleChild<C, Before>[]]
+type FirstPhase<P extends InputPhase> = 'group' extends P ? 'group' : 'attempt'
+type ChildrenPhase<D extends readonly TestDefinition<never>[]> = D[number][typeof definitionBrand]['phase']
+interface GroupMethods<C extends object, R extends object, P extends InputPhase = 'attempt'> {
   /** middlewareを取る形を先に並べ、その場で書いたmiddlewareのctxを文脈から型付けする。 */
-  group<S extends object>(m: Middleware<R, S>, children: GroupChildren<ExtendContext<C, S>>): GroupSuite<C, R>
-  group<S extends object>(name: string, m: Middleware<R, S>, children: GroupChildren<ExtendContext<C, S>>): GroupSuite<C, R>
-  group(children: GroupChildren<C>): GroupSuite<C, R>
-  group(name: string, children: GroupChildren<C>): GroupSuite<C, R>
+  group<S extends object>(m: Middleware<R, S>, children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<R, S>>): GroupStage<C, R, 'group'>
+  group<S extends object>(name: string, m: Middleware<R, S>, children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<R, S>>): GroupStage<C, R, 'group'>
+  group<const D extends CompatibleChildren<C, R>>(children: D): GroupStage<C, R, FirstPhase<P | ChildrenPhase<D>>>
+  group<const D extends CompatibleChildren<C, R>>(name: string, children: D): GroupStage<C, R, FirstPhase<P | ChildrenPhase<D>>>
 }
-export interface GroupSuite<C extends object, R extends object = {}> extends GroupMethods<C, R>, TestDefinition<R> {
+interface GroupStage<C extends object, R extends object, P extends InputPhase> extends GroupMethods<C, R, P>, DefinitionHandle<R, P> {
   /** チェーン内の複数groupと共通設定を取得する。GroupSuite自体は実行階層ではない。 */
   blueprint(): DefinitionBlueprint<R>
 }
+export type GroupSuite<C extends object, R extends object = {}> =
+  | GroupStage<C, R, 'attempt'>
+  | GroupStage<C, R, 'group'>
 export interface TargetStage<C extends object, R extends object = {}> extends GroupMethods<C, R>, ExecutionSettings<TargetStage<C, R>> {
   use<S extends object>(m: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R>
@@ -151,10 +167,10 @@ export declare class Test<R extends object = {}> implements TargetStage<R, R> {
   target<F extends AnyFn>(name: string, fn: F): TestBuilder<F, R, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
   target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, R, R>
-  group<S extends object>(m: Middleware<R, S>, children: GroupChildren<ExtendContext<R, S>>): GroupSuite<R, R>
-  group<S extends object>(name: string, m: Middleware<R, S>, children: GroupChildren<ExtendContext<R, S>>): GroupSuite<R, R>
-  group(children: GroupChildren<R>): GroupSuite<R, R>
-  group(name: string, children: GroupChildren<R>): GroupSuite<R, R>
+  group<S extends object>(m: Middleware<R, S>, children: CompatibleChildren<ExtendContext<R, S>, ExtendContext<R, S>>): GroupStage<R, R, 'group'>
+  group<S extends object>(name: string, m: Middleware<R, S>, children: CompatibleChildren<ExtendContext<R, S>, ExtendContext<R, S>>): GroupStage<R, R, 'group'>
+  group<const D extends GroupChildren<R>>(children: D): GroupStage<R, R, FirstPhase<ChildrenPhase<D>>>
+  group<const D extends GroupChildren<R>>(name: string, children: D): GroupStage<R, R, FirstPhase<ChildrenPhase<D>>>
 }
 
 export interface ExecutionSettings<Self> {
@@ -296,7 +312,7 @@ export interface GroupBlueprint<R extends object = {}> extends BlueprintBase<R> 
 /** new Test()から続くgroup呼び出しを保持する。実行階層のノードではない。 */
 export interface DefinitionBlueprint<R extends object = {}> extends BlueprintBase<R> {
   readonly kind: 'definition'
-  readonly children: readonly [GroupBlueprint, ...GroupBlueprint[]]
+  readonly children: readonly [GroupBlueprint<never>, ...GroupBlueprint<never>[]]
 }
 export interface GroupEntry {
   readonly origin: SourceLocation

@@ -200,3 +200,28 @@ if (result.notRun !== undefined) {
   void first
 }
 void [executed, retried, retriedAfterFailedCleanup, retriedAfterSuccess, skipped, todo, cancelled, unexplained, contradictory, inventedSuccess]
+
+// A group failure is representable without inventing a failed child attempt.
+const failedGroupBeforeChildren = {
+  version: 1,
+  status: 'failed',
+  reason: 'completed',
+  tests: [{
+    kind: 'group', name: '共有資源', path: [0], origin: caseInfo.origin,
+    middleware: {
+      status: 'failed', durationMs: 1, cleanup: 'complete',
+      failures: [{
+        kind: 'execution', phase: 'before', message: 'resource unavailable',
+        cause: { kind: 'string', value: 'resource unavailable' },
+      }],
+    },
+    children: [{
+      origin: caseInfo.origin,
+      result: {
+        kind: 'test', name: '未開始の対象', path: [0, 0],
+        cases: [{ ...caseInfo, path: [0, 0, 0], attempts: [], notRun: 'cancelled' }],
+      },
+    }],
+  }],
+} satisfies RunResult
+void failedGroupBeforeChildren
