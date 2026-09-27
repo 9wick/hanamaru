@@ -101,11 +101,13 @@ export const calls = new Test()
 
 ## 関連するテストをまとめる
 
+<!-- example: docs/examples/group-scopes.test.ts#group -->
 ```ts
-const tests = new Test()
+const userGroup = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group('ユーザー', [userTests, deletionTests])
+  .group('ユーザー', [createTests, saveTests])
 ```
+出典: [docs/examples/group-scopes.test.ts](docs/examples/group-scopes.test.ts)
 
 groupで関連するテストを一つのまとまりにし、配下へ共通のmock・use・timeout・retryを適用できます。
 名前は任意です。子が一つでも配列で渡します。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
@@ -116,8 +118,9 @@ groupで関連するテストを一つのまとまりにし、配下へ共通の
 通常の `.use()` は各caseの各attemptを囲みます。
 高価な資源を一つのgroup全体で共有したい場合は、そのgroupの子全体をmiddlewareで囲めます。
 
+<!-- example: docs/examples/group-middleware.test.ts#group-middleware -->
 ```ts
-const tests = new Test()
+export const serverTests = new Test()
   .group(middleware(async (_, next) => {
     const server = await startServer()
     try {
@@ -125,8 +128,9 @@ const tests = new Test()
     } finally {
       await server.stop()
     }
-  }), [userTests, deletionTests])
+  }), [listUsers, missingPage])
 ```
+出典: [docs/examples/group-middleware.test.ts](docs/examples/group-middleware.test.ts)
 
 middlewareは一度だけserverを用意し、`next({ server })` の値を両方の子の各attemptへ渡します。
 共有資源のlifetimeを表すだけで、case間の順序依存は許しません。
@@ -146,16 +150,26 @@ retryは失敗したケースだけを再試行し、各試行を結果に残し
 
 ## 資源の取得と解放を同じ場所に書く
 
+<!-- example: docs/examples/middleware.test.ts -->
 ```ts
-.use(middleware(async (_, next) => {
-  const db = await createDatabase()
-  try {
-    return await next({ db })
-  } finally {
-    await db.close()
-  }
-}))
+import { Test, middleware } from 'hanamaru'
+import { createDatabase, countUsers } from './database.ts'
+
+export const userCount = new Test()
+  .use(middleware(async (_, next) => {
+    const db = await createDatabase()
+    try {
+      return await next({ db, expected: 3 })
+    } finally {
+      await db.close()
+    }
+  }))
+  .target(countUsers)
+  .it('ユーザー数を取得する', t => t
+    .argsFrom(ctx => [ctx.db])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/middleware.test.ts](docs/examples/middleware.test.ts)
 
 middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型は後続のargsFromや`e.ctx`へ伝わります。
 値を渡すだけなら `.use(middleware(async (_, next) => next({ expected: 3 })))` と書けます。
@@ -163,12 +177,14 @@ middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型�
 
 ## 定義したテストを実行する
 
+<!-- example: docs/examples/metadata.ts#run -->
 ```ts
 import { run } from 'hanamaru'
 import { users } from './user.test.ts'
 
 const result = await run(users)
 ```
+出典: [docs/examples/metadata.ts](docs/examples/metadata.ts)
 
 プラグイン作者は `users.blueprint()` で、グループの階層、テスト対象、middleware、実行設定・モック、ケース、宣言位置などを実行前に参照できます。通常の実行ではblueprintを取得する必要はありません。
 実行器はテストからblueprintを得て、内部で実行計画を決めます。[blueprint](./docs/metadata.md)に取得できる内容と評価時点を記載しています。

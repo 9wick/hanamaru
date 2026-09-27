@@ -1,4 +1,5 @@
 import { Test, middleware, run, type Ctx } from 'hanamaru'
+import { add } from '../examples/math.ts'
 interface Db { close(): Promise<void>; countUsers(): Promise<number> }
 declare function createDb(): Promise<Db>
 declare function countUsers(db: Db): Promise<number>
@@ -138,3 +139,14 @@ for (const step of suite.blueprint().steps) {
 }
 // @ts-expect-error ordered middleware steps are immutable.
 suite.blueprint().steps.push(suite.blueprint().steps[0])
+
+{
+  // #region derive
+  const base = new Test().target(add)
+  const tests = base.it('足す', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
+  // @ts-expect-error cases already declared cannot have their context replaced.
+  tests.use(middleware(async (_, next) => next({ n: 1 })))
+  // Deriving from the builder before any case starts a separate suite.
+  base.use(middleware(async (_, next) => next({ n: 1 })))
+  // #endregion derive
+}
