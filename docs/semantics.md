@@ -19,10 +19,12 @@ eachは行順でケースに展開します。空の行配列、不正なtimeout
 
 ## テストの受付
 
+<!-- example: docs/examples/run-many.ts#accept -->
 ```ts
-const result = await run(tests)
-const results = await run([first, second])
+const result = await run(users)
+const results = await run([addition, users])
 ```
+出典: [docs/examples/run-many.ts](examples/run-many.ts)
 
 完成したテストまたはその配列を受け取ります。初版の標準実行器は渡された順、blueprintのchildren順の深さ優先、ケースの宣言順で直列実行します。
 ただしこの順序は利用者が依存できるテストの意味ではありません。各caseは他のcaseの実行有無・実行順に依存せず、将来のshuffle・並列実行・複数processへの配置で順序が変わっても同じ意味を持つものとします。
