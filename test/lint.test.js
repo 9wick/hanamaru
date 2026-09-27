@@ -20,19 +20,35 @@ test('lint rejects type escapes in every TypeScript file', async () => {
     ['export let input: unknown', 'no-restricted-syntax'],
     ['export let input: any', '@typescript-eslint/no-explicit-any'],
     ['export const value = 1 as number', 'no-restricted-syntax'],
-    ['export const value = { x: 1 } as const', 'no-restricted-syntax'],
+    ['export const value = { x: 1 } as const as { x: number }', 'no-restricted-syntax'],
     ['export const value = <number>1', 'no-restricted-syntax'],
     ['export const value = [1].pop()!', '@typescript-eslint/no-non-null-assertion'],
     ['export function accepts(input: object): input is Date { return input instanceof Date }', 'no-restricted-syntax'],
     ['export function accepts(input: object): asserts input is Date {}', 'no-restricted-syntax'],
     ['export let callback: Function', '@typescript-eslint/no-unsafe-function-type'],
   ]
-  for (const [code, ruleId] of forbidden) {
-    assert.equal(
-      (await messages(code)).some((m) => m.ruleId === ruleId && m.severity === 2),
-      true,
-      code,
-    )
+  for (const filePath of [syntaxFile, implementationFile]) {
+    for (const [code, ruleId] of forbidden) {
+      assert.equal(
+        (await messages(code, filePath)).some((m) => m.ruleId === ruleId && m.severity === 2),
+        true,
+        `${filePath}: ${code}`,
+      )
+    }
+  }
+})
+
+test('lint accepts const assertions that preserve literal types', async () => {
+  const allowed = [
+    'export const value = "ready" as const',
+    'export const value = { x: 1 } as const',
+    'export const value = ["ready", 1] as const',
+    'export const value = { states: ["ready", "done"], options: { enabled: true } } as const',
+  ]
+  for (const filePath of [syntaxFile, implementationFile]) {
+    for (const code of allowed) {
+      assert.deepEqual(await messages(code, filePath), [], `${filePath}: ${code}`)
+    }
   }
 })
 
