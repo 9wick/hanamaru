@@ -247,7 +247,7 @@ const nodeResultSchema: v.GenericSchema<Value, import('./internal.js').MutableNo
     }),
   ]),
 )
-const runResultSchema = v.object({
+export const runResultSchema = v.object({
   version: v.literal(1),
   status: v.picklist(['passed', 'failed', 'cancelled']),
   reason: v.picklist(['completed', 'timeout', 'interrupted', 'cleanup-failed']),

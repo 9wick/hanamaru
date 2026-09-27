@@ -17,15 +17,15 @@
     "README.md"
   ],
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json",
-    "test": "npm run build && node --test test/cli.test.js test/e2e.test.js && vp test run --project unit",
+    "typecheck": "tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json && tsc -p e2e/tsconfig.json",
+    "test": "npm run build && vp test run",
     "test:unit": "vp test run --project unit",
-    "test:cli": "npm run build && node --test test/cli.test.js",
-    "test:e2e": "npm run build && node --test test/e2e.test.js",
+    "test:e2e": "npm run build && vp test run --project e2e-workspace --project e2e-package",
+    "test:package": "npm run build && vp test run --project e2e-package",
     "check:docs": "python3 scripts/check-docs.py",
-    "lint": "vp lint --deny-warnings src test docs/examples eslint.config.test.ts && eslint . --max-warnings 0",
-    "format": "vp fmt src test vite.config.ts eslint.config.mjs eslint.config.test.ts",
-    "format:check": "vp fmt --check src test vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "lint": "vp lint --deny-warnings src e2e docs/examples eslint.config.test.ts && eslint . --max-warnings 0",
+    "format": "vp fmt src e2e vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "format:check": "vp fmt --check src e2e vite.config.ts eslint.config.mjs eslint.config.test.ts",
     "build": "vp pack && tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:docs"
