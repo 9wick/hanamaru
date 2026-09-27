@@ -9,11 +9,11 @@
 | ビルダー・プラグイン向けblueprint・実行のAPI仕様 | 文書化済み |
 | 公開APIの型 | `src/api.ts` に定義し、`dist/` に型定義を生成。`docs/spec/hanamaru.d.ts` は公開APIを再export |
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
-| ビルダー・ランナー・CLIの実装 | `src/` のTypeScript実装を `strict` で型検査。`npm test` で実行テストを検証 |
+| ビルダー・ランナー・CLIの実装 | `src/` のTypeScript実装を `strict` で型検査。`npm test` がunit・e2e・文書サンプルの3層で実行を検証 |
 | npmパッケージのインストールと実行 | ローカルtarballのインストール・型解決・CLI起動を確認。公開npmレジストリへの配布は未検証 |
 | モックの復元、middleware、失敗集約等の実行時保証 | 実行テストで主な経路を検証。全ての入力・環境は未検証 |
 
-`npm run typecheck` は内部実装と公開APIの型契約・サンプルを検査します。型検証と実行テストは別々に実施します。`npm run check` は型・lint・format・実行・文書を検証し、tsdownで配布物をビルドします。`npm run build` でもビルドできます。
+`npm run typecheck` は内部実装と公開APIの型契約・サンプルを検査します。型検証と実行テストは別々に実施します。`npm run check` は型・lint・format・実行・文書を検証し、`vp pack` で配布物をビルドします。`npm run build` でもビルドできます。
 
 ## 対応する環境
 

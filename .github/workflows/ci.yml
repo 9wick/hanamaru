@@ -80,6 +80,6 @@ jobs:
       - name: Install build dependencies
         run: npm ci
       - name: Test installed package contracts
-        run: npm run test:e2e
+        run: npm run test:package
         env:
           HANAMARU_RUNTIME: ${{ matrix.runtime }}

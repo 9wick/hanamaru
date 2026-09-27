@@ -25,6 +25,15 @@ export const typeSafetyRules = {
     },
   ],
 }
+const typeAwareRules = {
+  '@typescript-eslint/no-unsafe-assignment': 'error',
+  '@typescript-eslint/no-unsafe-call': 'error',
+  '@typescript-eslint/no-unsafe-member-access': 'error',
+  '@typescript-eslint/no-unsafe-return': 'error',
+  '@typescript-eslint/no-unsafe-argument': 'error',
+  '@typescript-eslint/no-floating-promises': 'error',
+  '@typescript-eslint/no-misused-promises': 'error',
+}
 export default [
   { ignores: ['node_modules/**', 'dist/**', 'coverage/**'] },
   { linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: 'error' } },
@@ -35,17 +44,17 @@ export default [
     rules: typeSafetyRules,
   },
   {
-    files: ['src/**/*.ts', 'vite.config.ts'],
+    files: ['src/**/*.ts', 'vite.config.ts', 'eslint.config.test.ts'],
     languageOptions: { parserOptions: { project: './tsconfig.json', tsconfigRootDir: import.meta.dirname } },
-    rules: {
-      '@typescript-eslint/no-unsafe-assignment': 'error',
-      '@typescript-eslint/no-unsafe-call': 'error',
-      '@typescript-eslint/no-unsafe-member-access': 'error',
-      '@typescript-eslint/no-unsafe-return': 'error',
-      '@typescript-eslint/no-unsafe-argument': 'error',
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/no-misused-promises': 'error',
-    },
+    rules: typeAwareRules,
+  },
+  {
+    // e2eはe2e/tsconfig.jsonで型検査する。library.tsはインストール済みパッケージを実行時に叩く契約スクリプトで、
+    // 型の絞り込みを持たないためそのプロジェクトから外してある。
+    files: ['e2e/**/*.ts'],
+    ignores: ['e2e/fixtures/library.ts'],
+    languageOptions: { parserOptions: { project: './e2e/tsconfig.json', tsconfigRootDir: import.meta.dirname } },
+    rules: typeAwareRules,
   },
   {
     files: ['docs/spec/*.ts'],

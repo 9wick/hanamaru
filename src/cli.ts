@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import type { DiagnosticValue, SourceLocation, TargetOutcome } from './api.js'
-import type { CliOptions, MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
+import type { MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
 import { errorMessage } from './shared.js'
+import { parseArgs } from './cli-args.js'
 import * as v from 'valibot'
 import { cliMessageSchema } from './schemas.js'
 import { Worker } from 'node:worker_threads'
@@ -14,37 +15,6 @@ const { version } = v.parse(
   v.object({ version: v.string() }),
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')),
 )
-function parse(argv: string[]) {
-  const options: CliOptions = {},
-    files: string[] = []
-  const mapped: Record<string, 'filter' | 'reporter' | 'config' | 'collectionTimeout' | 'shutdownGrace'> = {
-    '-t': 'filter',
-    '--filter': 'filter',
-    '-r': 'reporter',
-    '--reporter': 'reporter',
-    '-c': 'config',
-    '--config': 'config',
-    '--collection-timeout': 'collectionTimeout',
-    '--shutdown-grace': 'shutdownGrace',
-  }
-  for (let i = 0; i < argv.length; i++) {
-    const word = argv[i]
-    if (Object.hasOwn(mapped, word)) {
-      const value = argv[++i]
-      if (!value || value.startsWith('-')) throw new TypeError(`${word} requires a value`)
-      const key = mapped[word]
-      if (key === 'collectionTimeout' || key === 'shutdownGrace') options[key] = Number(value)
-      else options[key] = value
-    } else if (word === '--ci') options.ci = true
-    else if (word === '--fail-on-flaky') options.failOnFlaky = true
-    else if (word === '--no-color') options.noColor = true
-    else if (word === '--help' || word === '-h') options.help = true
-    else if (word === '--version' || word === '-v') options.version = true
-    else if (word.startsWith('-')) throw new TypeError(`unknown option: ${word}`)
-    else files.push(word)
-  }
-  return { options, files }
-}
 function formatValue(value: DiagnosticValue | TargetOutcome | string): string {
   if (!value || typeof value !== 'object') return inspect(value)
   switch (value.kind) {
@@ -150,7 +120,7 @@ function formatNode(node: MutableNodeResult, depth = 0, groupOrigins: SourceLoca
   return lines
 }
 async function main(): Promise<number> {
-  const { options, files } = parse(process.argv.slice(2))
+  const { options, files } = parseArgs(process.argv.slice(2))
   if (options.version) {
     process.stdout.write(`${version}\n`)
     return 0

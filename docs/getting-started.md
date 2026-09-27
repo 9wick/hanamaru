@@ -172,7 +172,7 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 
 この例ではソースとテストを `src` 以下に置き、importに `.ts` 拡張子を付けます。
 ランナー単独では型チェックしないため、通常のtest scriptで両方を実行します。
-公開npmレジストリへの配布は未検証です。リポジトリ内の例は `npm run check` と `node dist/cli.js docs/examples/math.test.ts` で検証できます。`npm run check` はビルドも行います。
+公開npmレジストリへの配布は未検証です。このページのサンプルは `docs/examples/` にあり、リポジトリでは `npm run test:examples` が全て実行します。`npm run check` はビルドを含めた全体を検証します。
 
 次は[テストをグループにまとめる](./grouping.md)と[プラグイン向けblueprint](./metadata.md)を参照してください。
 

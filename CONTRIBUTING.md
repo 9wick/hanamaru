@@ -16,27 +16,55 @@ TypeScriptファイルでは `unknown`、`any`、型アサーション（`as con
 任意の型を指定する `as Type` と `as const as Type` は禁止します。
 ESLintの無効化コメントとTypeScriptのエラー抑制も使えません。
 例外は `docs/spec/*.ts` の型エラーテストだけで、説明付きの `@ts-expect-error` を許可します。
-`test/lint.test.js` が、`as const` の許可、禁止コードの検出、抑制コメントで回避できないことを検証します。
+`eslint.config.test.ts` が、`as const` の許可、禁止コードの検出、抑制コメントで回避できないことを検証します。
 
 | コマンド | 検証対象 |
 | --- | --- |
 | `npm run typecheck` | 型契約とドキュメントのTypeScriptサンプル |
 | `npm run lint` | 実装・テスト・サンプルのlint |
 | `npm run format:check` / `npm run format` | 実装・テスト・ビルド設定の整形 |
-| `npm run test:runtime` | ビルダー・ランナーの実行時契約 |
-| `npm run test:cli` | ビルドしたCLIのファイル読込・結果・終了コード |
-| `npm run test:e2e` | tarballをインストールした利用者プロジェクトでの公開APIとCLI |
+| `npm test` | ビルドしたうえでunit・e2e・examplesの全層 |
+| `npm run test:unit` | ビルダー・ランナー・CLI引数・通信スキーマ・lint設定の内部契約 |
+| `npm run test:e2e` | ビルドしたCLIとインストール済みパッケージでの公開契約 |
+| `npm run test:package` | tarballをインストールした利用者プロジェクトでの公開APIとCLI |
+| `npm run test:examples` | 公開文書のサンプルをhanamaru自身で実行した結果 |
 | `npm run check:docs` | 文書のリンク・構造・サンプルの一致 |
 
-`npm test` はビルドとNodeの実行テスト・E2Eを実施します。
-`test:cli` と `test:e2e` は単独実行でも先にビルドします。
+`test:e2e` / `test:package` / `test:examples` は単独実行でも先にビルドします。
+`test:unit` はビルドしないため、`dist/` がなくても実行できます。
+
+## テストの3層
+
+| 層 | 実行系 | 置き場所 |
+| --- | --- | --- |
+| unit | Vitest | テスト対象の横の `src/xxx.test.ts` とルートの `eslint.config.test.ts` |
+| e2e | Vitest | `e2e/` |
+| examples | hanamaru CLI | `docs/examples/*.test.ts` |
+
+unitは対象モジュールをプロセス内で直接importし、blueprintの構築・実行・診断・CLI引数解析・
+worker間メッセージのスキーマを検証します。テストは実装と同じlint・型ルールの対象です。
+`src/**/*.test.ts` も `npm run typecheck` と `npm run lint` が検査し、配布物には含めません。
+
+e2eは `vite.config.ts` の `e2e-workspace` と `e2e-package` の2プロジェクトに分かれます。
+`e2e/workspace-cli.test.ts` はリポジトリの `dist/cli.js` を子プロセスとして起動し、
+installed packageでは構築しにくい環境固有シナリオ（node_modules構築、TDZ、worker内部の観測、
+定義変更の検出など）を扱います。`e2e/installed-package.test.ts` はtarballを一時プロジェクトへ
+インストールし、利用者から見える公開APIとCLIだけを観測します。
+
+examplesは文書に載せているサンプルそのものを `node dist/cli.js --ci docs/examples/*.test.ts` で
+実行し、全てがpassすることを契約とします。1件でも失敗すればCLIの終了コードが非0になり、
+`npm test` が失敗します。サンプルは `hanamaru` をpackage.jsonのself-referenceで解決するため、
+リポジトリ内でも利用者と同じimport文のまま実行できます。
+
+`vp test` を直接叩くとnpm scriptではなく組込みのVitestが起動します。ビルドは走らないので、
+e2eは直前の `npm run build` の結果を見ます。
 
 ## ランタイムを指定した配布物の検証
 
 ```console
-npm run test:e2e
-HANAMARU_RUNTIME=bun npm run test:e2e
-HANAMARU_RUNTIME=deno npm run test:e2e
+npm run test:package
+HANAMARU_RUNTIME=bun npm run test:package
+HANAMARU_RUNTIME=deno npm run test:package
 ```
 
 Bun / Denoは事前にインストールしてください。指定したランタイムがない場合は失敗し、検証をskipしません。
@@ -57,11 +85,11 @@ Vite等の実行時依存はnpmレジストリから取得するため、ネッ�
 | matcherは不一致を失敗にし、toThrowはErrorだけを受理する | 正常・不一致・非Errorの結果、RegExp.lastIndexの保持 |
 | group・each・skip・todoの結果を保持する | 階層・行・宣言位置、未実行caseの空のattempts |
 | 診断は構造と内容を保持する | matcher・expected・actual、Date・RegExp・Mapの内容 |
-| CLIはTS読込・設定・探索・解決を行う | 公開文書の全7サンプル、設定と引数の優先順位、拡張子とpaths |
+| CLIはTS読込・設定・探索・解決を行う | 配布物へ同梱した文書サンプルの実行、設定と引数の優先順位、拡張子とpaths |
 | CLIの結果と終了コード | 成功0・実行失敗1・収集エラー2、filterとonly、retryとfail-on-flaky |
 | CLIは期限超過・中断後に終了する | stuck importの収集期限、非同期・同期のstuck targetの終了猶予、Ctrl+Cの終了コード130と未完了cleanup |
 
-実行時契約とE2Eのテストは公開APIから検証し、freezeの実装方式を参照しません。
+unitとE2Eのテストは公開APIから検証し、freezeの実装方式を参照しません。
 lintと通信境界のテストは、禁止コードと不正な受信値を直接入力して検証します。
 時間・スタック全文・診断参照の採番を固定せず、公開結果のフィールドを検証します。
 
