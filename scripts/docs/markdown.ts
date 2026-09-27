@@ -27,7 +27,7 @@ export function lineOfIndex(text: string, index: number): number {
   return text.slice(0, index).split('\n').length
 }
 
-// Python 版と同じ字種だけを残す: ASCII は [A-Za-z0-9_- ]、U+0080 以上は無条件に保持する。
+// 日本語見出しへのアンカーを壊さないよう、除去するのは ASCII の記号だけにする。
 export function slug(heading: string): string {
   let slugged = ''
   for (const character of heading.toLowerCase()) {
@@ -37,7 +37,7 @@ export function slug(heading: string): string {
   return slugged.replaceAll(' ', '-')
 }
 
-// Python の `^#+ (.+)$` と同じく、コードブロック内の行も見出しとして数える。
+// フェンスの内外を区別しないのは、見出しの取りこぼしでアンカー切れを誤報するより緩い判定を選んだため。
 export function headings(text: string): readonly string[] {
   const found: string[] = []
   for (const line of splitLines(text)) {
@@ -83,7 +83,6 @@ export function isCodeLanguage(info: string): boolean {
   return false
 }
 
-// Python の `re.findall(r'\]\(([^)]+)\)', text)` と同じ走査順・同じ取り出し範囲。
 export function findLinks(text: string): readonly LinkReference[] {
   const references: LinkReference[] = []
   let index = text.indexOf('](')
@@ -98,7 +97,7 @@ export function findLinks(text: string): readonly LinkReference[] {
   return references
 }
 
-// Python の `re.sub(r'```.*?```', '', flags=S)` と同じ範囲を消すが、行番号を保つため改行だけ残す。
+// 表の検査結果を元の行番号で報告するため、コード部分は改行だけ残して消す。
 export function stripCodeSpans(text: string): string {
   let stripped = ''
   let index = 0

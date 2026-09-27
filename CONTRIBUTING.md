@@ -28,7 +28,8 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 | `npm run test:e2e` | ビルドしたCLIとインストール済みパッケージでの公開契約 |
 | `npm run test:package` | tarballをインストールした利用者プロジェクトでの公開APIとCLI |
 | `npm run test:examples` | 公開文書のサンプルをhanamaru自身で実行した結果 |
-| `npm run check:docs` | 文書のリンク・構造・サンプルの一致 |
+| `npm run check:docs` | リンク・アンカー・表・コードフェンスと、README.md / docs/*.md の全tsブロックが例と一致すること |
+| `npm run docs:sync` | 例に合わせて文書のtsブロックと出典行を書き換え |
 
 `test:e2e` / `test:package` / `test:examples` は単独実行でも先にビルドします。
 `test:unit` はビルドしないため、`dist/` がなくても実行できます。
@@ -37,12 +38,13 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 
 | 層 | 実行系 | 置き場所 |
 | --- | --- | --- |
-| unit | Vitest | テスト対象の横の `src/xxx.test.ts` とルートの `eslint.config.test.ts` |
+| unit | Vitest | テスト対象の横の `src/xxx.test.ts`、ルートの `eslint.config.test.ts`、`scripts/**/*.test.ts` |
 | e2e | Vitest | `e2e/` |
 | examples | hanamaru CLI | `docs/examples/*.test.ts` |
 
 unitは対象モジュールをプロセス内で直接importし、blueprintの構築・実行・診断・CLI引数解析・
-worker間メッセージのスキーマを検証します。テストは実装と同じlint・型ルールの対象です。
+worker間メッセージのスキーマを検証します。`scripts/**/*.test.ts` は文書検査ツールの純関数を
+同じ層で検証します。テストは実装と同じlint・型ルールの対象です。
 `src/**/*.test.ts` も `npm run typecheck` と `npm run lint` が検査し、配布物には含めません。
 
 e2eは `vite.config.ts` の `e2e-workspace` と `e2e-package` の2プロジェクトに分かれます。
@@ -58,6 +60,38 @@ examplesは文書に載せているサンプルそのものを `node dist/cli.js
 
 `vp test` を直接叩くとnpm scriptではなく組込みのVitestが起動します。ビルドは走らないので、
 e2eは直前の `npm run build` の結果を見ます。
+
+## 文書のサンプル
+
+README.mdとdocs/*.mdの `ts` ブロックは、全て例ファイルから抜き出したものです。
+例は隠した準備コードを持たない、それ自体で読める完結したファイルです。
+
+| 種別 | 置き場所 | 検証 |
+| --- | --- | --- |
+| 実行する例 | `docs/examples/*.test.ts` | 型検査とhanamaru CLIでの実行 |
+| 実行しない例（`run()` 呼び出し・設定ファイルなど） | `docs/examples/*.ts` | 型検査のみ |
+| 型エラーになる例 | `docs/spec/*.ts` の `@ts-expect-error` を含む範囲 | 型検査 |
+
+CLIはexportされた完成定義だけを収集するため、実行する例では定義を必ずexportします。
+
+ブロックには直前の行にマーカーを置きます。紐付けないブロックは理由付きで明示します。
+
+```markdown
+<!-- example: docs/examples/mock.test.ts -->              ファイル全体
+<!-- example: docs/examples/mock.test.ts#calls-fake -->  名前付き範囲
+<!-- example: none — 紐付けない理由 -->                  例外
+```
+
+閉じフェンスの直後の1行は出典行で、`出典: [docs/examples/mock.test.ts](examples/mock.test.ts)`
+の形で `npm run docs:sync` が生成・更新します。
+
+例ファイル側では `// #region 名前` 〜 `// #endregion 名前`（`[a-z0-9-]+`、入れ子可）で
+連続した範囲に名前を付けます。表示は範囲内の行そのままで、目印行の除去とインデントの調整だけを
+行います。途中を飛ばす仕組みはないため、切り出せない場合は例の側を書き直します。
+どの文書からも参照されない範囲・ファイルはエラーです。
+
+文書の `ts` ブロックを直接編集しないでください。例ファイルを直してから `npm run docs:sync` を
+実行します。ずれは `npm run check:docs` が `file:line` で報告します。
 
 ## ランタイムを指定した配布物の検証
 

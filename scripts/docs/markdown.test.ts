@@ -17,7 +17,6 @@ import {
   stripCodeSpans,
 } from './markdown.ts'
 
-// 期待値は check-docs.py の slug() を同じ入力で実行して求めた。
 test.each([
   ['Getting Started', 'getting-started'],
   ['API: `test()`', 'api-test'],
@@ -30,7 +29,7 @@ test.each([
   ['  leading space', '--leading-space'],
   ['タブ\tあり', 'タブあり'],
   ['Émigré Heading', 'émigré-heading'],
-])('slug keeps the characters Python keeps: %s', (heading, expected) => {
+])('slug drops only ASCII punctuation: %s', (heading, expected) => {
   expect(slug(heading)).toBe(expected)
 })
 
@@ -40,7 +39,7 @@ test.each([
   ['text\n#\n# \n', []],
   ['```ts\n# inside code\n```\n', ['inside code']],
   ['## trailing carriage\r\n', ['trailing carriage\r']],
-])('headings follow the Python heading regex: %j', (text, expected) => {
+])('headings include every line starting with hashes: %j', (text, expected) => {
   expect(headings(text)).toStrictEqual(expected)
 })
 
@@ -49,7 +48,7 @@ test.each([
   ['```ts\ncode\n', 1],
   ['``` \n```\n', 2],
   ['  ```ts\n  ```\n', 0],
-])('fence lines are counted like Python: %j', (text, expected) => {
+])('fence lines are lines starting with backticks: %j', (text, expected) => {
   expect(countFenceLines(splitLines(text))).toBe(expected)
 })
 
