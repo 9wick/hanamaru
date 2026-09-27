@@ -158,6 +158,47 @@ export const suite = new Test().target(() => 1).it('mismatch', t => t.args().exp
   assert.deepEqual(failure.actual, { kind: 'number', value: 1 })
 })
 
+test('installed comparisons follow Vitest for symbols and special values', () => {
+  const file = fixture(
+    'comparison-criteria',
+    `
+    const symbol = Symbol('id')
+    export const suite = new Test().target((value: object) => value)
+      .it('same symbol', t => t.args({ [symbol]: 1 }).expect(e => [e.result.toEqual({ [symbol]: 1 })]))
+      .it('different symbols', t => t.args({ [Symbol('id')]: 1 }).expect(e => [e.result.toEqual({ [Symbol('id')]: 1 })]))
+      .it('different dates', t => t.args({ at: new Date(0) }).expect(e => [e.result.toMatchObject({ at: new Date(1) })]))
+      .it('map values', t => t.args({ m: new Map([[1, 2]]) }).expect(e => [e.result.toMatchObject({ m: new Map([[1, 3]]) })]))
+      .it('set values', t => t.args({ s: new Set([1]) }).expect(e => [e.result.toMatchObject({ s: new Set([2]) })]))
+      .it('regexp shape', t => t.args({ r: /x/g }).expect(e => [e.result.toMatchObject({ r: /y/i })]))
+      .it('undefined field', t => t.args({ value: undefined }).expect(e => [e.result.toEqual({})]))
+  `,
+  )
+  const output = jsonResult(invoke(file, '--reporter', 'json'), 1)
+  assert.deepEqual(
+    output.tests[0].cases.map((item) => item.attempts[0].status),
+    ['passed', 'failed', 'failed', 'failed', 'failed', 'passed', 'passed'],
+  )
+})
+
+test('installed CLI aborts after failed mock restoration', () => {
+  const file = fixture(
+    'failed-restoration',
+    `
+    const service = Object.defineProperty({}, 'read', { value: () => 1, configurable: false, writable: true })
+    export const suite = new Test().retry(1).target(() => {
+      Object.defineProperty(service, 'read', { writable: false })
+      return service.read()
+    }).it('locks mock', t => t.mock(service, 'read', m => m.returns(2)).args().expect(e => [e.result.toBe(2)]))
+      .it('later', t => t.args().expect(e => [e.result.toBe(1)]))
+  `,
+  )
+  const output = jsonResult(invoke(file, '--reporter', 'json'), 1)
+  assert.equal(output.reason, 'cleanup-failed')
+  assert.equal(output.tests[0].cases[0].attempts.length, 1)
+  assert.equal(output.tests[0].cases[0].attempts[0].cleanup, 'incomplete')
+  assert.equal(output.tests[0].cases[1].notRun, 'cancelled')
+})
+
 test('CLI filtering retains original paths and rejects zero matches', () => {
   const file = fixture(
     'filter',
@@ -348,6 +389,28 @@ test('CLI deadline terminates a synchronously blocked target', () => {
   const output = jsonResult(invoke(file, '--shutdown-grace', '100', '--reporter', 'json'), 1)
   assert.equal(output.reason, 'timeout')
   assert.equal(output.tests[0].cases[0].attempts[0].cleanup, 'incomplete')
+})
+
+test('installed CLI terminates blocked group cleanup after a failed child', () => {
+  for (const [name, cleanup] of [
+    ['async', 'await new Promise(() => {})'],
+    ['sync', 'while (true) {}'],
+  ]) {
+    const file = fixture(
+      `failed-child-cleanup-${name}`,
+      `
+      const child = new Test().target(() => 1).it('fails', t => t.args().expect(e => [e.result.toBe(2)]))
+      export const group = new Test().group(middleware(async (_, next) => {
+        try { return await next() } finally { ${cleanup} }
+      }, { timeout: 100 }), [child])
+    `,
+    )
+    const output = jsonResult(invoke(file, '--shutdown-grace', '100', '--reporter', 'json'), 1)
+    assert.equal(output.reason, 'timeout')
+    assert.equal(output.tests[0].middleware.cleanup, 'incomplete')
+    assert.equal(output.tests[0].middleware.failures[0].phase, 'after')
+    assert.equal(output.tests[0].children[0].result.cases[0].attempts[0].failures[0].kind, 'assertion')
+  }
 })
 
 test('CLI Ctrl+C interrupts a blocked target and exits 130', { timeout: 15_000 }, async (t) => {
