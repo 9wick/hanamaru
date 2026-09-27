@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import type { DiagnosticValue, SourceLocation, TargetOutcome } from './api.js'
-import type { CliOptions, CliMessage, MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
+import type { CliOptions, MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
 import { errorMessage } from './shared.js'
 import * as v from 'valibot'
+import { cliMessageSchema } from './schemas.js'
 import { Worker } from 'node:worker_threads'
 import { inspect } from 'node:util'
 import { readFileSync } from 'node:fs'
@@ -199,8 +200,9 @@ async function main(): Promise<number> {
         }, grace)
     }
     process.on('SIGINT', interrupt)
-    worker.on('message', (message: CliMessage) => {
+    worker.on('message', (input) => {
       if (complete) return
+      const message = v.parse(cliMessageSchema, input)
       if (message.type === 'loading') {
         clearTimeout(loadingTimer)
         loadingTimer = setTimeout(() => {
