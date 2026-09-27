@@ -1,7 +1,7 @@
 # hanamaru
 
 Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
-対象・モック・引数・期待を書き、完成したテストを `run(test)` で実行します。
+対象・モック・引数・期待を書き、完成したテストをexportしてCLIで実行します。
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
@@ -56,6 +56,14 @@ export const addition = new Test()
   ]))
 ```
 出典: [docs/examples/math.test.ts](docs/examples/math.test.ts)
+
+パッケージをインストールした環境で、テストファイルを指定して実行できます。
+
+```console
+npx hanamaru src/math.test.ts
+```
+
+このコマンドは、例のファイルを `src/math.test.ts` に置いた場合です。引数なしの `npx hanamaru` は `**/*.{test,spec}.ts` を探索します。型チェックを含むtest scriptは[はじめる](./docs/getting-started.md#実行環境とコマンド)を参照してください。
 
 ## 行データからケースを書く
 
@@ -177,6 +185,14 @@ middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型�
 
 ## 定義したテストを実行する
 
+日常のテスト実行にはCLIを使います。テストファイルは完成した定義をexportし、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
+
+収集入口を名前で切り替えたい場合に追加する設定が[project](./docs/projects.md)です（未実装）。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
+
+### プログラムから結果を受け取る
+
+自分のスクリプトから読み込み済みの定義を実行し、`RunResult` を処理したい場合は、ライブラリAPIの `run(test)` または `run([testA, testB])` を使います。
+
 <!-- example: docs/examples/metadata.ts#run -->
 ```ts
 import { run } from 'hanamaru'
@@ -186,9 +202,9 @@ const result = await run(users)
 ```
 出典: [docs/examples/metadata.ts](docs/examples/metadata.ts)
 
-プラグイン作者は `users.blueprint()` で、グループの階層、テスト対象、middleware、実行設定・モック、ケース、宣言位置などを実行前に参照できます。通常の実行ではblueprintを取得する必要はありません。
-実行器はテストからblueprintを得て、内部で実行計画を決めます。[blueprint](./docs/metadata.md)に取得できる内容と評価時点を記載しています。
-テストを書くために、識別子やソース位置を別途登録する必要はありません。
+`run` は設定ファイルを読まず、ファイル探索やprojectの選択を行いません。CLIとライブラリAPIの保証の違いは[実行方法の選び方](./docs/cli.md#実行方法の選び方)を参照してください。
+
+### 失敗を確認する
 
 失敗には宣言位置を自動で添え、条件・期待・観測・原因を構造として返します。
 
@@ -200,8 +216,7 @@ createUser
       actual:   合計2回
 ```
 
-expectは現在の書き方と実行時のコンテキストを保つため、blueprintでは遅延処理として保持します。
-全ての条件を実行前に展開する保証はありません。[宣言位置と実行結果](./docs/results.md)も参照してください。
+識別子やソース位置を別途登録する必要はありません。詳しくは[宣言位置と実行結果](./docs/results.md)を参照してください。
 
 ## ドキュメント
 

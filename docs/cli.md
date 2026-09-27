@@ -5,6 +5,22 @@ CLIは、テストファイルの読込・完成したテストの収集・実�
 
 このページは現在実装されているCLIの使い方です。収集入口を名前付きで選ぶ[project機能](./projects.md)は実装前の契約として記載しています。unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)を参照してください。`projects` 設定と `--project` は未実装です。
 
+## 実行方法の選び方
+
+通常のテスト実行にはCLIを使います。テストファイルは完成した定義をexportし、CLIが収集・実行・結果表示・終了コードを担当します。
+
+| やりたいこと | 使うもの |
+|---|---|
+| テストファイルを探索する、ファイルを指定する、ケースを絞って実行する | CLI。現在はファイル引数・`include` / `exclude`・`--filter` を使う |
+| 収集入口に名前を付け、必要な入口だけを選ぶ | CLIのproject設定（未実装）。`hanamaru.config.ts` に入口を定義し、CLIで選ぶ |
+| 自分のプログラムから完成した定義を実行し、結果を処理する | ライブラリAPIの `run(test)` / `run([testA, testB])` |
+
+projectはCLIの収集入口を選ぶ設定です。projectの入口を返す関数や、CLIが収集するテストファイルの中では `run()` を呼びません。定義の収集後にCLIが実行を管理します。
+`run` は渡された完成定義を同一プロセスで実行して `RunResult` を返し、設定ファイルの読込・ファイル探索・project選択・表示・processの終了は行いません。
+module namespaceの差し替えや、終了猶予を超えた処理の強制停止が必要な場合はCLIを使います。[モックの範囲](./api-mock.md#差し替えの範囲)と[時間制限](#時間制限)を参照してください。
+
+## コマンド形式
+
 ```text
 hanamaru [files...] [options]
 ```
@@ -43,8 +59,9 @@ groupの内部で同じ子を複数箇所に合成することは許可し、そ
 子をルートとしてもexportすると、合成先とは別に収集される。子の定義は探索対象外のファイルに置き、実行するルートだけをテストファイルからexportする。
 
 親のコンテキストを要求する子は単独では実行しない。例えば `user-cases.ts` の子を、コンテキストを用意した親へ追加し、その親をテストファイルからexportする。
-CLIは型引数を実行時に検査できないため、このexportの条件は利用者が守る。
+現在のCLIは型引数を実行時に検査できないため、このexportの条件は利用者が守る。
 `group` とライブラリの `run` ではコンテキストの供給を型検査する。[型の限界](./type-inference.md#型の限界)を参照。
+未実装のproject機能では、[globで未供給のctx要求を持つルートを収集した場合に設定エラーで停止する](./projects.md#globで未供給のctx要求を見つけたとき)契約を追加します。現在のCLIが検出できるという意味ではありません。
 
 ## オプション
 
@@ -193,6 +210,7 @@ group(name, [children])で作ったグループの名前を見出しとして使
 TTYでない出力、または `NO_COLOR` が設定された環境では色を無効にする。
 
 `--reporter json` は [RunResult](./spec/hanamaru.d.ts) を1つのJSON値としてstdoutへ出す。
+これは現在のCLIの形式です。未実装のproject機能における所属projectの表現・複数projectの結果形式は、[実装前に残るAPIの詳細](./projects.md#実装前に残るapiの詳細)に記載しています。
 これは実行結果の形式であり、TestBlueprintをJSON化したものではない。
 origin・path・config・各試行と失敗を保持し、任意値はDiagnosticValueの構造で出す。
 収集・受付エラーでRunResultがまだなければstdoutへ架空の結果を出さず、ファイル・段階・原因をstderrへ報告する。
@@ -216,6 +234,8 @@ Ctrl+Cでは完了済みの結果を保ち、失敗のない実行中の試行�
 Ctrl+Cを受けた終了は、既存の失敗やcleanup失敗によりRunResult.statusがfailedでもコード130にする。読込・収集中のCtrl+Cも130とし、run開始前ならRunResultを作らない。
 
 ## ライブラリから実行する
+
+次は、自分のプログラムで結果を処理する場合の例です。CLIで実行するテストファイルに追加するコードではありません。
 
 <!-- example: docs/examples/metadata.ts#run -->
 ```ts

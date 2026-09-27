@@ -2,6 +2,8 @@
 
 このページはhanamaruのAPIを使った入門例です。配布物をNode.js 22.18・24、Bun 1.3.5、Deno 2.9.2で実行し、TypeScript 5.8.3で型検証しています。
 
+hanamaruパッケージとTypeScriptを開発依存に追加した環境で、テストを定義してCLIで実行します。設定ファイルは不要です。依存の配布状況とランタイムの制約は[実装状況](./limitations.md)を参照してください。
+
 ## 最初のテスト
 
 対象の `math.ts`。
@@ -36,6 +38,14 @@ export const addition = new Test()
 
 `.args('1', 2)` や `e.result.toBe('3')` は型エラーです。
 ケースの識別子や対象ファイルの情報を書く必要はありません。
+
+この例のファイルを `src` 以下に置いた場合、次のコマンドで実行できます。
+
+```console
+npx hanamaru src/math.test.ts
+```
+
+CLIがexportされた定義を収集して実行するので、テストファイル内で `run()` を呼ぶ必要はありません。CLI自体は型チェックをしないため、日常の実行では後述の[型チェックを含むtest script](#実行環境とコマンド)を使います。
 
 ## モックを使う
 
@@ -147,12 +157,12 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 
 ## 実行環境とコマンド
 
-実装後の利用では、JavaScriptと型定義を含むhanamaruパッケージとTypeScriptを開発依存に追加します。
-初版の対応目標はNode.js 22.18以上・Bun 1.3以上・Deno 2.9.2以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
+対応環境はNode.js 22.18以上・Bun 1.3以上・Deno 2.9.2以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
 
 設定ファイルがなくても、CLIは `**/*.{test,spec}.ts` を既定の探索対象にします。
 
 名前付きで収集入口を選ぶ機能は[project](./projects.md)、unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)で説明します。projectは実装前の契約であり、現在のCLIで使えるファイル指定・設定は[CLI](./cli.md)を参照してください。
+projectはCLIに追加する入口の選択設定です。自分のプログラムから完成定義を実行して結果を処理する `run(test)` との使い分けは、[実行方法の選び方](./cli.md#実行方法の選び方)に記載しています。
 
 `package.json` の設定例。
 
@@ -188,7 +198,7 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 ランナー単独では型チェックしないため、通常のtest scriptで両方を実行します。
 公開npmレジストリへの配布は未検証です。このページのサンプルは `docs/examples/` にあり、リポジトリでは `npm run test:examples` が全て実行します。`npm run check` はビルドを含めた全体を検証します。
 
-次は[テストをグループにまとめる](./grouping.md)と[プラグイン向けblueprint](./metadata.md)を参照してください。
+複数の定義を合成し、共通設定や環境を用意する場合は[テストをグループにまとめる](./grouping.md)を参照してください。
 
 ## 入力を並べる・実行設定を変える
 
