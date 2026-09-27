@@ -1014,19 +1014,26 @@ function findNode(nodes: MutableNodeResult[], path: number[]): MutableNodeResult
 }
 function recordNode(state: RunState, value: MutableNodeResult) {
   const path = value.path
-  if (path.length === 1) state.partial[state.partial.findIndex((node) => samePath(node.path, path))] = value
-  else {
+  // state.partialは実行ツリーと同じ形で事前構築されるため、見つからないのは両者のずれを意味する
+  if (path.length === 1) {
+    const index = state.partial.findIndex((node) => samePath(node.path, path))
+    if (index < 0) throw new Error(`result node not found: ${path.join('.')}`)
+    state.partial[index] = value
+  } else {
     const parent = findNode(state.partial, path.slice(0, -1))
     const entry =
       parent?.kind === 'group' ? parent.children.find((child) => samePath(child.result.path, path)) : undefined
-    if (entry) entry.result = value
+    if (!entry) throw new Error(`result node not found: ${path.join('.')}`)
+    entry.result = value
   }
   state.onProgress?.(snapshotRun(state, state.reason ?? 'interrupted'))
 }
 function recordCase(state: RunState, value: MutableCaseResult) {
   const parent = findNode(state.partial, value.path.slice(0, -1))
-  const index = parent?.kind === 'test' ? parent.cases.findIndex((item) => samePath(item.path, value.path)) : -1
-  if (parent?.kind === 'test' && index >= 0) parent.cases[index] = value
+  if (parent?.kind !== 'test') throw new Error(`result case parent not found: ${value.path.join('.')}`)
+  const index = parent.cases.findIndex((item) => samePath(item.path, value.path))
+  if (index < 0) throw new Error(`result case not found: ${value.path.join('.')}`)
+  parent.cases[index] = value
   state.onProgress?.(snapshotRun(state, state.reason ?? 'interrupted'))
 }
 function snapshotRun(state: RunState, reason: Reason): MutableRunResult {
