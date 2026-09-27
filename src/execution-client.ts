@@ -45,7 +45,9 @@ export async function openExecution({
     if (!closing) fail(new Error(`execution worker exited (${code})`))
   })
   worker.on('message', (input) => {
-    const message = v.parse(executionMessageSchema, input)
+    const parsed = v.safeParse(executionMessageSchema, input)
+    if (!parsed.success) return fail(new Error(`invalid execution message: ${v.summarize(parsed.issues)}`))
+    const message = parsed.output
     if (message.type === 'compile') {
       invoke(message.name, message.args)
         .then(

@@ -29,7 +29,7 @@ function parse(argv: string[]) {
   }
   for (let i = 0; i < argv.length; i++) {
     const word = argv[i]
-    if (word in mapped) {
+    if (Object.hasOwn(mapped, word)) {
       const value = argv[++i]
       if (!value || value.startsWith('-')) throw new TypeError(`${word} requires a value`)
       const key = mapped[word]
@@ -202,7 +202,13 @@ async function main(): Promise<number> {
     process.on('SIGINT', interrupt)
     worker.on('message', (input) => {
       if (complete) return
-      const message = v.parse(cliMessageSchema, input)
+      const parsed = v.safeParse(cliMessageSchema, input)
+      if (!parsed.success) {
+        process.stderr.write(`hanamaru: invalid worker message: ${v.summarize(parsed.issues)}\n`)
+        finish(interrupted ? 130 : 2)
+        return
+      }
+      const message = parsed.output
       if (message.type === 'loading') {
         clearTimeout(loadingTimer)
         loadingTimer = setTimeout(() => {

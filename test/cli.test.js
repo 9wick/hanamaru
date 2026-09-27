@@ -42,6 +42,23 @@ test('CLI filter preserves source paths and rejects no matches', () => {
   }
 })
 
+test('CLI treats prototype property names as files, not options', () => {
+  const data = fixture(
+    `export const cases = new Test().target((n) => n).it('one', t => t.args(1).expect(e => [e.result.toBe(1)]))`,
+  )
+  try {
+    for (const word of ['constructor', 'toString']) {
+      const result = invoke(word, data.file, '-r', 'json')
+      assert.equal(result.status, 2)
+      assert.doesNotMatch(result.stderr, /requires a value/)
+      assert.match(result.stderr, new RegExp(`[/\\\\]${word}\\b`))
+      assert.equal(result.stdout, '')
+    }
+  } finally {
+    data.close()
+  }
+})
+
 test('CLI --ci rejects only before filter', () => {
   const data = fixture(
     `export const cases = new Test().target((n) => n).only('exclusive', t => t.args(1).expect(e => [e.result.toBe(1)])).it('ordinary', t => t.args(2).expect(e => [e.result.toBe(2)]))`,
