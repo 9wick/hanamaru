@@ -422,9 +422,10 @@ function checkCondition(condition, actual) {
     case 'toBeInstanceOf':
       return actual instanceof c.ctor
     case 'toThrow':
+      if (!(actual instanceof Error)) return false
       return typeof c.message === 'string'
-        ? String(actual?.message ?? actual).includes(c.message)
-        : c.message.test(String(actual?.message ?? actual))
+        ? actual.message.includes(c.message)
+        : new RegExp(c.message.source, c.message.flags).test(actual.message)
   }
   return false
 }

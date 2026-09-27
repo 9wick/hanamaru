@@ -105,7 +105,7 @@ expectType<'group'>(firstGroup.kind)
 // @ts-expect-error run accepts a completed test, not its blueprint.
 run(parentBlueprint)
 // @ts-expect-error blueprint structure is readonly.
-parent.blueprint().children.push(independent.blueprint())
+parent.blueprint().children.push(firstGroup)
 
 // Each middleware receives the accumulated context; later fields replace earlier ones.
 new Test()

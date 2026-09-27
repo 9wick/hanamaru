@@ -68,7 +68,7 @@ ready.skip('保留', t => t.args(1, 2).expect(e => [e.result.toBe(3)])).use(midd
 ready.only('集中', t => t.args(1, 2).expect(e => [e.result.toBe(3)])).target(add)
 const blueprint = suite.blueprint()
 // @ts-expect-error blueprint structure is readonly.
-blueprint.cases.push({})
+blueprint.cases.push(blueprint.cases[0])
 
 // Call expectations have no mock-registration prerequisite.
 ready.it('登録なし', t => t.args(1, 2).expectCalls(call => [
