@@ -197,6 +197,30 @@ test('CLI parent stops a synchronously blocked group preprocessor', () => {
   }
 })
 
+test('CLI stops blocked group cleanup after a failed child and preserves its failure', () => {
+  for (const cleanup of ['await new Promise(() => {})', 'while (true) {}']) {
+    const data = fixture(`
+      const child = new Test().target(() => 1).it('fails', t => t.args().expect(e => [e.result.toBe(2)]))
+      export const group = new Test().group(middleware(async (_, next) => {
+        try { return await next() } finally { ${cleanup} }
+      }, { timeout: 20 }), [child])
+    `)
+    try {
+      const result = invoke(data.file, '--shutdown-grace', '20', '--reporter', 'json')
+      assert.ifError(result.error)
+      assert.equal(result.status, 1, result.stderr)
+      const output = JSON.parse(result.stdout)
+      assert.equal(output.reason, 'timeout')
+      assert.equal(output.tests[0].middleware.status, 'failed')
+      assert.equal(output.tests[0].middleware.cleanup, 'incomplete')
+      assert.equal(output.tests[0].middleware.failures[0].phase, 'after')
+      assert.equal(output.tests[0].children[0].result.cases[0].attempts[0].failures[0].kind, 'assertion')
+    } finally {
+      data.close()
+    }
+  }
+})
+
 test('CLI Ctrl+C stops a blocked target and exits 130', async () => {
   const data = fixture(
     `export const cases = new Test().timeout(10000).target(() => { console.error('TARGET_STARTED'); while (true) {} }).it('blocked', t => t.args().expect(e => [e.result.toBe(1)]))`,

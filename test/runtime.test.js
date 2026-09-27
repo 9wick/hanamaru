@@ -523,7 +523,7 @@ test('middleware timeout stops following cases', async () => {
   assert.equal(result.tests[0].cases[1].notRun, 'cancelled')
 })
 
-test('deep equality handles cycles, missing fields and array holes', async () => {
+test('deep equality follows Vitest for cycles, undefined fields and array holes', async () => {
   const left = { value: 1 }
   left.self = left
   const right = { value: 1 }
@@ -533,8 +533,8 @@ test('deep equality handles cycles, missing fields and array holes', async () =>
   const sparse = []
   sparse.length = 1
   const dense = [undefined]
-  const mismatch = new Test().target(() => sparse).it('hole', (t) => t.args().expect((e) => [e.result.toEqual(dense)]))
-  assert.equal((await run(mismatch)).status, 'failed')
+  const holes = new Test().target(() => sparse).it('hole', (t) => t.args().expect((e) => [e.result.toEqual(dense)]))
+  assert.equal((await run(holes)).status, 'passed')
   for (const [actual, expected] of [
     [{}, { missing: undefined }],
     [{ missing: undefined }, {}],
@@ -542,8 +542,252 @@ test('deep equality handles cycles, missing fields and array holes', async () =>
     const missing = new Test()
       .target(() => actual)
       .it('missing field', (t) => t.args().expect((e) => [e.result.toEqual(expected)]))
-    assert.equal((await run(missing)).status, 'failed')
+    assert.equal((await run(missing)).status, 'passed')
   }
+})
+
+test('value and call comparisons follow Vitest 5.0.2 equality criteria', async () => {
+  const symbol = Symbol('id')
+  class RecordValue {
+    value = 1
+  }
+  const pairs = [
+    ['same symbol', { [symbol]: 1 }, { [symbol]: 1 }, 'passed'],
+    ['different symbols', { [Symbol('id')]: 1 }, { [Symbol('id')]: 1 }, 'failed'],
+    ['symbol values', { [symbol]: 1 }, { [symbol]: 2 }, 'failed'],
+    ['prototype', new RecordValue(), { value: 1 }, 'passed'],
+    ['date', new Date(0), new Date(0), 'passed'],
+    ['different date', new Date(0), new Date(1), 'failed'],
+    ['regexp', /x/g, /x/g, 'passed'],
+    ['different regexp', /x/g, /y/g, 'failed'],
+    [
+      'map order',
+      new Map([
+        [1, 2],
+        [3, 4],
+      ]),
+      new Map([
+        [3, 4],
+        [1, 2],
+      ]),
+      'passed',
+    ],
+    ['set order', new Set([1, 2]), new Set([2, 1]), 'passed'],
+    ['undefined field', { value: undefined }, {}, 'passed'],
+  ]
+  for (const [name, actual, expected, status] of pairs) {
+    const service = { read: (value) => value }
+    const suite = new Test()
+      .target(() => service.read(actual))
+      .it(name, (t) =>
+        t
+          .args()
+          .expect((e) => [e.result.toEqual(expected)])
+          .expectCalls((call) => [call(service, 'read').calledOnceWith(expected)]),
+      )
+    const result = await run(suite)
+    assert.equal(result.status, status, name)
+    assert.deepEqual(
+      result.tests[0].cases[0].attempts[0].assertions.map((item) => item.status),
+      [status, status],
+      name,
+    )
+  }
+})
+
+test('partial comparisons follow Vitest 5.0.2 special-value criteria', async () => {
+  const symbol = Symbol('id')
+  const pairs = [
+    ['same date', { at: new Date(0) }, { at: new Date(0) }, 'passed'],
+    ['different date', { at: new Date(0) }, { at: new Date(1) }, 'failed'],
+    ['date type', { at: new Date(0) }, { at: new Date(0).toISOString() }, 'failed'],
+    ['map values', { m: new Map([[1, 2]]) }, { m: new Map([[1, 3]]) }, 'failed'],
+    [
+      'map size',
+      {
+        m: new Map([
+          [1, 2],
+          [3, 4],
+        ]),
+      },
+      { m: new Map([[1, 2]]) },
+      'failed',
+    ],
+    ['map subset', { m: new Map([[1, { a: 1, b: 2 }]]) }, { m: new Map([[1, { a: 1 }]]) }, 'passed'],
+    ['set values', { s: new Set([1]) }, { s: new Set([2]) }, 'failed'],
+    ['set size', { s: new Set([1, 2]) }, { s: new Set([1]) }, 'failed'],
+    ['set subset', { s: new Set([{ a: 1, b: 2 }]) }, { s: new Set([{ a: 1 }]) }, 'passed'],
+    ['array length', { a: [1, 2] }, { a: [1] }, 'failed'],
+    ['missing undefined', {}, { missing: undefined }, 'failed'],
+    ['regexp shape', { r: /x/g }, { r: /y/i }, 'passed'],
+    ['weak map shape', { w: new WeakMap() }, { w: new WeakMap() }, 'passed'],
+    ['promise shape', { p: Promise.resolve(1) }, { p: Promise.resolve(2) }, 'passed'],
+    ['symbol-only shape', { [symbol]: 1 }, { [symbol]: 2 }, 'passed'],
+  ]
+  for (const [name, actual, expected, status] of pairs) {
+    for (const subject of ['result', 'error']) {
+      const suite = new Test()
+        .target(() => {
+          if (subject === 'error') throw actual
+          return actual
+        })
+        .it(name, (t) => t.args().expect((e) => [e[subject].toMatchObject(expected)]))
+      assert.equal((await run(suite)).status, status, `${subject}: ${name}`)
+    }
+  }
+})
+
+test('group cleanup deadlines apply after failed children and cancel later roots', async () => {
+  for (const synchronous of [false, true]) {
+    const child = new Test().target(() => 1).it('fails', (t) => t.args().expect((e) => [e.result.toBe(2)]))
+    let cleaned = false
+    const group = new Test().group(
+      middleware(
+        async (_, next) => {
+          try {
+            return await next()
+          } finally {
+            if (synchronous) {
+              const deadline = performance.now() + 50
+              while (performance.now() < deadline) {
+                /* Block beyond the cleanup deadline. */
+              }
+            } else await new Promise((resolve) => setTimeout(resolve, 50))
+            cleaned = true
+          }
+        },
+        { timeout: 10 },
+      ),
+      [child],
+    )
+    const later = new Test()
+      .target(() => assert.fail('later root ran'))
+      .it('later', (t) => t.args().expect((e) => [e.result.toBe(1)]))
+    const result = await run([group, later])
+    assert.equal(result.reason, 'timeout')
+    assert.equal(cleaned, true)
+    assert.equal(result.tests[0].middleware.status, 'failed')
+    assert.equal(result.tests[0].middleware.cleanup, 'complete')
+    assert.equal(result.tests[0].middleware.failures[0].kind, 'timeout')
+    assert.equal(result.tests[0].middleware.failures[0].phase, 'after')
+    assert.equal(result.tests[0].children[0].result.cases[0].attempts[0].failures[0].kind, 'assertion')
+    assertNotRun(result.tests[1].cases[0], 'cancelled')
+  }
+})
+
+test('failed restoration of a nonconfigurable method aborts later cases without retry', async () => {
+  const original = () => 1
+  const service = Object.defineProperty({}, 'read', { value: original, writable: true, configurable: false })
+  const suite = new Test()
+    .retry(1)
+    .target(() => {
+      Object.defineProperty(service, 'read', { writable: false })
+      return service.read()
+    })
+    .it('locks mock', (t) =>
+      t
+        .mock(service, 'read', (m) => m.returns(2))
+        .args()
+        .expect((e) => [e.result.toBe(2)]),
+    )
+    .it('later', (t) => t.args().expect((e) => [e.result.toBe(1)]))
+  const result = await run(suite)
+  const first = result.tests[0].cases[0]
+  assert.equal(result.status, 'failed')
+  assert.equal(result.reason, 'cleanup-failed')
+  assert.equal(first.attempts.length, 1)
+  assert.equal(first.attempts[0].cleanup, 'incomplete')
+  assert.equal(first.attempts[0].failures[0].phase, 'cleanup')
+  assert.match(first.attempts[0].failures[0].message, /restoration failed/)
+  assertNotRun(result.tests[0].cases[1], 'cancelled')
+})
+
+test('cleanup timeout preserves both child and cleanup failures', async () => {
+  const child = new Test().target(() => 1).it('fails', (t) => t.args().expect((e) => [e.result.toBe(2)]))
+  const close = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    throw new Error('close failed')
+  }
+  const group = new Test().group(
+    middleware(
+      async (_, next) => {
+        try {
+          return await next()
+        } finally {
+          await close()
+        }
+      },
+      { timeout: 10 },
+    ),
+    [child],
+  )
+  const result = await run(group)
+  assert.equal(result.reason, 'timeout')
+  const outer = result.tests[0]
+  assert.equal(outer.middleware.cleanup, 'incomplete')
+  assert.deepEqual(
+    outer.middleware.failures.map((issue) => issue.kind),
+    ['execution', 'timeout'],
+  )
+  assert.match(outer.middleware.failures[0].message, /close failed/)
+  assert.equal(outer.children[0].result.cases[0].attempts[0].failures[0].kind, 'assertion')
+})
+
+test('attempt cleanup timeout preserves an args error without inventing a cleanup failure', async () => {
+  const suite = new Test()
+    .use(
+      middleware(
+        async (_, next) => {
+          try {
+            return await next()
+          } finally {
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+        },
+        { timeout: 10 },
+      ),
+    )
+    .target(() => 1)
+    .it('args error', (t) =>
+      t
+        .argsFrom(() => {
+          throw new Error('args failed')
+        })
+        .expect((e) => [e.result.toBe(1)]),
+    )
+  const result = await run(suite)
+  assert.equal(result.reason, 'timeout')
+  const attempt = result.tests[0].cases[0].attempts[0]
+  assert.equal(attempt.cleanup, 'complete')
+  assert.deepEqual(
+    attempt.failures.map((issue) => issue.kind),
+    ['execution', 'timeout'],
+  )
+  assert.match(attempt.failures[0].message, /args failed/)
+  assert.equal(attempt.failures[1].stage, 'after')
+})
+
+test('rejected mock installation fails before calling the target', async () => {
+  const service = new Proxy(
+    Object.defineProperty({}, 'read', {
+      value: () => 1,
+      writable: true,
+      configurable: false,
+    }),
+    { set: () => false },
+  )
+  let called = false
+  const suite = new Test()
+    .mock(service, 'read', (m) => m.returns(2))
+    .target(() => {
+      called = true
+      return service.read()
+    })
+    .it('cannot instrument', (t) => t.args().expect((e) => [e.result.toBe(1)]))
+  const result = await run(suite)
+  assert.equal(result.status, 'failed')
+  assert.equal(called, false)
+  assert.equal(result.tests[0].cases[0].attempts[0].failures[0].phase, 'instrumentation')
 })
 
 test('diagnostics never invoke getters', async () => {

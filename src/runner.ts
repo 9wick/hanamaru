@@ -80,9 +80,11 @@ class MiddlewareFault extends Error {
 }
 class CleanupFault extends Error {
   errors: Value[]
-  constructor(errors: Value[]) {
+  incomplete: boolean
+  constructor(errors: Value[], incomplete = true) {
     super('cleanup failed')
     this.errors = errors
+    this.incomplete = incomplete
   }
 }
 function validConfig(config: ExecutionConfig) {
@@ -323,13 +325,13 @@ async function withMiddleware<T>(
     timedOut = true
     onTimeout?.()
   }, timeoutMs)
-  const start = now()
+  let stageStarted = now()
   onStage?.('before', timeoutMs)
   const next = (fields?: object) => {
     calls++
     if (calls !== 1) throw new MiddlewareFault(new Error('next called more than once'), 'contract')
     clearTimeout(timer)
-    if (timedOut || now() - start > timeoutMs)
+    if (timedOut || now() - stageStarted > timeoutMs)
       throw new MiddlewareFault(new Error('middleware before timed out'), 'before', 'timeout', timeoutMs)
     stage.value = 'inside'
     onStage?.('inside', timeoutMs)
@@ -346,14 +348,16 @@ async function withMiddleware<T>(
         downstreamError = valueOf(error)
         hasDownstreamError = true
         throw error
+      } finally {
+        stage.value = 'after'
+        stageStarted = now()
+        timedOut = false
+        timer = setTimeout(() => {
+          timedOut = true
+          onTimeout?.()
+        }, timeoutMs)
+        onStage?.('after', timeoutMs)
       }
-      stage.value = 'after'
-      timedOut = false
-      timer = setTimeout(() => {
-        timedOut = true
-        onTimeout?.()
-      }, timeoutMs)
-      onStage?.('after', timeoutMs)
       nextToken = { [resultTag]: true, fields: extra }
       return nextToken
     })()
@@ -381,14 +385,29 @@ async function withMiddleware<T>(
       }
     }
     clearTimeout(timer)
-    if (threw) throw thrown
-    if (timedOut || (stage.value === 'before' && now() - start > timeoutMs))
-      throw new MiddlewareFault(
+    if (timedOut || (stage.value !== 'inside' && now() - stageStarted > timeoutMs)) {
+      const timeout = new MiddlewareFault(
         new Error('middleware timed out'),
         stage.value === 'before' ? 'before' : 'after',
         'timeout',
         timeoutMs,
       )
+      const errors: Value[] = []
+      if (hasDownstreamError && !(downstreamError instanceof CaseFailed))
+        errors.push(...(downstreamError instanceof CleanupFault ? downstreamError.errors : [downstreamError]))
+      if (threw && (!hasDownstreamError || thrown !== downstreamError)) errors.push(valueOf(thrown))
+      if (errors.length)
+        throw new CleanupFault(
+          [...errors, timeout],
+          (downstreamError instanceof CleanupFault && downstreamError.incomplete) ||
+            (downstreamError instanceof MiddlewareFault &&
+              downstreamError.stage === 'after' &&
+              downstreamError.kind !== 'timeout') ||
+            (threw && (!hasDownstreamError || thrown !== downstreamError)),
+        )
+      throw timeout
+    }
+    if (threw) throw thrown
     if (hasDownstreamError) throw downstreamError
     if (calls !== 1 || token !== nextToken)
       throw new MiddlewareFault(new Error('middleware must return its next result'), 'contract')
@@ -396,7 +415,7 @@ async function withMiddleware<T>(
   } catch (error) {
     clearTimeout(timer)
     if (hasDownstreamError && error === downstreamError) throw error
-    if (error instanceof MiddlewareFault) throw error
+    if (error instanceof MiddlewareFault || error instanceof CleanupFault) throw error
     if (hasDownstreamError) throw new CleanupFault([downstreamError, valueOf(error)])
     throw new MiddlewareFault(valueOf(error), stage.value === 'inside' ? 'after' : stage.value)
   } finally {
@@ -458,10 +477,8 @@ function patchMethods(mocks: RuntimeMock[], calls: readonly RuntimeCallAssertion
         return entry.behavior ? executeAction(entry.behavior, state, this, args) : invoke(original, this, args)
       }
       if (own && !own.configurable) {
-        Reflect.set(object, key, wrapped)
-        restore.push(() => {
-          Reflect.set(object, key, original)
-        })
+        if (!Reflect.set(object, key, wrapped)) throw new TypeError(`method ${key} cannot be instrumented`)
+        restore.push(() => Reflect.set(object, key, original))
       } else {
         Object.defineProperty(object, key, {
           configurable: true,
@@ -732,7 +749,7 @@ export async function executeAttempt(
   } catch (error) {
     if (error instanceof CleanupFault) {
       retryable = false
-      cleanup = 'incomplete'
+      cleanup = error.incomplete ? 'incomplete' : 'complete'
       state.reason = state.reason === 'timeout' ? 'timeout' : 'cleanup-failed'
       for (const issue of error.errors)
         if (!(issue instanceof CaseFailed)) failures.push(faultToFailure(issue, 'cleanup'))
@@ -812,7 +829,7 @@ export async function executeGroupMiddleware(
     else if (error instanceof CleanupFault || issues.some((x) => x instanceof MiddlewareFault && x.stage === 'after'))
       state.reason = 'cleanup-failed'
     const cleanup =
-      error instanceof CleanupFault ||
+      (error instanceof CleanupFault && error.incomplete) ||
       issues.some((issue) => issue instanceof MiddlewareFault && issue.stage === 'after' && issue.kind !== 'timeout')
         ? 'incomplete'
         : 'complete'
