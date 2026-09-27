@@ -9,9 +9,9 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 ### project（実装前の契約）
 
 - 識別子: `hanamaru.config.ts` の `projects`、CLIの `--project`（API案）。
-- 定義: 実行するテストの収集入口を名前付きで選ぶための単位。
-- 文脈: CLIでテストの収集入口を分け、実行する入口を名前で選ぶときに使います。projectの入口で `run()` は呼びません。
-- ルール: `unit`・`integration`・`e2e` は利用者が付ける名前で、組み込みのテスト種別ではありません。projectはgroupの階層を追加せず、コンテキストも供給しません。共通の設定や環境はテストのgroup・middlewareで構成します。一回分の実行であるRunとも区別します。
+- 定義: CLIが読むファイルの集合に名前を付ける設定。
+- 文脈: CLIで読み込むファイルを分け、必要な集合を名前で選ぶときに使います。project設定で `run()` は呼びません。
+- ルール: 各projectにはファイルパスやパターンを文字列で指定し、複数なら文字列の配列にします。`unit`・`integration`・`e2e` は利用者が付ける名前で、組み込みのテスト種別ではありません。projectはgroupの階層を追加せず、コンテキストも供給しません。共通の設定や環境はテストのgroup・middlewareで構成します。一回分の実行であるRunとも区別します。
 - 状態: 未実装。機能の保証は[projectの契約](./projects.md)、unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)、現在使える入口は[CLI](./cli.md)に記載します。
 
 ### 登録（実装前の契約）
@@ -40,7 +40,7 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 - 識別子: `test.blueprint()`、`TestBlueprint`、`SuiteBlueprint`、`GroupBlueprint`、`DefinitionBlueprint`
 - 定義: テスト定義から得られる、ケースやグループ、設定、関数参照などの実行前の構造。
-- 文脈: プラグイン作者が定義内容を読むための準公開APIです。通常の利用者は完成した定義をexportしてCLIで実行し、blueprintを取得する必要はありません。
+- 文脈: プラグイン作者が定義内容を読むための準公開APIです。現在のCLIでは完成した定義をexportして実行し、利用者がblueprintを取得する必要はありません。登録ベースのCLIでもblueprintを直接扱いません。
 - ルール: blueprintを取得してもmiddlewareやテスト対象は実行しません。`DefinitionBlueprint` はチェーンの共通設定と複数のgroup呼び出しを保持しますが、実行階層のグループではありません。関数やオブジェクト参照を含むため、JSONで往復できることは保証しません。blueprint自体は `run()` の入力ではありません。
 
 ### 実行計画
@@ -60,7 +60,7 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 - 識別子: 一回の `run(test)` またはCLIからの実行、`RunResult`。
 - 定義: 一回の実行と、その実行が所有するケース・試行・execution process・終了結果のまとまり。
-- 文脈: CLIまたはライブラリAPIからの一回分の実行を指し、reporterは `RunResult` から実行全体の結果を読みます。projectの収集入口や関数名のrunとは区別します。
+- 文脈: CLIまたはライブラリAPIからの一回分の実行を指し、reporterは `RunResult` から実行全体の結果を読みます。projectのファイル選択や関数名のrunとは区別します。
 - ルール: Runは実行の一回分であり、実行する仕組みである実行器とは区別します。実行階層の起点はRunで、`new Test()` 自身は階層に入りません。Runは一つ以上のexecution processを所有できますが、processの配置はケースの意味やgroupの階層を変えません。
 
 ### 実行器（runner）
@@ -96,7 +96,7 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 - 識別子: `.target()` に続けて `.it()` / `.each()` / `.only()` / `.skip()` / `.todo()` でケースを追加した完成値。現行の型名は `Suite`、blueprintの型名は `SuiteBlueprint`。
 - 定義: 一つのテスト対象と、それを検証する一件以上のケースを持つ単位。
-- 文脈: テストを書く人は対象ケース群をそのままexportしてCLIの収集対象にするか、`.group()` で作るグループへ追加します。ライブラリAPIからは直接 `run()` に渡すこともできます。
+- 文脈: 現在のCLIでは対象ケース群をexportして収集対象にするか、`.group()` で作るグループへ追加します。登録ベースのCLIでは単独実行できる対象ケース群を `registerTest` に渡します。ライブラリAPIからは直接 `run()` に渡せます。
 - ルール: `.group()` で包まない限りグループではありません。実行時の階層は、Run → 任意のグループ（入れ子可）→ 対象ケース群 → ケース → 試行です。
 
 ### グループ

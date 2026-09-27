@@ -3,7 +3,7 @@
 CLIは、テストファイルの読込・完成したテストの収集・実行・結果表示を行う入口である。
 インストールしたパッケージのCLIを、利用するランタイムで起動します。
 
-このページは現在実装されているCLIの使い方です。将来の[登録ベースの収集](./registration.md)と、収集入口を名前付きで選ぶ[project機能](./projects.md)は実装前の契約として記載しています。unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)を参照してください。`registerTest`・`projects` 設定・`--project` は未実装です。
+このページは現在実装されているCLIの使い方です。将来の[登録ベースの収集](./registration.md)と、読むファイルを名前付きで選ぶ[project機能](./projects.md)は実装前の契約として記載しています。unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)を参照してください。`registerTest`・`projects` 設定・`--project` は未実装です。
 
 ## 実行方法の選び方
 
@@ -12,10 +12,10 @@ CLIは、テストファイルの読込・完成したテストの収集・実�
 | やりたいこと | 使うもの |
 |---|---|
 | テストファイルを探索する、ファイルを指定する、ケースを絞って実行する | CLI。現在はファイル引数・`include` / `exclude`・`--filter` を使う |
-| 収集入口に名前を付け、必要な入口だけを選ぶ | CLIのproject設定（未実装）。`hanamaru.config.ts` に入口を定義し、CLIで選ぶ |
+| 読むファイルの集合に名前を付け、必要な集合だけを選ぶ | CLIのproject設定（未実装）。`hanamaru.config.ts` にファイルパスやパターンを書き、CLIで選ぶ |
 | 自分のプログラムから完成した定義を実行し、結果を処理する | ライブラリAPIの `run(test)` / `run([testA, testB])` |
 
-projectはCLIの収集入口を選ぶ設定です。projectの入口を返す関数や、CLIが収集するテストファイルの中では `run()` を呼びません。定義の収集後にCLIが実行を管理します。
+projectはCLIが読むファイルを選ぶ設定です。project設定や、CLIが収集するテストファイルの中では `run()` を呼びません。登録の収集後にCLIが実行を管理します。
 `run` は渡された完成定義を同一プロセスで実行して `RunResult` を返し、設定ファイルの読込・ファイル探索・project選択・表示・processの終了は行いません。
 module namespaceの差し替えや、終了猶予を超えた処理の強制停止が必要な場合はCLIを使います。[モックの範囲](./api-mock.md#差し替えの範囲)と[時間制限](#時間制限)を参照してください。
 

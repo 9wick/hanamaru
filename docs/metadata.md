@@ -2,7 +2,7 @@
 
 blueprintは、テスト定義から得られる実行前の構造です。プラグイン作者が `test.blueprint()` で取得できます。
 グループの階層・テスト対象・middleware・モック・引数・期待の組み立て方などを保持します。ケース名や宣言位置などのmetadataもここから読めます。
-通常のテスト実行では、完成した定義をexportしてCLIで実行します。利用者がblueprintを取得する必要はありません。実行計画は実行器の内部で決めます。
+現在のCLIでは、完成した定義をexportして実行します。利用者がblueprintを取得する必要はありません。実行計画は実行器の内部で決めます。[登録ベースの収集](./registration.md)は未実装の契約です。
 
 ## 取得と実行
 
@@ -21,7 +21,7 @@ console.log(result.status, blueprint.kind)
 
 `.blueprint()` は `TestBlueprint` を返します。`run()` は完成したテストを受け取り、実行して `RunResult` を返します。blueprintを直接 `run()` に渡すことはできません。
 blueprintを取得してもmiddleware・テスト対象は呼ばず、メソッドの差し替えや記録も開始しません。
-対象のファイル・export名・手書きIDの追加登録は不要です。
+blueprintの取得に対象ファイル・export名・手書きIDの指定は不要です。これは将来のCLIで実行するルートを `registerTest` で登録する契約とは別です。
 
 ## blueprintの構造
 

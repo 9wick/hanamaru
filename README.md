@@ -1,7 +1,7 @@
 # hanamaru
 
 Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
-対象・モック・引数・期待を書き、完成したテストをexportしてCLIで実行します。
+対象・モック・引数・期待を書き、現行のCLIでは完成したテストをexportして実行します。
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
@@ -187,7 +187,7 @@ middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型�
 
 日常のテスト実行にはCLIを使います。テストファイルは完成した定義をexportし、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
 
-将来のCLIでは[テストの登録](./docs/registration.md)を実行対象の宣言に使い、exportを不要にする契約です。収集入口を名前で切り替える設定は[project](./docs/projects.md)です（いずれも未実装）。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
+将来のCLIでは[テストの登録](./docs/registration.md)を実行対象の宣言に使い、exportを不要にする契約です。読むファイルの集合を名前で選ぶ設定は[project](./docs/projects.md)です（いずれも未実装）。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
 
 ### プログラムから結果を受け取る
 
@@ -216,7 +216,7 @@ createUser
       actual:   合計2回
 ```
 
-識別子やソース位置を別途登録する必要はありません。詳しくは[宣言位置と実行結果](./docs/results.md)を参照してください。
+結果用の識別子やソース位置を手書きする必要はありません。詳しくは[宣言位置と実行結果](./docs/results.md)を参照してください。
 
 ## ドキュメント
 
@@ -249,9 +249,10 @@ createUser
 
 ### 実装前の契約
 
-以下のproject機能は未実装です。機能の契約と、その機能を使った構成例を分けて記載しています。
+以下の登録とproject機能は未実装です。提供する機能の契約と、その機能を使った構成例を分けて記載しています。
 
-- [projectで実行入口を選ぶ](./docs/projects.md)
+- [テストの登録](./docs/registration.md)
+- [projectで読むファイルを選ぶ](./docs/projects.md)
 - [projectの利用例：unitとintegration/e2eを分ける](./docs/project-use-cases.md)
 
 ## 対応環境

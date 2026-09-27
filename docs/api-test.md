@@ -212,4 +212,4 @@ const blueprint = users.blueprint()
 todoだけの定義も含みます。
 middleware・テスト対象は実行しません。戻り値の構造は[プラグイン向けblueprint](./metadata.md)を参照してください。
 親のコンテキストを要求する定義でもblueprintは取得できますが、`run()` へ渡せるのは親のコンテキストを要求しない完成したテストです。blueprintは `run()` の入力ではありません。
-CLIに収集させるファイルでは、必要なコンテキストを用意したルートをexportします。
+現在のCLIに収集させるファイルでは、必要なコンテキストを用意したルートをexportします。未実装の[登録ベースのCLI](./registration.md)では、供給を含むルートを `registerTest` に渡します。

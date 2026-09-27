@@ -161,8 +161,8 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 
 設定ファイルがなくても、CLIは `**/*.{test,spec}.ts` を既定の探索対象にします。
 
-名前付きで収集入口を選ぶ機能は[project](./projects.md)、unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)で説明します。projectは実装前の契約であり、現在のCLIで使えるファイル指定・設定は[CLI](./cli.md)を参照してください。
-projectはCLIに追加する入口の選択設定です。自分のプログラムから完成定義を実行して結果を処理する `run(test)` との使い分けは、[実行方法の選び方](./cli.md#実行方法の選び方)に記載しています。
+読むファイルを名前付きで選ぶ機能は[project](./projects.md)、unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)で説明します。登録とprojectは実装前の契約であり、現在のCLIで使えるファイル指定・設定は[CLI](./cli.md)を参照してください。
+projectはCLIのファイル選択設定です。自分のプログラムから完成定義を実行して結果を処理する `run(test)` との使い分けは、[実行方法の選び方](./cli.md#実行方法の選び方)に記載しています。
 
 `package.json` の設定例。
 
