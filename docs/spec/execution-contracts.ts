@@ -8,7 +8,15 @@ defineConfig({
   reporter: 'pretty',
   collectionTimeout: 120_000,
   shutdownGrace: 5_000,
+  vite: {
+    resolve: { alias: { '@app': '/project/src' } },
+    plugins: [{ name: 'example', resolveId(id) { return id === 'virtual:test' ? '\0virtual:test' : null } }],
+  },
 })
+// @ts-expect-error vite config must be an object.
+defineConfig({ vite: 'vite.config.ts' })
+// @ts-expect-error Vite alias replacements must be strings.
+defineConfig({ vite: { resolve: { alias: { '@app': 123 } } } })
 
 const rows = [{ a: 1, b: 2, expected: 3 }]
 const ready = new Test().retry(2).target(add).timeout(2_000).retry(1)

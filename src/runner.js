@@ -343,7 +343,12 @@ function patchMethods(mocks, calls, target) {
   for (const call of calls)
     if (!entries.some((x) => x.object === call.object && x.key === call.key))
       entries.push({ object: call.object, key: call.key, behavior: null })
-  if (target.kind === 'method' && entries.some((x) => x.object === target.object && x.key === target.key && x.behavior))
+  if (
+    target.kind === 'method' &&
+    entries.some(
+      (x) => (x.object === target.object || x.sourceObject === target.object) && x.key === target.key && x.behavior,
+    )
+  )
     throw new TypeError('target method cannot be mocked')
   const records = new Map(),
     restore = []
@@ -553,7 +558,7 @@ function faultToFailure(error, phase = 'middleware') {
       : failure('execution', phase, error.message, { cause: diagnostic(error.cause) })
   return failure('execution', phase, String(error?.message ?? error), { cause: diagnostic(error) })
 }
-async function attempt(node, item, number, state) {
+export async function executeAttempt(node, item, number, state) {
   const started = now()
   const config = configWith(node.config, item.config)
   const failures = [],
@@ -662,6 +667,54 @@ async function attempt(node, item, number, state) {
   }
   return { result, retryable }
 }
+export function failChildren() {
+  throw new CaseFailed()
+}
+export async function executeGroupMiddleware(node, body, state, onStage) {
+  const started = now()
+  let middleware
+  try {
+    await withMiddleware(
+      node.bp.middleware,
+      Object.freeze(node.stable ?? {}),
+      body,
+      () => {
+        state.reason = 'timeout'
+        state.onTimeout?.()
+      },
+      onStage,
+    )
+    middleware = { status: 'passed', durationMs: now() - started, failures: [], cleanup: 'complete' }
+  } catch (error) {
+    if (error instanceof CaseFailed)
+      return {
+        middleware: { status: 'passed', durationMs: now() - started, failures: [], cleanup: 'complete' },
+        reason: state.reason,
+      }
+    const issues = (error instanceof CleanupFault ? error.errors : [error]).filter(
+      (issue) => !(issue instanceof CaseFailed),
+    )
+    const failures = issues.map((issue) =>
+      issue instanceof MiddlewareFault
+        ? {
+            kind: issue.kind === 'timeout' ? 'timeout' : 'execution',
+            phase: issue.stage,
+            message: issue.message,
+            ...(issue.kind === 'timeout' ? { timeoutMs: issue.timeoutMs } : { cause: diagnostic(issue.cause) }),
+          }
+        : { kind: 'execution', phase: 'after', message: String(issue?.message ?? issue), cause: diagnostic(issue) },
+    )
+    if (failures.some((x) => x.kind === 'timeout')) state.reason = 'timeout'
+    else if (error instanceof CleanupFault || issues.some((x) => x.stage === 'after')) state.reason = 'cleanup-failed'
+    const cleanup =
+      error instanceof CleanupFault ||
+      issues.some((issue) => issue instanceof MiddlewareFault && issue.stage === 'after' && issue.kind !== 'timeout')
+        ? 'incomplete'
+        : 'complete'
+    middleware = { status: 'failed', durationMs: now() - started, failures, cleanup }
+  }
+  return { middleware, reason: state.reason }
+}
 async function runNode(node, path, only, state) {
   if (node.kind === 'test') {
     const cases = []
@@ -695,7 +748,9 @@ async function runNode(node, path, only, state) {
         }
         state.onProgress?.(snapshotRun(state, 'interrupted'))
         state.onDeadline?.({ kind: 'start', timeoutMs: base.config.timeout, result: snapshotRun(state, 'timeout') })
-        const { result, retryable } = await attempt(node, item, number, state)
+        const { result, retryable } = state.executor
+          ? await state.executor.attempt(casePath, number)
+          : await executeAttempt(node, item, number, state)
         state.onDeadline?.({ kind: 'end' })
         state.activeAttempt = null
         attempts.push(result)
@@ -710,7 +765,6 @@ async function runNode(node, path, only, state) {
     return value
   }
   const result = { kind: 'group', name: node.bp.name, origin: node.bp.origin, middleware: null, path, children: [] }
-  const started = now()
   const executeChildren = async (fields) => {
     const stable = { ...node.stable, ...fields }
     for (const [index, child] of node.children.entries()) {
@@ -751,18 +805,18 @@ async function runNode(node, path, only, state) {
     recordNode(state, result)
     return result
   }
-  state.activeGroup = { path, stage: 'before', started, timeoutMs: node.bp.middleware.timeout ?? 10_000 }
-  try {
-    await withMiddleware(
-      node.bp.middleware,
-      Object.freeze(node.stable ?? {}),
-      executeChildren,
-      (stage) => {
-        state.reason = 'timeout'
-        state.activeGroup = { path, stage, started, timeoutMs: node.bp.middleware.timeout ?? 10_000 }
-        state.onTimeout?.()
-      },
-      (stage) => {
+  const started = now()
+  const execution = state.executor
+    ? await state.executor.group(path, async () => {
+        try {
+          await executeChildren({})
+          return false
+        } catch (error) {
+          if (!(error instanceof CaseFailed)) throw error
+          return true
+        }
+      })
+    : await executeGroupMiddleware(node, executeChildren, state, (stage) => {
         if (stage === 'inside' || stage === 'end') state.onDeadline?.({ kind: 'end' })
         else {
           state.activeGroup = { path, stage, started, timeoutMs: node.bp.middleware.timeout ?? 10_000 }
@@ -772,37 +826,10 @@ async function runNode(node, path, only, state) {
             result: snapshotRun(state, 'timeout'),
           })
         }
-      },
-    )
-    result.middleware = { status: 'passed', durationMs: now() - started, failures: [], cleanup: 'complete' }
-  } catch (error) {
-    if (error instanceof CaseFailed) {
-      result.middleware = { status: 'passed', durationMs: now() - started, failures: [], cleanup: 'complete' }
-      state.activeGroup = null
-      recordNode(state, result)
-      return result
-    }
-    const issues = (error instanceof CleanupFault ? error.errors : [error]).filter(
-      (issue) => !(issue instanceof CaseFailed),
-    )
-    const failures = issues.map((issue) =>
-      issue instanceof MiddlewareFault
-        ? {
-            kind: issue.kind === 'timeout' ? 'timeout' : 'execution',
-            phase: issue.stage,
-            message: issue.message,
-            ...(issue.kind === 'timeout' ? { timeoutMs: issue.timeoutMs } : { cause: diagnostic(issue.cause) }),
-          }
-        : { kind: 'execution', phase: 'after', message: String(issue?.message ?? issue), cause: diagnostic(issue) },
-    )
-    if (failures.some((x) => x.kind === 'timeout')) state.reason = 'timeout'
-    else if (error instanceof CleanupFault || issues.some((x) => x.stage === 'after')) state.reason = 'cleanup-failed'
-    const cleanup =
-      error instanceof CleanupFault ||
-      issues.some((issue) => issue instanceof MiddlewareFault && issue.stage === 'after' && issue.kind !== 'timeout')
-        ? 'incomplete'
-        : 'complete'
-    result.middleware = { status: 'failed', durationMs: now() - started, failures, cleanup }
+      })
+  result.middleware = execution.middleware
+  if (execution.reason) state.reason = execution.reason
+  if (result.middleware.status === 'failed') {
     for (let index = result.children.length; index < node.children.length; index++) {
       const child = node.children[index]
       result.children.push({
@@ -918,22 +945,35 @@ function snapshotRun(state, reason) {
     tests,
   }
 }
-let active = false
-export async function run(input, options = {}) {
-  if (active) throw new TypeError('a run is already active')
+export function collectBlueprints(input) {
   const definitions = Array.isArray(input) ? input : [input]
   if (!definitions.length || definitions.some((x) => !isDefinition(x)))
     throw new TypeError('run requires completed definitions')
+  const blueprints = definitions.map((def) => def.blueprint())
+  blueprints.forEach((bp) => validateBlueprint(bp))
+  return blueprints
+}
+export function createPlan(blueprints, options = {}) {
+  const allNodes = blueprints.flatMap((bp) => expand(bp, { timeout: 5_000, retry: 0 }, [], [], null))
+  const unfilteredOnly = allCases(allNodes).some((item) => item.mode === 'only')
+  if (unfilteredOnly && options.forbidOnly) throw new TypeError('only is forbidden')
+  const nodes = options.filter === undefined ? allNodes : filterNodes(allNodes, options.filter)
+  if (!nodes.length) throw new TypeError('filter matched no cases')
+  const only = allCases(nodes).some((item) => item.mode === 'only')
+  return { blueprints, allNodes, nodes, only }
+}
+let active = false
+export async function run(input, options = {}) {
+  return runActive(() => createPlan(collectBlueprints(input), options), options)
+}
+export async function runPlan(plan, options = {}, executor = null) {
+  return runActive(() => plan, options, executor)
+}
+async function runActive(buildPlan, options, executor = null) {
+  if (active) throw new TypeError('a run is already active')
   active = true
   try {
-    const blueprints = definitions.map((def) => def.blueprint())
-    blueprints.forEach((bp) => validateBlueprint(bp))
-    const allNodes = blueprints.flatMap((bp) => expand(bp, { timeout: 5_000, retry: 0 }, [], [], null))
-    const unfilteredOnly = allCases(allNodes).some((item) => item.mode === 'only')
-    if (unfilteredOnly && options.forbidOnly) throw new TypeError('only is forbidden')
-    const nodes = options.filter === undefined ? allNodes : filterNodes(allNodes, options.filter)
-    if (!nodes.length) throw new TypeError('filter matched no cases')
-    const only = allCases(nodes).some((item) => item.mode === 'only')
+    const { nodes, only } = buildPlan()
     const state = {
       reason: options.signal?.aborted ? 'interrupted' : null,
       partial: [],
@@ -941,10 +981,12 @@ export async function run(input, options = {}) {
       activeGroup: null,
       onProgress: options.onProgress,
       onDeadline: options.onDeadline,
+      executor,
     }
     state.partial = nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only))
     state.onProgress?.(snapshotRun(state, 'interrupted'))
     state.onTimeout = () => options.onTimeout?.(snapshotRun(state, 'timeout'))
+    executor?.attach(state, (reason) => snapshotRun(state, reason))
     const interrupt = () => {
       if (state.reason !== 'timeout') state.reason = 'interrupted'
     }

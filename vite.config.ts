@@ -11,7 +11,8 @@ export default defineConfig({
     ignorePatterns: ['docs/**', 'dist/**'],
   },
   pack: {
-    entry: ['src/index.js', 'src/cli.js', 'src/cli-worker.js', 'src/resolver.js'],
+    deps: { neverBundle: ['@hanamaru/vite', '@hanamaru/vite/module-runner', 'acorn'] },
+    entry: ['src/index.js', 'src/cli.js', 'src/cli-worker.js', 'src/execution-worker.js'],
     dts: false,
     fixedExtension: false,
     format: 'esm',

@@ -818,3 +818,18 @@ test('diagnostics use built-in accessors for special objects', async () => {
     ],
   ])
 })
+test('run owns the active guard while collecting its blueprint', async () => {
+  const suite = new Test().target(() => 1).it('one', (t) => t.args().expect((e) => [e.result.toBe(1)]))
+  const blueprint = suite.blueprint.bind(suite)
+  let nested,
+    reads = 0
+  suite.blueprint = () => {
+    reads++
+    nested = assert.rejects(run(suite), /a run is already active/)
+    return blueprint()
+  }
+  const result = await run(suite)
+  await nested
+  assert.equal(result.status, 'passed')
+  assert.equal(reads, 1)
+})

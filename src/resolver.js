@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, extname, isAbsolute, join, resolve as resolvePath } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { dirname, extname, join, resolve as resolvePath } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const cache = new Map()
 function jsonc(text) {
@@ -98,33 +98,8 @@ function extensions(file) {
   if (!extname(file)) return [file + '.ts', file + '.mts', file + '.js', file + '/index.ts', file + '/index.js']
   return [file]
 }
-function candidatesFor(specifier, parentURL) {
-  return specifier.startsWith('.') && parentURL?.startsWith('file:')
-    ? [fileURLToPath(new URL(specifier, parentURL))]
-    : isAbsolute(specifier)
-      ? [specifier]
-      : aliasCandidates(specifier, parentURL)
-}
-export function resolveSync(specifier, context, nextResolve) {
-  const resolved = nextResolve(specifier, context)
-  if (!resolved.url.startsWith('file:') || existsSync(fileURLToPath(resolved.url))) return resolved
-  for (const candidate of candidatesFor(specifier, context.parentURL)) {
-    for (const file of [candidate, ...extensions(candidate)]) {
-      if (existsSync(file)) return nextResolve(pathToFileURL(file).href, context)
-    }
-  }
-  return resolved
-}
-export async function resolve(specifier, context, nextResolve) {
-  try {
-    return await nextResolve(specifier, context)
-  } catch (error) {
-    if (!['ERR_MODULE_NOT_FOUND', 'ERR_UNSUPPORTED_DIR_IMPORT'].includes(error.code)) throw error
-    const candidates = candidatesFor(specifier, context.parentURL)
-    for (const candidate of candidates)
-      for (const file of extensions(candidate)) {
-        if (existsSync(file)) return nextResolve(pathToFileURL(file).href, context)
-      }
-    throw error
-  }
+export function resolveTsconfigPath(specifier, parentURL) {
+  for (const candidate of aliasCandidates(specifier, parentURL))
+    for (const file of extensions(candidate)) if (existsSync(file)) return file
+  return null
 }

@@ -23,15 +23,15 @@ Nodeのtype strippingは22.18で既定有効になった。設定例では5.8で
 
 Bun 1.3以上での実行も対応目標とする。Nodeと同じblueprint・実行セマンティクスを使う。
 Deno 2.9.2以上も対象とし、同じ公開API・blueprint・実行セマンティクスを使います。
-CLIはDenoの同期loader hookを使うため、古いDeno 2は対象外です。
 Node.js 22.18・24、Bun 1.3.5、Deno 2.9.2で、インストールした配布物のAPIとCLIを検証しています。全ての入力・周辺環境での同等性まで保証するものではありません。
+Deno 2.9.2では、配布tarballのCLIで設定なし・alias/plugin設定ありのmodule mockと復元も検証しています。Denoで全unitテストを通したという意味ではありません。
 
 ## TypeScriptの実行
 
-Nodeのネイティブtype strippingを使い、ランタイムにトランスパイラを同梱しない方針。
-`enum`、値を持つnamespace、parameter properties、`import =` のように変換を必要とする構文は使わない。
-`.tsx` もこの実行方式の対象外。テストから読み込む対象コードにも同じ条件がかかる。
-詳細は[Nodeの構文制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html#typescript-features)を参照。
+CLIは内蔵のViteでTypeScriptを変換して実行します。必要な変換設定・プラグインは
+[hanamaru configのvite](./cli.md#viteの設定)で指定できます。型チェックは行いません。
+Nodeでファイルを直接実行して `run(definition)` を呼ぶ場合は、
+[Nodeの構文制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html#typescript-features)に従います。
 
 `erasableSyntaxOnly` だけで全てのランタイム差を防げるとはしない。
 対象ランタイムでの実行確認も必要になる。
@@ -40,9 +40,9 @@ Nodeのネイティブtype strippingを使い、ランタイムにトランス�
 
 入門例では `.ts` 拡張子、`import type`、`type: module` とNodeNextを使う。
 Nodeはtsconfigのpathsによる解決を行わない。
-`.js` から `.ts` への置換、拡張子省略、pathsによるエイリアスは、Node向けの解決処理で吸収する設計目標である。
+CLIはViteの解決処理を使い、`.js` から `.ts`、拡張子省略、tsconfigの `paths` に対応します。
 BunとDenoでも、同じimportが同じ対象を読むことを受入条件にする。
-CLIには `.js` から `.ts`、拡張子省略、同じtsconfig内の `paths` の解決処理があります。Node.js 22.18・24、Bun 1.3.5、Deno 2.9.2で配布CLIから検証しています。複雑なtsconfig継承は未検証です。
+JSテストの同じtsconfig内のpathsも解決します。複雑なtsconfig継承は未検証です。
 [Node単体の型importとpathsの制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html)と、hanamaru側で実装する互換性を区別する。
 
 Nodeはnode_modules内のTypeScript実行も制限するため、配布パッケージはJavaScriptと型定義を含む形を想定する。
@@ -75,9 +75,14 @@ finally内の早すぎる解放を型で防ぐことはできない。後処理�
 
 ## モックと呼び出し記録の範囲
 
-両方ともオブジェクトのメソッド差し替えに限定する。モジュールモック、クロージャ内部の参照の置換は提供しない。
-プロパティを経由せず保存済みの関数参照を呼ぶコードは、そのプロパティを差し替えても変わらない。
-モックのために依存の渡し方を整理する必要がある場合がある。
+CLIでは、通常オブジェクトのメソッドと、module namespaceの関数exportを差し替え・記録できます。
+直接importやimport後に保存したmoduleの関数参照も対象です。
+同一module内のローカル参照、通常オブジェクトから保存済みのメソッド参照、
+Viteで外部化したmodule内部のimportは置き換えません。
+CommonJSはランタイム標準で読み込みます。ESMからimportした関数exportは対象ですが、CommonJS内部のrequireには介入しません。
+Viteの変換を経由します。native ESMと全ての評価順序・循環依存で同等になることまでは検証していません。
+`run(definition)` は既読の定義を実行するため、module namespaceの差し替えはCLIを使います。
+[モックの範囲](./api-mock.md#差し替えの範囲)を参照してください。
 
 ## ケースの独立性
 
@@ -112,4 +117,4 @@ timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継
 
 これらは標準の提供範囲であり、プラグインによるblueprintの利用方法を制限するものではありません。
 expectの事前構造化は書き心地を保つ方式が未決です。初版は`e.ctx`を含む現行の書き方と遅延評価を契約にします。
-実行時依存0は実装目標。TypeScript等の開発依存まで0という意味ではない。
+CLIの変換・実行にはVite等の実行時依存を含めます。利用者に変換器やloaderの手動起動は要求しません。

@@ -242,6 +242,66 @@ test('CLI collection errors do not invent a RunResult', () => {
   }
 })
 
+test('CLI mocks direct and captured module imports and restores the real export', () => {
+  writeFileSync(join(consumer, 'module-service.ts'), 'export function read(value: number) { return value * 2 }')
+  writeFileSync(
+    join(consumer, 'module-target.ts'),
+    `import { read } from './module-service.ts'
+const captured = read
+export function readBoth() { return [read(1), captured(2)] }`,
+  )
+  const file = fixture(
+    'module-mock',
+    `import * as service from './module-service.ts'
+import { readBoth } from './module-target.ts'
+export const suite = new Test().target(readBoth)
+  .it('mock', t => t.mock(service, 'read', m => m.returnsOnce(7).returns(8)).args()
+    .expect(e => [e.result.toEqual([7, 8])])
+    .expectCalls(call => [call(service, 'read').calledTimes(2), call(service, 'read').calledNthWith(2, 2)]))
+  .it('real', t => t.args().expect(e => [e.result.toEqual([2, 4])]))`,
+  )
+  const output = jsonResult(invoke(file, '--reporter', 'json'), 0)
+  assert.equal(output.status, 'passed')
+  assert.deepEqual(
+    output.tests[0].cases.map((item) => item.attempts[0].status),
+    ['passed', 'passed'],
+  )
+})
+
+test('CLI Vite aliases and function plugins preserve module mock contracts', () => {
+  writeFileSync(join(consumer, 'plugin-service.ts'), 'export function value(): number { return 2 }')
+  const file = fixture(
+    'plugin-mock',
+    `import * as service from '@service'
+import { read } from 'virtual:reader'
+export const suite = new Test().target(read)
+  .it('mock', t => t.mock(service, 'value', m => m.returns(9)).args().expect(e => [e.result.toBe(9)]))
+  .it('real', t => t.args().expect(e => [e.result.toBe(2)]))`,
+  )
+  const config = join(consumer, 'plugin.config.ts')
+  writeFileSync(
+    config,
+    `export default {
+  vite: {
+    resolve: { alias: { '@service': ${JSON.stringify(join(consumer, 'plugin-service.ts'))} } },
+    plugins: [{
+      name: 'reader',
+      resolveId(id: string) { if (id === 'virtual:reader') return '\\0virtual:reader' },
+      load(id: string) {
+        if (id === '\\0virtual:reader') return "import { value } from '@service'; export function read() { return value() }"
+      },
+    }],
+  },
+}`,
+  )
+  const output = jsonResult(invoke(file, '--config', config, '--reporter', 'json'), 0)
+  assert.equal(output.status, 'passed')
+  assert.deepEqual(
+    output.tests[0].cases.map((item) => item.attempts[0].status),
+    ['passed', 'passed'],
+  )
+})
+
 test('CLI terminates a stuck collection without creating a result', () => {
   const file = fixture('collection', 'await new Promise(() => {})')
   const result = invoke(file, '--collection-timeout', '100', '--reporter', 'json')

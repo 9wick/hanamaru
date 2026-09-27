@@ -42,6 +42,7 @@ Denoは `run --allow-all --no-prompt --node-modules-dir=manual --no-lock` で起
 | --- | --- |
 | 配布パッケージの公開入口 | `import { Test, middleware, run } from 'hanamaru'`、package.jsonのbinからのCLI起動 |
 | 定義は実行せず、各attemptを独立して囲む | blueprint取得前後の副作用、groupとattemptの取得・解放、mockの復元・case上書き |
+| CLIはmodule namespaceの関数exportを差し替え・復元する | 直接import・保存した参照のmock、呼び出し記録、本物への復元、Viteのaliasと関数plugin |
 | contextは変更不可の入れ物で、資源の参照は保持する | 実際の変更操作、共有値の同一参照と更新 |
 | matcherは不一致を失敗にし、toThrowはErrorだけを受理する | 正常・不一致・非Errorの結果、RegExp.lastIndexの保持 |
 | group・each・skip・todoの結果を保持する | 階層・行・宣言位置、未実行caseの空のattempts |
