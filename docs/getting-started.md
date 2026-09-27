@@ -152,6 +152,8 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 
 設定ファイルがなくても、CLIは `**/*.{test,spec}.ts` を既定の探索対象にします。
 
+unitだけを実行したい、またはintegration/e2eの環境起動を分けたい場合の入口は、[unitとintegration/e2eを分けて実行する](./projects.md)で説明します。projectは実装前の契約であり、現在のCLIで使えるファイル指定・設定は[CLI](./cli.md)を参照してください。
+
 `package.json` の設定例。
 
 ```json

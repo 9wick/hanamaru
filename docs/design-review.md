@@ -75,6 +75,16 @@ caseは他のcaseの実行有無・実行順に依存しない独立した実行
 
 CLIのinclude未指定時は `**/*.{test,spec}.ts` を使います。ゼロ設定の `hanamaru` で `.test.ts` と `.spec.ts` を収集できることを公開契約にします。
 
+## unitとintegration/e2eの実行入口
+
+実行対象の収集入口を名前付きで選ぶ単位の名称はprojectとします。
+利用者はunitの独立した定義をファイルから収集し、integration/e2eでは環境を供給するmiddlewareを含むルートを入口にできます。
+projectを選ぶ機能と、groupで環境・子を合成する機能を分けます。選択しない入口を収集せず、環境の取得は実行する枝のmiddleware内に置きます。
+
+公開契約の主ページは、利用者が実行対象を分けたいときに読める[unitとintegration/e2eを分けて実行する](./projects.md)とします。
+unit・e2eごとに契約を重複させたり、groupのAPI説明へ入口選択の仕様を埋め込んだりせず、入門・CLI・groupから同じページへ案内します。
+projectは未実装です。利用場面と保証を先に定め、API案と残る型・設定・結果形式の詳細を区別します。
+
 ## 依存の要求と失敗集約
 
 依存の要求は `new Test<Ctx>()` に一本化し、値の供給元を要求側の型に含めません。同じ子やmiddlewareを、use・groupのどちらから値を供給する構成でも使えます。

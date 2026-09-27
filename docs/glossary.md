@@ -6,6 +6,14 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 ## 定義から実行まで
 
+### project（実装前の契約）
+
+- 識別子: `hanamaru.config.ts` の `projects`、CLIの `--project`（API案）。
+- 定義: 実行するテストの収集入口を名前付きで選ぶための単位。
+- 文脈: 利用者がソース近傍のunitと、環境を含むintegration/e2eの入口を分けて実行するときに使います。
+- ルール: `unit`・`integration`・`e2e` は利用者が付ける名前で、組み込みのテスト種別ではありません。projectはgroupの階層を追加せず、コンテキストも供給しません。共通の設定や環境はテストのgroup・middlewareで構成します。一回分の実行であるRunとも区別します。
+- 状態: 未実装。利用場面と保証は[projectの契約](./projects.md)、現在使える入口は[CLI](./cli.md)に記載します。
+
 ### テスト定義
 
 - 識別子: `new Test()` から始まるチェーン

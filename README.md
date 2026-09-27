@@ -206,6 +206,7 @@ expectは現在の書き方と実行時のコンテキストを保つため、bl
 ## ドキュメント
 
 - [はじめる](./docs/getting-started.md)
+- [unitとintegration/e2eを分けて実行する — projectの契約（未実装）](./docs/projects.md)
 - [設計思想](./docs/concepts.md)
 - [Test ビルダー](./docs/api-test.md) / [it ビルダー](./docs/api-it.md)
 - [モック](./docs/api-mock.md) / [マッチャ](./docs/api-expect.md)
