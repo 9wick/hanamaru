@@ -1,7 +1,7 @@
-const enumerableKeys = (value) =>
+const enumerableKeys = (value: object) =>
   Reflect.ownKeys(value).filter((key) => Object.getOwnPropertyDescriptor(value, key)?.enumerable)
 
-export function equal(a, b, seen = new WeakMap()) {
+export function equal(a: unknown, b: unknown, seen = new WeakMap<object, WeakSet<object>>()): boolean {
   if (Object.is(a, b)) return true
   if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return false
   if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false
@@ -13,10 +13,10 @@ export function equal(a, b, seen = new WeakMap()) {
   }
   pairs.add(b)
   try {
-    if (a instanceof Date) return Object.is(a.getTime(), b.getTime())
-    if (a instanceof RegExp) return a.source === b.source && a.flags === b.flags
+    if (a instanceof Date && b instanceof Date) return Object.is(a.getTime(), b.getTime())
+    if (a instanceof RegExp && b instanceof RegExp) return a.source === b.source && a.flags === b.flags
     if (a instanceof WeakMap || a instanceof WeakSet || a instanceof Promise) return false
-    if (a instanceof Map) {
+    if (a instanceof Map && b instanceof Map) {
       if (a.size !== b.size) return false
       const unmatched = [...b.entries()]
       for (const [key, value] of a) {
@@ -28,7 +28,7 @@ export function equal(a, b, seen = new WeakMap()) {
       }
       return true
     }
-    if (a instanceof Set) {
+    if (a instanceof Set && b instanceof Set) {
       if (a.size !== b.size) return false
       const unmatched = [...b.values()]
       for (const value of a) {
@@ -38,20 +38,24 @@ export function equal(a, b, seen = new WeakMap()) {
       }
       return true
     }
-    if (a instanceof Error && (a.name !== b.name || a.message !== b.message || !equal(a.cause, b.cause, seen)))
+    if (
+      a instanceof Error &&
+      b instanceof Error &&
+      (a.name !== b.name || a.message !== b.message || !equal(a.cause, b.cause, seen))
+    )
       return false
-    if (Array.isArray(a) && a.length !== b.length) return false
+    if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length) return false
     const keysA = enumerableKeys(a).filter(
-      (key) => !(a instanceof Error && ['name', 'message', 'stack', 'cause'].includes(key)),
+      (key) => !(a instanceof Error && ['name', 'message', 'stack', 'cause'].includes(String(key))),
     )
     const keysB = enumerableKeys(b).filter(
-      (key) => !(a instanceof Error && ['name', 'message', 'stack', 'cause'].includes(key)),
+      (key) => !(a instanceof Error && ['name', 'message', 'stack', 'cause'].includes(String(key))),
     )
     if (keysA.length !== keysB.length) return false
     for (const key of keysA) {
-      if (!keysB.includes(key)) return false
-      const descriptorA = Object.getOwnPropertyDescriptor(a, key)
-      const descriptorB = Object.getOwnPropertyDescriptor(b, key)
+      if (!keysB.includes(String(key))) return false
+      const descriptorA = Object.getOwnPropertyDescriptor(a, key)!
+      const descriptorB = Object.getOwnPropertyDescriptor(b, key)!
       if ('value' in descriptorA !== 'value' in descriptorB) return false
       if (
         'value' in descriptorA
@@ -66,7 +70,11 @@ export function equal(a, b, seen = new WeakMap()) {
   }
 }
 
-export function matchObject(actual, expected, seen = new WeakMap()) {
+export function matchObject(
+  actual: unknown,
+  expected: unknown,
+  seen = new WeakMap<object, WeakSet<object>>(),
+): boolean {
   if (typeof expected !== 'object' || !expected || typeof actual !== 'object' || !actual) return equal(actual, expected)
   let pairs = seen.get(expected)
   if (pairs?.has(actual)) return true
@@ -78,8 +86,8 @@ export function matchObject(actual, expected, seen = new WeakMap()) {
   try {
     for (const key of enumerableKeys(expected)) {
       if (!Object.prototype.hasOwnProperty.call(actual, key)) return false
-      const expectedDescriptor = Object.getOwnPropertyDescriptor(expected, key)
-      const actualDescriptor = Object.getOwnPropertyDescriptor(actual, key)
+      const expectedDescriptor = Object.getOwnPropertyDescriptor(expected, key)!
+      const actualDescriptor = Object.getOwnPropertyDescriptor(actual, key)!
       if ('value' in expectedDescriptor !== 'value' in actualDescriptor) return false
       if (
         'value' in expectedDescriptor

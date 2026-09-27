@@ -1,3 +1,5 @@
+import type { AnyFn, ExecutionConfig, ResolvedExecutionConfig } from './api.js'
+import type { Fields } from './internal.js'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 
@@ -10,12 +12,12 @@ export const assertionTag = Symbol('hanamaru assertion')
 export const behaviorTag = Symbol('hanamaru behavior')
 export const doneTag = Symbol('hanamaru case done')
 
-export function positive(value, name) {
+export function positive(value: unknown, name: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
     throw new TypeError(`${name} must be a positive finite number`)
   return value
 }
-export function retryCount(value) {
+export function retryCount(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError('retry must be a nonnegative safe integer')
   return value
 }
@@ -31,7 +33,7 @@ export function location() {
   }
   throw new Error('Cannot determine declaration location')
 }
-export function plainFields(value) {
+export function plainFields(value: unknown): Fields {
   if (value === undefined) return {}
   if (
     value === null ||
@@ -41,12 +43,12 @@ export function plainFields(value) {
   ) {
     throw new TypeError('next(fields) requires a plain object')
   }
-  return value
+  return value as Fields
 }
-export function configWith(base, own) {
+export function configWith(base: ResolvedExecutionConfig, own: ExecutionConfig): ResolvedExecutionConfig {
   return { timeout: own.timeout ?? base.timeout, retry: own.retry ?? base.retry }
 }
-export function methodValue(object, key) {
+export function methodValue(object: unknown, key: PropertyKey): AnyFn {
   if (object === null || (typeof object !== 'object' && typeof object !== 'function'))
     throw new TypeError('method target must be an object')
   let current = object
@@ -60,4 +62,11 @@ export function methodValue(object, key) {
     current = Object.getPrototypeOf(current)
   }
   throw new TypeError('method target does not exist')
+}
+
+export function errorMessage(error: unknown): string {
+  return String(error == null ? error : (Reflect.get(Object(error), 'message') ?? error))
+}
+export function errorStack(error: unknown): string {
+  return String(error instanceof Error ? (error.stack ?? error.message) : error)
 }

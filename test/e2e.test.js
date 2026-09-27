@@ -71,6 +71,16 @@ test(`installed public API satisfies lifecycle and result contracts on ${runtime
   assert.deepEqual(JSON.parse(result.stdout), { status: 'passed', runtime })
 })
 
+test('installed declarations satisfy the public positive and negative type contracts', () => {
+  const contracts = join(consumer, 'type-contracts')
+  cpSync(resolve('docs/spec'), contracts, { recursive: true })
+  const config = JSON.parse(readFileSync(join(contracts, 'tsconfig.json'), 'utf8'))
+  delete config.compilerOptions.paths
+  writeFileSync(join(contracts, 'tsconfig.json'), JSON.stringify(config))
+  const checked = execute(process.execPath, [resolve('node_modules/typescript/bin/tsc'), '-p', contracts])
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr)
+})
+
 test('installed CLI loads typed consumers and reports group, each, skip and todo results', () => {
   const output = jsonResult(invoke('contracts.test.ts', '--reporter', 'json'), 0)
   assert.equal(output.status, 'passed')

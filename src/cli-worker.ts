@@ -1,4 +1,13 @@
-import { parentPort, workerData } from 'node:worker_threads'
+import type { Config } from './api.js'
+import type {
+  CliWorkerData,
+  CliMessage,
+  RuntimeDefinitionHandle,
+  RootReference,
+  InternalRunOptions,
+} from './internal.js'
+import { errorStack } from './shared.js'
+import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import { globSync } from 'node:fs'
 import { resolve, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -12,21 +21,25 @@ import { positive } from './shared.js'
 import { createModuleCompiler } from './module-compiler.js'
 import { createModuleRuntime } from './module-runtime.js'
 
-for (const method of ['log', 'info', 'warn', 'error', 'debug'])
-  console[method] = (...values) => process.stderr.write(values.map(String).join(' ') + '\n')
-function send(value) {
-  parentPort.postMessage(value)
+if (!parentPort) throw new Error('collection requires a worker thread')
+const port = parentPort
+const workerData = rawWorkerData as CliWorkerData
+for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const)
+  console[method] = (...values: unknown[]) => process.stderr.write(values.map(String).join(' ') + '\n')
+function send(value: CliMessage) {
+  port.postMessage(value)
 }
 const controller = new AbortController()
-parentPort.on('message', (message) => {
+port.on('message', (message) => {
   if (message?.type === 'interrupt') controller.abort()
 })
-let compiler, runtime
-function importFile(file, timeout) {
+let compiler: Awaited<ReturnType<typeof createModuleCompiler>> | undefined
+let runtime: ReturnType<typeof createModuleRuntime> | undefined
+function importFile(file: string, timeout: number) {
   send({ type: 'loading', file, timeout })
-  return runtime.import(pathToFileURL(file).href)
+  return runtime!.import(pathToFileURL(file).href)
 }
-function selectFiles(config) {
+function selectFiles(config: Config) {
   if (workerData.files.length) return [...new Set(workerData.files.map((file) => resolve(file)))].sort()
   const include = config.include ?? ['**/*.{test,spec}.ts']
   const exclude = config.exclude ?? ['**/node_modules/**', '**/dist/**']
@@ -40,26 +53,27 @@ async function collectAndRun() {
     positive(initialTimeout, 'collectionTimeout')
     const foundConfigs = [...globSync('hanamaru.config.{ts,js,mts,mjs}', { cwd: process.cwd() })].sort()
     const configPath = resolve(workerData.options.config ?? foundConfigs[0] ?? 'hanamaru.config.ts')
-    let config = {}
+    let config: Config = {}
     if (workerData.options.config || foundConfigs.length) {
       send({ type: 'loading', file: configPath, timeout: initialTimeout })
       const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, configPath, process.cwd(), 'silent')
-      config = loaded.config
+      if (!loaded) throw new Error(`cannot load config: ${configPath}`)
+      config = loaded.config as Config
     }
     const timeout = workerData.options.collectionTimeout ?? config.collectionTimeout ?? 30_000
     const shutdownGrace = workerData.options.shutdownGrace ?? config.shutdownGrace ?? 1_000
     positive(timeout, 'collectionTimeout')
     positive(shutdownGrace, 'shutdownGrace')
     const reporter = workerData.options.reporter ?? config.reporter ?? 'pretty'
-    if (!['pretty', 'json'].includes(reporter)) throw new TypeError('reporter must be pretty or json')
+    if (reporter !== 'pretty' && reporter !== 'json') throw new TypeError('reporter must be pretty or json')
     const files = selectFiles(config)
     if (!files.length) throw new TypeError('no test files matched')
     send({ type: 'loading', file: 'test runtime setup', timeout })
     compiler = await createModuleCompiler(config.vite)
     runtime = createModuleRuntime(compiler.invoke)
-    const definitions = [],
-      roots = [],
-      collected = new Set()
+    const definitions: RuntimeDefinitionHandle[] = [],
+      roots: RootReference[] = [],
+      collected = new Set<object>()
     for (const file of files) {
       const module = await importFile(file, timeout)
       for (const name of Object.keys(module).sort()) {
@@ -75,7 +89,7 @@ async function collectAndRun() {
       }
     }
     if (!definitions.length) throw new TypeError('no completed test definitions found')
-    const options = {
+    const options: InternalRunOptions = {
       forbidOnly: workerData.options.ci,
       failOnFlaky: workerData.options.failOnFlaky,
       filter: workerData.options.filter,
@@ -103,10 +117,10 @@ async function collectAndRun() {
     }
     send({ type: 'result', result, reporter })
   } catch (error) {
-    send({ type: 'error', message: String(error?.stack ?? error) })
+    send({ type: 'error', message: errorStack(error) })
   } finally {
     await runtime?.close()
     await compiler?.close()
   }
 }
-collectAndRun().catch((error) => send({ type: 'error', message: String(error?.stack ?? error) }))
+collectAndRun().catch((error) => send({ type: 'error', message: errorStack(error) }))

@@ -1,8 +1,11 @@
+import type { BehaviorBlueprint } from './api.js'
+import type { ExecutionNode } from './internal.js'
+type BehaviorShape = { kind: BehaviorBlueprint['kind']; once?: BehaviorShape[]; fallback?: BehaviorShape }
 import { moduleIdentity } from './module-reference.js'
 
-export function indexExecutionNodes(nodes) {
-  const entries = new Map()
-  const visit = (items, parent) => {
+export function indexExecutionNodes(nodes: ExecutionNode[]) {
+  const entries = new Map<string, ExecutionNode>()
+  const visit = (items: ExecutionNode[], parent: number[]): void => {
     items.forEach((node, index) => {
       const path = [...parent, index]
       entries.set(JSON.stringify(path), node)
@@ -13,13 +16,13 @@ export function indexExecutionNodes(nodes) {
   return entries
 }
 
-export function describeExecutionPlan(nodes) {
-  const objects = new Map()
-  const reference = ({ object, key }) => {
+export function describeExecutionPlan(nodes: ExecutionNode[]) {
+  const objects = new Map<object, number>()
+  const reference = ({ object, key }: { object: object; key: string }) => {
     if (!objects.has(object)) objects.set(object, objects.size)
     return { object: objects.get(object), key, module: moduleIdentity(object) ?? null }
   }
-  const behavior = (value) =>
+  const behavior = (value: BehaviorBlueprint): BehaviorShape =>
     value.kind === 'sequence'
       ? { kind: value.kind, once: value.once.map(behavior), fallback: behavior(value.fallback) }
       : { kind: value.kind }

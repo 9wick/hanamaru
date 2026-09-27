@@ -1,3 +1,6 @@
+import type { UserConfig } from '@hanamaru/vite'
+import type { FetchResult, FetchFunctionOptions } from '@hanamaru/vite/module-runner'
+import type { ModuleInvoke } from './protocol.js'
 import { builtinModules } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -7,15 +10,22 @@ import { parse } from 'acorn'
 import { resolveTsconfigPath } from './resolver.js'
 
 // Vite 8.3 guards generated export getters. Preserve TDZ errors without changing user catch blocks.
-export function preserveExportErrors(code) {
+export function preserveExportErrors(code: string) {
   const ast = parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
-  const edits = []
+  const edits: [number, number][] = []
   for (const statement of ast.body) {
     const call = statement.type === 'ExpressionStatement' && statement.expression
-    if (call?.type !== 'CallExpression' || call.callee.name !== '__vite_ssr_exportName__') continue
+    if (
+      !call ||
+      call.type !== 'CallExpression' ||
+      call.callee.type !== 'Identifier' ||
+      call.callee.name !== '__vite_ssr_exportName__'
+    )
+      continue
     const getter = call.arguments[1]
-    const guarded = getter?.body?.body
-    if (getter?.type !== 'ArrowFunctionExpression' || guarded?.length !== 1) continue
+    if (getter?.type !== 'ArrowFunctionExpression' || getter.body.type !== 'BlockStatement') continue
+    const guarded = getter.body.body
+    if (guarded.length !== 1) continue
     const guard = guarded[0]
     if (guard.type !== 'TryStatement' || guard.finalizer || guard.handler?.body.body.length !== 0) continue
     edits.push([guard.start, guard.block.start + 1], [guard.block.end - 1, guard.end])
@@ -25,13 +35,13 @@ export function preserveExportErrors(code) {
   return code
 }
 
-export async function createModuleCompiler(vite = {}) {
+export async function createModuleCompiler(vite: UserConfig = {}) {
   if (!vite || typeof vite !== 'object' || Array.isArray(vite)) throw new TypeError('vite must be a config object')
   const implementationRoot = dirname(fileURLToPath(import.meta.url))
   const runtimeURL = new URL('./index.js', import.meta.url).href
-  const isFramework = (id) => id.startsWith(`${implementationRoot}/`)
-  const packageTypes = new Map()
-  function packageType(directory) {
+  const isFramework = (id: string) => id.startsWith(`${implementationRoot}/`)
+  const packageTypes = new Map<string, string | undefined>()
+  function packageType(directory: string): string | undefined {
     if (packageTypes.has(directory)) return packageTypes.get(directory)
     const manifest = resolve(directory, 'package.json')
     const parent = dirname(directory)
@@ -43,7 +53,7 @@ export async function createModuleCompiler(vite = {}) {
     packageTypes.set(directory, type)
     return type
   }
-  const external = (id) => {
+  const external = (id: string): Extract<FetchResult, { externalize: string }> | undefined => {
     const path = id.startsWith('file:') ? fileURLToPath(id) : id
     const commonjs = path.endsWith('.cjs') || (path.endsWith('.js') && packageType(dirname(path)) === 'commonjs')
     if (isFramework(path) || commonjs)
@@ -91,11 +101,11 @@ export async function createModuleCompiler(vite = {}) {
       },
     ],
   })
-  const records = new Map()
-  async function invoke(name, args) {
+  const records = new Map<string, Promise<FetchResult>>()
+  const invoke: ModuleInvoke = async (name, args) => {
     if (name === 'getBuiltins') return [...builtinModules, { type: 'regexp', source: '^node:', flags: '' }]
     if (name !== 'fetchModule') throw new Error(`unknown module request: ${name}`)
-    const [url, importer, fetchOptions] = args
+    const [url, importer, fetchOptions] = args as [string, string | undefined, FetchFunctionOptions]
     if (url.startsWith('file:')) {
       const found = external(url)
       if (found) return found
@@ -106,7 +116,7 @@ export async function createModuleCompiler(vite = {}) {
         key,
         (async () => {
           const result = await server.environments.ssr.fetchModule(url, importer, { ...fetchOptions, cached: false })
-          if (result.file) {
+          if ('file' in result && result.file) {
             const found = external(result.file)
             if (found) return found
           }

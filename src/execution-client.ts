@@ -1,23 +1,33 @@
+import type { ExecutionOptions, ExecutionMessage, CommandInput, ReplyValue } from './protocol.js'
+import type { RunState, Reason, MutableRunResult, Executor, AttemptReply, GroupReply } from './internal.js'
+import { errorStack } from './shared.js'
 import { Worker } from 'node:worker_threads'
 
-export async function openExecution({ roots, preparation, shape, signal, onLoading, invoke }) {
+export async function openExecution({
+  roots,
+  preparation,
+  shape,
+  signal,
+  onLoading,
+  invoke,
+}: ExecutionOptions): Promise<Executor> {
   onLoading('execution worker setup')
   const worker = new Worker(new URL('./execution-worker.js', import.meta.url), {
     workerData: { role: 'execution', roots, preparation, shape },
   })
-  const pending = new Map()
-  let nextId = 0,
-    state = null,
-    snapshot = null,
-    closing = false,
-    fatal = null,
-    readyResolve,
-    readyReject
-  const ready = new Promise((resolve, reject) => {
+  const pending = new Map<number, { resolve: (value: ReplyValue) => void; reject: (error: unknown) => void }>()
+  let nextId = 0
+  let state: RunState | null = null
+  let snapshot: ((reason: Reason) => MutableRunResult) | null = null
+  let closing = false
+  let fatal: unknown
+  let readyResolve!: () => void
+  let readyReject!: (error: unknown) => void
+  const ready = new Promise<void>((resolve, reject) => {
     readyResolve = resolve
     readyReject = reject
   })
-  const fail = (error) => {
+  const fail = (error: unknown) => {
     fatal = error
     readyReject(error)
     for (const entry of pending.values()) entry.reject(error)
@@ -30,7 +40,7 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
   worker.on('exit', (code) => {
     if (!closing) fail(new Error(`execution worker exited (${code})`))
   })
-  worker.on('message', (message) => {
+  worker.on('message', (message: ExecutionMessage) => {
     if (message.type === 'compile') {
       invoke(message.name, message.args)
         .then(
@@ -38,7 +48,7 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
             if (!closing) worker.postMessage({ type: 'compiled', id: message.id, result })
           },
           (error) => {
-            if (!closing) worker.postMessage({ type: 'compiled', id: message.id, error: String(error?.stack ?? error) })
+            if (!closing) worker.postMessage({ type: 'compiled', id: message.id, error: errorStack(error) })
           },
         )
         .catch(fail)
@@ -52,13 +62,15 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
         return
       }
       pending.delete(message.id)
-      if (message.value.reason && state) state.reason = message.value.reason
+      if ('reason' in message.value && message.value.reason && state) state.reason = message.value.reason
       entry.resolve(message.value)
     } else if (message.type === 'timeout') {
+      if (!state) return fail(new Error('execution state is not attached'))
       state.reason = 'timeout'
       if (state.activeAttempt && message.phase) state.activeAttempt.phase = message.phase
       state.onTimeout?.()
     } else if (message.type === 'group-stage') {
+      if (!state || !snapshot) return fail(new Error('execution state is not attached'))
       if (message.stage === 'inside' || message.stage === 'end') state.onDeadline?.({ kind: 'end' })
       else {
         state.activeGroup = {
@@ -82,12 +94,17 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
     await close()
     throw error
   }
-  const request = (command) => {
+  type CommandReply<C extends CommandInput> = C['type'] extends 'attempt'
+    ? AttemptReply
+    : C['type'] extends 'group-open'
+      ? GroupReply | { entered: true }
+      : GroupReply
+  const request = <C extends CommandInput>(command: C): Promise<CommandReply<C>> => {
     if (fatal) return Promise.reject(fatal)
     if (closing) return Promise.reject(new Error('execution worker is closed'))
     const id = nextId++
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject })
+    return new Promise<CommandReply<C>>((resolve, reject) => {
+      pending.set(id, { resolve: (value) => resolve(value as CommandReply<C>), reject })
       worker.postMessage({ ...command, id })
     })
   }

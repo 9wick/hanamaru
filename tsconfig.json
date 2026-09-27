@@ -5,10 +5,12 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
-    "paths": { "hanamaru": ["../../src/index.ts"] }
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
   },
-  "include": ["./*.ts", "../examples/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "vite.config.ts"
+  ]
 }

@@ -1,14 +1,17 @@
 #!/usr/bin/env node
+import type { DiagnosticValue, SourceLocation, TargetOutcome } from './api.js'
+import type { CliOptions, CliMessage, MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
+import { errorMessage } from './shared.js'
 import { Worker } from 'node:worker_threads'
 import { inspect } from 'node:util'
 import { readFileSync } from 'node:fs'
 import { relative } from 'node:path'
 
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
-function parse(argv) {
-  const options = {},
-    files = []
-  const mapped = {
+function parse(argv: string[]) {
+  const options: CliOptions = {},
+    files: string[] = []
+  const mapped: Record<string, 'filter' | 'reporter' | 'config' | 'collectionTimeout' | 'shutdownGrace'> = {
     '-t': 'filter',
     '--filter': 'filter',
     '-r': 'reporter',
@@ -23,7 +26,9 @@ function parse(argv) {
     if (word in mapped) {
       const value = argv[++i]
       if (!value || value.startsWith('-')) throw new TypeError(`${word} requires a value`)
-      options[mapped[word]] = ['collectionTimeout', 'shutdownGrace'].includes(mapped[word]) ? Number(value) : value
+      const key = mapped[word]
+      if (key === 'collectionTimeout' || key === 'shutdownGrace') options[key] = Number(value)
+      else options[key] = value
     } else if (word === '--ci') options.ci = true
     else if (word === '--fail-on-flaky') options.failOnFlaky = true
     else if (word === '--no-color') options.noColor = true
@@ -34,7 +39,7 @@ function parse(argv) {
   }
   return { options, files }
 }
-function formatValue(value) {
+function formatValue(value: DiagnosticValue | TargetOutcome | string): string {
   if (!value || typeof value !== 'object') return inspect(value)
   switch (value.kind) {
     case 'undefined':
@@ -71,22 +76,22 @@ function formatValue(value) {
       return `Set(${value.values.map(formatValue).join(', ')})`
     case 'object':
       return `${value.type === 'Object' ? '' : value.type}{ ${value.properties
-        .filter((p) => p.key.value !== 'stack')
+        .filter((p) => p.key.kind !== 'string' || p.key.value !== 'stack')
         .map((p) => `${p.key.kind === 'string' ? p.key.value : formatValue(p.key)}: ${formatValue(p.value)}`)
         .join(', ')} }`
     default:
       return inspect(value)
   }
 }
-function formatFailure(item, depth, groupOrigins) {
-  const out = [],
+function formatFailure(item: MutableCaseResult, depth: number, groupOrigins: SourceLocation[]) {
+  const out: string[] = [],
     pad = '  '.repeat(depth)
   if (item.row) out.push(`${pad}row ${item.row.index + 1}: ${formatValue(item.row.value)}`)
   for (const origin of groupOrigins)
     out.push(`${pad}group: ${relative(process.cwd(), origin.file)}:${origin.line}:${origin.column}`)
   for (const attempt of item.attempts)
     for (const issue of attempt.failures) {
-      const ref = issue.assertion
+      const ref = 'assertion' in issue ? issue.assertion : undefined
       const label = ref
         ? `${ref.source === 'expectCalls' ? `call(${ref.key})` : ref.subject}.${ref.matcher}`
         : issue.message
@@ -99,8 +104,8 @@ function formatFailure(item, depth, groupOrigins) {
     }
   return out
 }
-function formatNode(node, depth = 0, groupOrigins = []) {
-  const lines = [],
+function formatNode(node: MutableNodeResult, depth = 0, groupOrigins: SourceLocation[] = []): string[] {
+  const lines: string[] = [],
     pad = '  '.repeat(depth)
   if (node.kind === 'group') {
     if (node.name !== null) lines.push(`${pad}${node.name}`)
@@ -138,7 +143,7 @@ function formatNode(node, depth = 0, groupOrigins = []) {
   }
   return lines
 }
-async function main() {
+async function main(): Promise<number> {
   const { options, files } = parse(process.argv.slice(2))
   if (options.version) {
     process.stdout.write(`${version}\n`)
@@ -151,20 +156,20 @@ async function main() {
     return 0
   }
   const worker = new Worker(new URL('./cli-worker.js', import.meta.url), { workerData: { options, files } })
-  let loadingTimer = null,
-    deadlineTimer = null,
-    graceTimer = null,
-    grace = 1_000,
+  let loadingTimer: ReturnType<typeof setTimeout> | undefined
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+  let graceTimer: ReturnType<typeof setTimeout> | undefined
+  let grace = 1_000,
     complete = false,
     interrupted = false,
-    reporter = options.reporter,
-    partial = null
-  const done = new Promise((resolve) => {
-    const printResult = (result) => {
+    reporter = options.reporter
+  let partial: MutableRunResult | null = null
+  const done = new Promise<number>((resolve) => {
+    const printResult = (result: MutableRunResult) => {
       if (reporter === 'json') process.stdout.write(`${JSON.stringify(result)}\n`)
       else process.stdout.write(result.tests.flatMap((node) => formatNode(node)).join('\n') + '\n')
     }
-    const finish = (code) => {
+    const finish = (code: number) => {
       if (complete) return
       complete = true
       clearTimeout(loadingTimer)
@@ -190,7 +195,7 @@ async function main() {
         }, grace)
     }
     process.on('SIGINT', interrupt)
-    worker.on('message', (message) => {
+    worker.on('message', (message: CliMessage) => {
       if (complete) return
       if (message.type === 'loading') {
         clearTimeout(loadingTimer)
@@ -250,6 +255,6 @@ async function main() {
 try {
   process.exitCode = await main()
 } catch (error) {
-  process.stderr.write(`hanamaru: ${error.message}\n`)
+  process.stderr.write(`hanamaru: ${errorMessage(error)}\n`)
   process.exitCode = 2
 }
