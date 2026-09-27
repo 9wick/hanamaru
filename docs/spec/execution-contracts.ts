@@ -167,8 +167,6 @@ const incompleteFailure: Failure = { kind: 'assertion', phase: 'assertion', mess
 const incompleteOrigin: SourceLocation = { file: '/tests/add.test.ts', line: 1 }
 // @ts-expect-error diagnostic values distinguish BigInt from strings and numbers.
 const invalidDiagnostic: DiagnosticValue = { kind: 'bigint', value: 1n }
-// @ts-expect-error result attempts cannot be appended by consumers.
-result.attempts.push({})
 void [timeout, failure, thrownUndefined, incompleteFailure, incompleteOrigin, invalidDiagnostic]
 
 // @ts-expect-error failures belong to individual attempts, never the case aggregate.
@@ -186,6 +184,8 @@ const caseInfo = {
   path: [0, 0], row: null, config: { timeout: 500, retry: 2 }, durationMs: 0,
 } as const
 const executed: CaseResult = { ...caseInfo, attempts: [passedAttempt] }
+// @ts-expect-error result attempts cannot be appended even with a valid attempt.
+executed.attempts.push(passedAttempt)
 const retried: CaseResult = { ...caseInfo, attempts: [failedAttempt, passedAttempt] }
 // @ts-expect-error an incomplete cleanup prevents another attempt.
 const retriedAfterFailedCleanup: CaseResult = { ...caseInfo, attempts: [failedCleanupAttempt, passedAttempt] }

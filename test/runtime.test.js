@@ -4,6 +4,12 @@ import { Test, middleware, run } from '../src/index.js'
 
 const add = (a, b) => a + b
 
+function assertNotRun(result, reason) {
+  assert.equal(result.notRun, reason)
+  assert.deepEqual(result.attempts, [])
+  assert.equal(result.durationMs, 0)
+}
+
 test('basic test and blueprint do not run target during definition', async () => {
   let calls = 0
   const subject = (value) => {
@@ -157,9 +163,193 @@ test('expected thrown target error passes; unexpected error fails', async () => 
   assert.equal(result.tests[0].cases[0].attempts[0].failures[0].kind, 'outcome')
 })
 
+for (const { matcher, cases } of [
+  {
+    matcher: 'toBe',
+    cases: [
+      [1, 1, true],
+      [1, 2, false],
+      [NaN, NaN, true],
+      [0, -0, false],
+    ],
+  },
+  {
+    matcher: 'toEqual',
+    cases: [
+      [{ value: 1 }, { value: 1 }, true],
+      [{ value: 1 }, { value: 2 }, false],
+    ],
+  },
+  {
+    matcher: 'toMatchObject',
+    cases: [
+      [{ value: 1, extra: 2 }, { value: 1 }, true],
+      [{ value: 1 }, { value: 2 }, false],
+      [{ value: 1 }, { missing: undefined }, false],
+      [{ value: undefined }, { value: undefined }, true],
+    ],
+  },
+  {
+    matcher: 'toSatisfy',
+    cases: [
+      [2, (value) => value === 2, true],
+      [2, (value) => value === 3, false],
+    ],
+  },
+]) {
+  test(`result.${matcher} distinguishes matches from mismatches`, async () => {
+    for (const [actual, expected, matches] of cases) {
+      const suite = new Test()
+        .target(() => actual)
+        .it('matcher', (t) => t.args().expect((e) => [e.result[matcher](expected)]))
+      const result = await run(suite)
+      const attempt = result.tests[0].cases[0].attempts[0]
+      assert.equal(result.status, matches ? 'passed' : 'failed')
+      assert.equal(attempt.assertions[0].status, matches ? 'passed' : 'failed')
+      if (!matches) assert.equal(attempt.failures[0].kind, 'assertion')
+    }
+  })
+}
+
+for (const { matcher, actual, matching, mismatching } of [
+  { matcher: 'toBeInstanceOf', actual: new TypeError('boom'), matching: Error, mismatching: RangeError },
+  { matcher: 'toThrow', actual: new Error('boom'), matching: 'oo', mismatching: 'different' },
+  {
+    matcher: 'toMatchObject',
+    actual: { code: 'ENOENT', detail: 1 },
+    matching: { code: 'ENOENT' },
+    mismatching: { code: 'EIO' },
+  },
+  {
+    matcher: 'toSatisfy',
+    actual: undefined,
+    matching: (value) => value === undefined,
+    mismatching: (value) => value !== undefined,
+  },
+]) {
+  test(`error.${matcher} distinguishes matches from mismatches`, async () => {
+    for (const [expected, matches] of [
+      [matching, true],
+      [mismatching, false],
+    ]) {
+      const suite = new Test()
+        .target(() => Promise.reject(actual))
+        .it('matcher', (t) => t.args().expect((e) => [e.error[matcher](expected)]))
+      const result = await run(suite)
+      const attempt = result.tests[0].cases[0].attempts[0]
+      assert.equal(result.status, matches ? 'passed' : 'failed')
+      assert.equal(attempt.assertions[0].status, matches ? 'passed' : 'failed')
+      if (!matches) assert.equal(attempt.failures[0].kind, 'assertion')
+    }
+  })
+}
+
+test('toThrow rejects non-Error values even when their messages match', async () => {
+  for (const actual of ['boom', undefined, null, 42, { message: 'boom' }]) {
+    const suite = new Test()
+      .target(() => Promise.reject(actual))
+      .it('non-Error', (t) => t.args().expect((e) => [e.error.toThrow('boom')]))
+    const result = await run(suite)
+    assert.equal(result.status, 'failed')
+    assert.equal(result.tests[0].cases[0].attempts[0].failures[0].kind, 'assertion')
+  }
+})
+
+test('toThrow ignores and preserves RegExp lastIndex for matching and nonmatching errors', async () => {
+  for (const flags of ['g', 'y']) {
+    const pattern = new RegExp('boom', flags)
+    pattern.lastIndex = 2
+    for (const [message, matches] of [
+      ['boom', true],
+      ['different', false],
+      ['boom', true],
+    ]) {
+      const suite = new Test()
+        .target(() => Promise.reject(new Error(message)))
+        .it('RegExp', (t) => t.args().expect((e) => [e.error.toThrow(pattern)]))
+      assert.equal((await run(suite)).status, matches ? 'passed' : 'failed')
+      assert.equal(pattern.lastIndex, 2)
+    }
+  }
+})
+
+for (const { matcher, cases } of [
+  {
+    matcher: 'calledTimes',
+    cases: [
+      [[], [0], true],
+      [[[1], [2]], [2], true],
+      [[[1], [2]], [1], false],
+    ],
+  },
+  {
+    matcher: 'notCalled',
+    cases: [
+      [[], [], true],
+      [[[1]], [], false],
+    ],
+  },
+  {
+    matcher: 'calledWith',
+    cases: [
+      [[[1], [2]], [2], true],
+      [[[1], [2]], [3], false],
+    ],
+  },
+  {
+    matcher: 'calledOnceWith',
+    cases: [
+      [[[1]], [1], true],
+      [[[1]], [2], false],
+      [[[1], [1]], [1], false],
+    ],
+  },
+  {
+    matcher: 'calledNthWith',
+    cases: [
+      [[[1], [2]], [2, 2], true],
+      [[[1], [2]], [1, 2], false],
+      [[[1], [2]], [3, 2], false],
+    ],
+  },
+]) {
+  test(`${matcher} checks call counts and arguments`, async () => {
+    for (const [calls, args, matches] of cases) {
+      const service = {
+        read(value) {
+          return value
+        },
+      }
+      const original = service.read
+      const suite = new Test()
+        .target(() => {
+          for (const values of calls) service.read(...values)
+        })
+        .it('calls', (t) => t.args().expectCalls((call) => [call(service, 'read')[matcher](...args)]))
+      const result = await run(suite)
+      const attempt = result.tests[0].cases[0].attempts[0]
+      assert.equal(result.status, matches ? 'passed' : 'failed')
+      assert.equal(attempt.assertions[0].status, matches ? 'passed' : 'failed')
+      if (!matches) assert.equal(attempt.failures[0].kind, 'assertion')
+      assert.equal(service.read, original)
+    }
+  })
+}
+
 test('only, skip and todo leave no attempts', async () => {
+  const calls = []
+  let middlewareCalls = 0
   const suite = new Test()
-    .target(add)
+    .use(
+      middleware(async (_, next) => {
+        middlewareCalls++
+        return next()
+      }),
+    )
+    .target((a, b) => {
+      calls.push([a, b])
+      return add(a, b)
+    })
     .it('normal', (t) => t.args(1, 2).expect((e) => [e.result.toBe(3)]))
     .only('exclusive', (t) => t.args(2, 2).expect((e) => [e.result.toBe(4)]))
     .skip('disabled', (t) => t.args(1, 1).expect((e) => [e.result.toBe(2)]))
@@ -169,7 +359,39 @@ test('only, skip and todo leave no attempts', async () => {
     result.tests[0].cases.map((x) => x.notRun),
     ['skipped', undefined, 'skipped', 'todo'],
   )
+  const [normal, exclusive, skipped, todo] = result.tests[0].cases
+  assertNotRun(normal, 'skipped')
+  assertNotRun(skipped, 'skipped')
+  assertNotRun(todo, 'todo')
+  assert.equal(Object.hasOwn(exclusive, 'notRun'), false)
+  assert.equal(exclusive.attempts.length, 1)
+  assert.equal(exclusive.attempts[0].status, 'passed')
+  assert.deepEqual(calls, [[2, 2]])
+  assert.equal(middlewareCalls, 1)
   await assert.rejects(run(suite, { forbidOnly: true }), /only is forbidden/)
+  assert.deepEqual(calls, [[2, 2]])
+  assert.equal(middlewareCalls, 1)
+})
+
+test('skip and todo do not start targets or middleware without only', async () => {
+  let targetCalls = 0,
+    middlewareCalls = 0
+  const suite = new Test()
+    .use(
+      middleware(async (_, next) => {
+        middlewareCalls++
+        return next()
+      }),
+    )
+    .target(() => ++targetCalls)
+    .skip('skipped', (t) => t.args().expect((e) => [e.result.toBe(1)]))
+    .todo('todo')
+  const result = await run(suite)
+  assert.equal(result.status, 'passed')
+  assertNotRun(result.tests[0].cases[0], 'skipped')
+  assertNotRun(result.tests[0].cases[1], 'todo')
+  assert.equal(targetCalls, 0)
+  assert.equal(middlewareCalls, 0)
 })
 
 test('group failure after next interrupts later roots', async () => {
@@ -313,6 +535,15 @@ test('deep equality handles cycles, missing fields and array holes', async () =>
   const dense = [undefined]
   const mismatch = new Test().target(() => sparse).it('hole', (t) => t.args().expect((e) => [e.result.toEqual(dense)]))
   assert.equal((await run(mismatch)).status, 'failed')
+  for (const [actual, expected] of [
+    [{}, { missing: undefined }],
+    [{ missing: undefined }, {}],
+  ]) {
+    const missing = new Test()
+      .target(() => actual)
+      .it('missing field', (t) => t.args().expect((e) => [e.result.toEqual(expected)]))
+    assert.equal((await run(missing)).status, 'failed')
+  }
 })
 
 test('diagnostics never invoke getters', async () => {
@@ -332,8 +563,17 @@ test('diagnostics never invoke getters', async () => {
 
 test('abort marks active and pending cases cancelled', async () => {
   const controller = new AbortController()
+  let targetCalls = 0,
+    middlewareCalls = 0
   const suite = new Test()
+    .use(
+      middleware(async (_, next) => {
+        middlewareCalls++
+        return next()
+      }),
+    )
     .target(async () => {
+      targetCalls++
       controller.abort()
       return 1
     })
@@ -343,7 +583,10 @@ test('abort marks active and pending cases cancelled', async () => {
   assert.equal(result.status, 'cancelled')
   assert.equal(result.reason, 'interrupted')
   assert.equal(result.tests[0].cases[0].attempts[0].status, 'cancelled')
-  assert.equal(result.tests[0].cases[1].notRun, 'cancelled')
+  assertNotRun(result.tests[0].cases[1], 'cancelled')
+  assert.equal(Object.hasOwn(result.tests[0].cases[0], 'notRun'), false)
+  assert.equal(targetCalls, 1)
+  assert.equal(middlewareCalls, 1)
 })
 
 test('a failed child inside an ordinary group returns a failed result', async () => {
@@ -414,24 +657,52 @@ test('group middleware reads stable group context before attempt values', async 
 })
 
 test('contexts are readonly containers and null-prototype fields are accepted', async () => {
-  const fields = Object.assign(Object.create(null), { answer: 42 })
+  const shared = { value: 1 }
+  const fields = Object.assign(Object.create(null), { answer: 42, shared })
+  const contexts = []
   const suite = new Test()
+    .use(middleware(async (_, next) => next(fields)))
     .use(
       middleware(async (ctx, next) => {
-        assert.equal(Object.isFrozen(ctx), true)
-        return next(fields)
+        contexts.push(ctx)
+        return next()
       }),
     )
-    .target((value) => value)
+    .target((value, reference) => {
+      reference.value++
+      return value
+    })
     .it('answer', (t) =>
       t
         .argsFrom((ctx) => {
-          assert.equal(Object.isFrozen(ctx), true)
-          return [ctx.answer]
+          contexts.push(ctx)
+          assert.equal(ctx.shared, shared)
+          return [ctx.answer, ctx.shared]
         })
-        .expect((e) => [e.result.toBe(42)]),
+        .expect((e) => {
+          contexts.push(e.ctx)
+          assert.equal(e.ctx.shared, shared)
+          assert.equal(e.ctx.shared.value, 2)
+          return [e.result.toBe(42)]
+        }),
     )
   assert.equal((await run(suite)).status, 'passed')
+  assert.equal(contexts.length, 3)
+  assert.equal(contexts[1], contexts[2])
+  assert.equal(shared.value, 2)
+  for (const ctx of contexts) {
+    for (const mutate of [
+      () => Reflect.set(ctx, 'answer', 0),
+      () => Reflect.deleteProperty(ctx, 'answer'),
+      () => Reflect.defineProperty(ctx, 'answer', { value: 0 }),
+    ]) {
+      // A rejected write may return false or throw; both must preserve the field.
+      await Promise.allSettled([Promise.resolve().then(mutate)])
+      assert.equal(Object.hasOwn(ctx, 'answer'), true)
+      assert.equal(ctx.answer, 42)
+      assert.equal(ctx.shared, shared)
+    }
+  }
 })
 
 test('predicate exceptions are failed assertions with execution causes', async () => {
@@ -536,6 +807,16 @@ test('diagnostics use built-in accessors for special objects', async () => {
     result.tests[0].cases[0].attempts[0].outcome.value.items.map((x) => x.kind),
     ['date', 'regexp', 'map'],
   )
+  const [date, regexp, map] = result.tests[0].cases[0].attempts[0].outcome.value.items
+  assert.equal(date.value, '2020-01-01T00:00:00.000Z')
+  assert.equal(regexp.source, 'a')
+  assert.equal(regexp.flags, 'g')
+  assert.deepEqual(map.entries, [
+    [
+      { kind: 'number', value: 1 },
+      { kind: 'number', value: 2 },
+    ],
+  ])
 })
 test('run owns the active guard while collecting its blueprint', async () => {
   const suite = new Test().target(() => 1).it('one', (t) => t.args().expect((e) => [e.result.toBe(1)]))

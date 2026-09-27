@@ -1,7 +1,7 @@
 # CLIと設定ファイル
 
 CLIは、テストファイルの読込・完成したテストの収集・実行・結果表示を行う入口である。
-CLIの実装は `src/cli.js` にあります。`npm run build` 後は `node dist/cli.js` で起動できます。
+インストールしたパッケージのCLIを、利用するランタイムで起動します。
 
 ```text
 hanamaru [files...] [options]
@@ -13,6 +13,17 @@ hanamaru [files...] [options]
 npx hanamaru
 npx hanamaru src/math.test.ts
 ```
+
+BunとDenoで実行する場合は、パッケージをインストールしたプロジェクトで次のように起動します。
+`bunx` は `--bun` を付け、Bun自身でCLIを実行します。
+
+```console
+bunx --bun hanamaru src/math.test.ts
+deno run --allow-all --node-modules-dir=manual node_modules/hanamaru/dist/cli.js src/math.test.ts
+```
+
+DenoのCLIはファイル読込・環境変数・workerを利用し、実行するテストも資源へアクセスするため、上の例では権限を許可しています。
+ライブラリの `run(test)` はDenoでも同じAPIで呼び出せます。
 
 引数なしなら設定のincludeに一致するファイルを読む。include未指定時は `**/*.{test,spec}.ts` を使う。
 ファイルを指定した場合は、そのファイルを対象とする。

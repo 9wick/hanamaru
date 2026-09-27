@@ -1,6 +1,6 @@
 # はじめる
 
-このページはhanamaruのAPIを使った入門例です。リポジトリ内の実装をNode.js 22.18・24とBun 1.3.5で実行し、TypeScript 5.8.3で型検証しています。
+このページはhanamaruのAPIを使った入門例です。配布物をNode.js 22.18・24、Bun 1.3.5、Deno 2.9.2で実行し、TypeScript 5.8.3で型検証しています。
 
 ## 最初のテスト
 
@@ -136,7 +136,7 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 ## 実行環境とコマンド
 
 実装後の利用では、JavaScriptと型定義を含むhanamaruパッケージとTypeScriptを開発依存に追加します。
-初版の対応目標はNode.js 22.18以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
+初版の対応目標はNode.js 22.18以上・Bun 1.3以上・Deno 2.9.2以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
 
 設定ファイルがなくても、CLIは `**/*.{test,spec}.ts` を既定の探索対象にします。
 

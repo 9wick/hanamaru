@@ -19,12 +19,16 @@
   "scripts": {
     "typecheck": "tsc -p docs/spec/tsconfig.json",
     "test": "npm run build && node --test test/*.test.js",
+    "test:runtime": "node --test test/runtime.test.js",
+    "test:cli": "npm run build && node --test test/cli.test.js",
+    "test:e2e": "npm run build && node --test test/e2e.test.js",
+    "check:docs": "python3 scripts/check-docs.py",
     "lint": "vp lint --deny-warnings src test docs/examples",
     "format": "vp fmt src test vite.config.ts",
     "format:check": "vp fmt --check src test vite.config.ts",
     "build": "vp pack",
     "prepack": "npm run build",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && python3 scripts/check-docs.py"
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:docs"
   },
   "engines": {
     "node": ">=22.18"

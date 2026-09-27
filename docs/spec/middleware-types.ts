@@ -137,4 +137,4 @@ for (const step of suite.blueprint().steps) {
   expectType<number | undefined>(step.timeout)
 }
 // @ts-expect-error ordered middleware steps are immutable.
-suite.blueprint().steps.push({ kind: 'middleware', run: async (_, next) => next(), timeout: undefined })
+suite.blueprint().steps.push(suite.blueprint().steps[0])

@@ -2,7 +2,7 @@
 
 ## 現在の成果物
 
-このリポジトリには公開契約を記述したドキュメントと、Node.js向けのローカル実装があります。
+このリポジトリには公開契約を記述したドキュメントと、Node.js・Bun・Deno向けの実装があります。
 
 | 対象 | 状態 |
 |---|---|
@@ -22,8 +22,9 @@ Nodeのtype strippingは22.18で既定有効になった。設定例では5.8で
 [Nodeの公式説明](https://nodejs.org/docs/latest-v22.x/api/typescript.html)、[TypeScript 5.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html)を参照。
 
 Bun 1.3以上での実行も対応目標とする。Nodeと同じblueprint・実行セマンティクスを使う。
-Node.js 22.18・24とBun 1.3.5で実行テストを通しています。両ランタイムの全ての入力・周辺環境での同等性まで保証するものではありません。
-Deno 2.9.2では、配布tarballのCLIで設定なし・alias/plugin設定ありのmodule mockと復元を検証しています。Denoで全実行テストを通したという意味ではありません。
+Deno 2.9.2以上も対象とし、同じ公開API・blueprint・実行セマンティクスを使います。
+Node.js 22.18・24、Bun 1.3.5、Deno 2.9.2で、インストールした配布物のAPIとCLIを検証しています。全ての入力・周辺環境での同等性まで保証するものではありません。
+Deno 2.9.2では、配布tarballのCLIで設定なし・alias/plugin設定ありのmodule mockと復元も検証しています。Denoで全unitテストを通したという意味ではありません。
 
 ## TypeScriptの実行
 
@@ -40,6 +41,7 @@ Nodeでファイルを直接実行して `run(definition)` を呼ぶ場合は、
 入門例では `.ts` 拡張子、`import type`、`type: module` とNodeNextを使う。
 Nodeはtsconfigのpathsによる解決を行わない。
 CLIはViteの解決処理を使い、`.js` から `.ts`、拡張子省略、tsconfigの `paths` に対応します。
+BunとDenoでも、同じimportが同じ対象を読むことを受入条件にする。
 JSテストの同じtsconfig内のpathsも解決します。複雑なtsconfig継承は未検証です。
 [Node単体の型importとpathsの制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html)と、hanamaru側で実装する互換性を区別する。
 
