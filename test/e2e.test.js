@@ -17,8 +17,8 @@ const selected = runtimes[runtime]
 const repository = resolve('.')
 let workspace, consumer, cli
 
-function execute(command, args, cwd = consumer) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024 })
+function execute(command, args, cwd = consumer, timeout = 15_000) {
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout, maxBuffer: 1024 * 1024 })
   assert.ifError(result.error)
   assert.equal(result.signal, null, `${command} did not exit normally: ${result.stderr}`)
   return result
@@ -49,14 +49,12 @@ before(() => {
   const packed = execute('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', workspace], repository)
   assert.equal(packed.status, 0, packed.stderr)
   const [{ filename }] = JSON.parse(packed.stdout)
-  const installed = execute('npm', [
-    'install',
-    '--offline',
-    '--ignore-scripts',
-    '--no-audit',
-    '--no-fund',
-    join(workspace, filename),
-  ])
+  const installed = execute(
+    'npm',
+    ['install', '--ignore-scripts', '--no-audit', '--no-fund', join(workspace, filename)],
+    consumer,
+    120_000,
+  )
   assert.equal(installed.status, 0, installed.stderr)
   const packageDirectory = join(consumer, 'node_modules/hanamaru')
   const manifest = JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8'))
