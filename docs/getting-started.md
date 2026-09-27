@@ -127,17 +127,19 @@ export const calls = new Test()
 
 ## middlewareから値を渡す
 
+<!-- example: docs/examples/context.test.ts -->
 ```ts
 import { Test, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
-export const addition = new Test()
+export const contextAddition = new Test()
   .target(add)
   .use(middleware(async (_, next) => next({ a: 1, b: 2, expected: 3 })))
   .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, ctx.b])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/context.test.ts](examples/context.test.ts)
 
 middlewareは各ケースの各試行で実行します。`next(fields)` に渡した型が `argsFrom` と `e.ctx` に伝わります。
 資源の取得と解放を同じ場所に書く場合は、nextをtry / finallyで囲みます。詳しくは[middleware](./middleware.md)を参照してください。

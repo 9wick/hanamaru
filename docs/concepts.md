@@ -5,13 +5,18 @@ hanamaruは、Honoのように小さなAPIをつないで、書いた内容か�
 
 ## まず、テストを書くだけでよい
 
+<!-- example: docs/examples/math.test.ts -->
 ```ts
-new Test()
+import { Test } from 'hanamaru'
+import { add } from './math.ts'
+
+export const addition = new Test()
   .target(add)
-  .it('2つの数を足す', t => t
-    .args(1, 2)
-    .expect(e => [e.result.toBe(3)]))
+  .it('2つの数を足す', t => t.args(1, 2).expect(e => [
+    e.result.toBe(3),
+  ]))
 ```
+出典: [docs/examples/math.test.ts](examples/math.test.ts)
 
 ケースには人が読む名前を付け、対象には実際の関数を渡します。
 モックも実際のオブジェクトとメソッド名で指定します。
@@ -47,6 +52,7 @@ flow内部のstepは順序を持ちますが、flow全体は他の独立した�
 
 ## 戻り値・例外と呼び出しを並べる
 
+<!-- example: docs/examples/it-builder.test.ts#expectations -->
 ```ts
 .expect(e => [
   e.result.toEqual({ id: 'u1' }),
@@ -55,6 +61,7 @@ flow内部のstepは順序を持ちますが、flow全体は他の独立した�
   call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
+出典: [docs/examples/it-builder.test.ts](examples/it-builder.test.ts)
 
 どちらもコールバックから条件の配列を返す形です。
 expectCallsは「どう呼ばれるべきか」を表し、mockは「どう振る舞いを置き換えるか」を表します。
