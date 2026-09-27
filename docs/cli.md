@@ -1,7 +1,7 @@
 # CLIと設定ファイル
 
 CLIは、テストファイルの読込・完成したテストの収集・実行・結果表示を行う入口である。
-ここに記載するコマンドは設計仕様。ランナー実装はまだない。
+CLIの実装は `src/cli.js` にあります。`npm run build` 後は `node dist/cli.js` で起動できます。
 
 ```text
 hanamaru [files...] [options]
@@ -72,6 +72,35 @@ export default defineConfig({
 includeの既定値は `['**/*.{test,spec}.ts']`、excludeの既定値は `['**/node_modules/**', '**/dist/**']` とする。
 CLI引数は設定値を上書きする。明示ファイルはinclude/excludeによる探索を行わず、指定順ではなくパス順に正規化する。
 設定ファイルも通常のTypeScriptモジュールとして読む。
+
+### Viteの設定
+
+JS/TSの変換とモジュールの読込はCLIが内部で行います。設定ファイル・事前ビルド・loaderの指定は不要です。
+aliasや変換プラグインが必要な場合は、`hanamaru.config.ts` の `vite` にViteの設定を渡します。
+
+```ts
+import { defineConfig } from 'hanamaru'
+
+export default defineConfig({
+  vite: {
+    resolve: {
+      alias: { '@app': new URL('./src', import.meta.url).pathname },
+    },
+    plugins: [],
+  },
+})
+```
+
+既存のVite設定を使う場合も、このファイルからimportして `vite` に渡せます。
+`vite.config.*` は自動では読みません。関数形式の既存設定は呼び出した結果のオブジェクトを渡します。
+`vite.root` の既定値は実行ディレクトリです。テスト探索のinclude/excludeはhanamaru側の設定です。
+`vite.configFile`、watch、HMR、HTTPサーバーの起動はCLIが管理します。
+プラグインは収集側で実行し、同じ変換結果を実行workerへ渡します。
+設定やプラグインのエラーは収集エラー（コード2）として報告します。
+
+Viteはhanamaruの依存として同梱されるため、利用者側でのViteの追加インストールは不要です。
+独自の変換プラグインが必要な形式では、そのプラグインをプロジェクトに追加して `vite.plugins` へ渡します。
+CLIは型チェックを行いません。
 
 ## 時間制限
 

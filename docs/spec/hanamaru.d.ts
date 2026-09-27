@@ -477,6 +477,7 @@ export interface RunOptions {
 }
 export declare function run(test: TestDefinition | readonly TestDefinition[], options?: RunOptions): Promise<RunResult>
 export interface Config {
+  readonly vite?: import('@hanamaru/vite').UserConfig
   readonly include?: readonly string[]
   readonly exclude?: readonly string[]
   readonly reporter?: 'pretty' | 'json'

@@ -194,12 +194,13 @@ expectは現在の書き方と実行時のコンテキストを保つため、bl
 
 ## 現在の状態
 
-READMEとドキュメントは、実装する公開契約です。ビルダー・ランナー・CLIは未実装です。
-このリポジトリでは、[型契約](./docs/spec/hanamaru.d.ts)と[サンプル](./docs/examples/)を次のコマンドで検証できます。
+READMEとドキュメントは公開契約です。ビルダー・ランナー・CLIのローカル実装と、[型契約](./docs/spec/hanamaru.d.ts)・[サンプル](./docs/examples/)を次のコマンドで検証できます。
 
 ```console
-tsc -p docs/spec/tsconfig.json
-python3 scripts/check-docs.py
+npm run check
+node dist/cli.js docs/examples/math.test.ts
 ```
 
-実行時依存0を目標とし、型チェックにはTypeScriptを使います。
+`npm run lint` はOxlint、`npm run format:check` と `npm run format` はOxfmt、`npm run build` はtsdownをVite+経由で実行します。型チェックはTypeScript 5.8、実行テストはNode標準のテストランナーを使います。
+
+実行時依存は0です。Node.js 22.18・24とBun 1.3.5で実行テストを確認しています。ローカルtarballのインストールとCLI起動も確認済みです。公開npmレジストリへの配布は未検証です。

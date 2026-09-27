@@ -2,19 +2,18 @@
 
 ## 現在の成果物
 
-このリポジトリはドキュメントを先に作っている段階である。
-READMEとAPIページは、実装する公開契約を記述している。
+このリポジトリには公開契約を記述したドキュメントと、Node.js向けのローカル実装があります。
 
 | 対象 | 状態 |
 |---|---|
 | ビルダー・プラグイン向けblueprint・実行のAPI仕様 | 文書化済み |
 | 公開APIの設計用型契約 | `docs/spec/hanamaru.d.ts` |
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
-| ビルダー・ランナー・CLIの実装 | 未実装 |
-| npmパッケージのインストールと実行 | このリポジトリでは未検証 |
-| モックの復元、middleware、失敗集約等の実行時保証 | 実装後に検証する契約 |
+| ビルダー・ランナー・CLIの実装 | `src/` に実装。`npm test` で実行テストを検証 |
+| npmパッケージのインストールと実行 | ローカルtarballのインストール・型解決・CLI起動を確認。公開npmレジストリへの配布は未検証 |
+| モックの復元、middleware、失敗集約等の実行時保証 | 実行テストで主な経路を検証。全ての入力・環境は未検証 |
 
-型検証が通ることは、実行時セマンティクスの実装が存在することを意味しない。
+型検証と実行テストは別々に実施します。`npm run check` は型・lint・format・実行・文書を検証し、tsdownで配布物をビルドします。`npm run build` でもビルドできます。
 
 ## 対応する環境
 
@@ -23,14 +22,15 @@ Nodeのtype strippingは22.18で既定有効になった。設定例では5.8で
 [Nodeの公式説明](https://nodejs.org/docs/latest-v22.x/api/typescript.html)、[TypeScript 5.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html)を参照。
 
 Bun 1.3以上での実行も対応目標とする。Nodeと同じblueprint・実行セマンティクスを使う。
-最低バージョンでの動作とNode/Bun間の同等性は、ランナー実装後に検証する。現時点の対応実績とは区別する。
+Node.js 22.18・24とBun 1.3.5で実行テストを通しています。両ランタイムの全ての入力・周辺環境での同等性まで保証するものではありません。
+Deno 2.9.2では、配布tarballのCLIで設定なし・alias/plugin設定ありのmodule mockと復元を検証しています。Denoで全実行テストを通したという意味ではありません。
 
 ## TypeScriptの実行
 
-Nodeのネイティブtype strippingを使い、ランタイムにトランスパイラを同梱しない方針。
-`enum`、値を持つnamespace、parameter properties、`import =` のように変換を必要とする構文は使わない。
-`.tsx` もこの実行方式の対象外。テストから読み込む対象コードにも同じ条件がかかる。
-詳細は[Nodeの構文制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html#typescript-features)を参照。
+CLIは内蔵のViteでTypeScriptを変換して実行します。必要な変換設定・プラグインは
+[hanamaru configのvite](./cli.md#viteの設定)で指定できます。型チェックは行いません。
+Nodeでファイルを直接実行して `run(definition)` を呼ぶ場合は、
+[Nodeの構文制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html#typescript-features)に従います。
 
 `erasableSyntaxOnly` だけで全てのランタイム差を防げるとはしない。
 対象ランタイムでの実行確認も必要になる。
@@ -39,9 +39,8 @@ Nodeのネイティブtype strippingを使い、ランタイムにトランス�
 
 入門例では `.ts` 拡張子、`import type`、`type: module` とNodeNextを使う。
 Nodeはtsconfigのpathsによる解決を行わない。
-`.js` から `.ts` への置換、拡張子省略、pathsによるエイリアスは、Node向けの解決処理で吸収する設計目標である。
-Bunではランタイムの解決を使い、同じimportが同じ対象を読むことを受入条件にする。
-これらの解決処理は未実装・未検証なので、入門例はネイティブに解決できる `.ts` 形式を使う。
+CLIはViteの解決処理を使い、`.js` から `.ts`、拡張子省略、tsconfigの `paths` に対応します。
+JSテストの同じtsconfig内のpathsも解決します。複雑なtsconfig継承は未検証です。
 [Node単体の型importとpathsの制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html)と、hanamaru側で実装する互換性を区別する。
 
 Nodeはnode_modules内のTypeScript実行も制限するため、配布パッケージはJavaScriptと型定義を含む形を想定する。
@@ -74,9 +73,14 @@ finally内の早すぎる解放を型で防ぐことはできない。後処理�
 
 ## モックと呼び出し記録の範囲
 
-両方ともオブジェクトのメソッド差し替えに限定する。モジュールモック、クロージャ内部の参照の置換は提供しない。
-プロパティを経由せず保存済みの関数参照を呼ぶコードは、そのプロパティを差し替えても変わらない。
-モックのために依存の渡し方を整理する必要がある場合がある。
+CLIでは、通常オブジェクトのメソッドと、module namespaceの関数exportを差し替え・記録できます。
+直接importやimport後に保存したmoduleの関数参照も対象です。
+同一module内のローカル参照、通常オブジェクトから保存済みのメソッド参照、
+Viteで外部化したmodule内部のimportは置き換えません。
+CommonJSはランタイム標準で読み込みます。ESMからimportした関数exportは対象ですが、CommonJS内部のrequireには介入しません。
+Viteの変換を経由します。native ESMと全ての評価順序・循環依存で同等になることまでは検証していません。
+`run(definition)` は既読の定義を実行するため、module namespaceの差し替えはCLIを使います。
+[モックの範囲](./api-mock.md#差し替えの範囲)を参照してください。
 
 ## ケースの独立性
 
@@ -95,7 +99,7 @@ process.env、module state、global、filesystem、外部DB等の利用者側の
 宣言位置の自動取得、構造化した失敗、各試行の結果、timeout・retry、each、mock sequence、nthの呼び出し条件を含めます。
 timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継承・上書きします。middlewareの前処理期限・後処理期限は `middleware(fn, { timeout })` に持たせます。
 標準CLIは期限超過後の停止を保証し、run(test)単独は同一プロセスの処理と後始末を待ちます。
-未終了の処理・未完了の復元を次ケースへ持ち越しません。実装とランタイム検証はこれからです。
+未終了の処理・未完了の復元を次ケースへ持ち越しません。CLIは猶予超過後にworkerを終了し、得られた結果を中断・後処理未完了として報告します。
 
 ## 初版の実行器に含めないもの
 
@@ -111,4 +115,4 @@ timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継
 
 これらは標準の提供範囲であり、プラグインによるblueprintの利用方法を制限するものではありません。
 expectの事前構造化は書き心地を保つ方式が未決です。初版は`e.ctx`を含む現行の書き方と遅延評価を契約にします。
-実行時依存0は実装目標。TypeScript等の開発依存まで0という意味ではない。
+CLIの変換・実行にはVite等の実行時依存を含めます。利用者に変換器やloaderの手動起動は要求しません。
