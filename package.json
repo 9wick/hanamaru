@@ -18,7 +18,8 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json",
-    "test": "npm run build && node --test test/*.test.js",
+    "test": "npm run build && node --test test/*.test.js && vp test run --project unit",
+    "test:unit": "vp test run --project unit",
     "test:runtime": "npm run build && node --test test/runtime.test.js",
     "test:cli": "npm run build && node --test test/cli.test.js",
     "test:e2e": "npm run build && node --test test/e2e.test.js",
@@ -38,7 +39,8 @@
     "@typescript-eslint/parser": "^8.70.1",
     "eslint": "^10.11.0",
     "typescript": "5.8.3",
-    "vite-plus": "1.0.0-rc.0"
+    "vite-plus": "1.0.0-rc.0",
+    "vitest": "5.0.1"
   },
   "dependencies": {
     "@hanamaru/vite": "npm:vite@8.3.0",

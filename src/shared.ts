@@ -3,9 +3,10 @@ import type { Value } from './value.js'
 import type { AnyFn, ExecutionConfig, ResolvedExecutionConfig } from './api.js'
 import type { Fields } from './internal.js'
 import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 const implementationRoot = dirname(fileURLToPath(import.meta.url))
+const testFile = /\.(test|spec)\.[cm]?[jt]s$/
 
 export const definitionTag = Symbol('hanamaru definition')
 export const middlewareTag = Symbol('hanamaru middleware')
@@ -30,7 +31,9 @@ export function location() {
     if (!match) continue
     let file = match[1]
     if (file.startsWith('file://')) file = fileURLToPath(file)
-    if (file.startsWith(`${implementationRoot}/`) || file.startsWith('node:')) continue
+    // hanamaru自身の実装フレームは飛ばすが、実装と同じ場所に置いたテストファイルは利用者側の宣言位置として扱う。
+    const ownImplementation = file.startsWith(`${implementationRoot}/`) && !testFile.test(basename(file))
+    if (ownImplementation || file.startsWith('node:')) continue
     return { file, line: Number(match[2]), column: Number(match[3]) }
   }
   throw new Error('Cannot determine declaration location')
