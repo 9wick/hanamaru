@@ -2,7 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ESLint } from 'eslint'
 
-const eslint = new ESLint()
+// lintText replaces a virtual file repeatedly; CI single-run programs read the disk version.
+const eslint = new ESLint({
+  overrideConfig: [
+    {
+      files: ['src/**/*.ts'],
+      languageOptions: { parserOptions: { disallowAutomaticSingleRunInference: true } },
+    },
+  ],
+})
 const syntaxFile = 'test/fixtures/lint-sample.ts'
 const implementationFile = 'src/value.ts'
 const messages = async (code, filePath = syntaxFile) => (await eslint.lintText(code, { filePath }))[0].messages
