@@ -1,6 +1,57 @@
+import type { Value } from './value.js'
+import { valueOf, invoke, arrayValue, functionValue, required, property } from './value.js'
+import * as v from 'valibot'
+import { assertionReferenceSchema, failureSchema } from './schemas.js'
+import { finalizeRun } from './result.js'
+import type {
+  TestDefinition,
+  RunOptions,
+  RunResult,
+  ExecutionConfig,
+  SourceLocation,
+  BehaviorBlueprint,
+  ExecutionPhase,
+  AssertionResult,
+  AssertionReference,
+  Failure,
+  TargetOutcome,
+  GroupMiddlewareFailure,
+} from './api.js'
+import type {
+  RuntimeBlueprint,
+  RuntimeMock,
+  RuntimeCallAssertion,
+  RuntimeValueAssertion,
+  RuntimeAssertion,
+  RuntimeTarget,
+  RuntimeMiddleware,
+  RuntimeCase,
+  CaseBlueprint,
+  ExecutionNode,
+  SuiteNode,
+  GroupNode,
+  Frame,
+  Fields,
+  Stage,
+  Reason,
+  MutableAttempt,
+  MutableCaseResult,
+  MutableNodeResult,
+  MutableGroupResult,
+  MutableGroupMiddleware,
+  MutableRunResult,
+  RunState,
+  AttemptState,
+  InternalRunOptions,
+  Executor,
+  Plan,
+  AttemptReply,
+  GroupReply,
+} from './internal.js'
+import { errorMessage } from './shared.js'
 import { equal, matchObject } from './compare.js'
 import { diagnostic } from './diagnostic.js'
-import { isDefinition, validateAssertion } from './definition.js'
+import { DefinitionBuilder, isDefinition, validateAssertion, checkedAssertion, checkedCall } from './definition.js'
 import { configWith, methodValue, middlewareTag, plainFields, positive, resultTag, retryCount } from './shared.js'
 
 const now = () => performance.now()
@@ -10,7 +61,16 @@ class CaseFailed extends Error {
   }
 }
 class MiddlewareFault extends Error {
-  constructor(cause, stage, kind = 'execution', timeoutMs = undefined) {
+  override cause: Value
+  stage: 'before' | 'after' | 'contract'
+  kind: 'execution' | 'timeout'
+  timeoutMs: number | undefined
+  constructor(
+    cause: Value,
+    stage: 'before' | 'after' | 'contract',
+    kind: 'execution' | 'timeout' = 'execution',
+    timeoutMs?: number,
+  ) {
     super(kind === 'timeout' ? `middleware ${stage} exceeded ${timeoutMs}ms` : `middleware ${stage} failed`)
     this.cause = cause
     this.stage = stage
@@ -19,17 +79,18 @@ class MiddlewareFault extends Error {
   }
 }
 class CleanupFault extends Error {
-  constructor(errors) {
+  errors: Value[]
+  constructor(errors: Value[]) {
     super('cleanup failed')
     this.errors = errors
   }
 }
-function validConfig(config) {
+function validConfig(config: ExecutionConfig) {
   if (!config || typeof config !== 'object') throw new TypeError('invalid execution config')
   if (config.timeout !== undefined) positive(config.timeout, 'timeout')
   if (config.retry !== undefined) retryCount(config.retry)
 }
-function validOrigin(origin) {
+function validOrigin(origin: SourceLocation) {
   if (
     !origin ||
     typeof origin.file !== 'string' ||
@@ -40,18 +101,18 @@ function validOrigin(origin) {
   )
     throw new TypeError('invalid source location')
 }
-function validBehavior(value) {
+function validBehavior(value: BehaviorBlueprint) {
   if (!value || typeof value !== 'object') throw new TypeError('invalid mock behavior')
   if (value.kind === 'sequence') {
     if (!Array.isArray(value.once) || !value.once.length) throw new TypeError('empty mock sequence')
     value.once.forEach(validBehavior)
     validBehavior(value.fallback)
-    if (value.fallback.kind === 'sequence') throw new TypeError('nested mock sequence')
+    if (property(value.fallback, 'kind') === 'sequence') throw new TypeError('nested mock sequence')
   } else if (!['returns', 'resolves', 'throws', 'rejects', 'callsFake'].includes(value.kind))
     throw new TypeError('invalid mock action')
   else if (value.kind === 'callsFake' && typeof value.fn !== 'function') throw new TypeError('invalid mock fake')
 }
-function validMocks(mocks) {
+function validMocks(mocks: RuntimeMock[]) {
   if (!Array.isArray(mocks)) throw new TypeError('invalid mocks')
   for (const mock of mocks) {
     if (!mock || typeof mock.key !== 'string') throw new TypeError('invalid mock target')
@@ -59,9 +120,9 @@ function validMocks(mocks) {
     validBehavior(mock.behavior)
   }
 }
-function validCalls(calls) {
+function validCalls(calls: readonly RuntimeCallAssertion[]) {
   if (!Array.isArray(calls)) throw new TypeError('invalid call conditions')
-  for (const call of calls) {
+  for (const call of arrayValue(calls).map(checkedCall)) {
     if (!validateAssertion(call) || call.subject !== 'call' || typeof call.key !== 'string')
       throw new TypeError('invalid call condition')
     methodValue(call.object, call.key)
@@ -71,7 +132,7 @@ function validCalls(calls) {
       throw new TypeError('invalid call count')
   }
 }
-function validateBlueprint(bp, ancestors = new Set()) {
+function validateBlueprint(bp: RuntimeBlueprint, ancestors = new Set<RuntimeBlueprint>()) {
   if (!bp || typeof bp !== 'object' || bp.version !== 1 || !['test', 'group', 'definition'].includes(bp.kind))
     throw new TypeError('invalid blueprint')
   if (ancestors.has(bp)) throw new TypeError('cyclic blueprint')
@@ -114,16 +175,16 @@ function validateBlueprint(bp, ancestors = new Set()) {
         throw new TypeError('invalid group middleware')
       if (bp.middleware?.timeout !== undefined) positive(bp.middleware.timeout, 'middleware timeout')
     }
-    for (const entry of bp.children) {
-      if (bp.kind === 'group') {
+    if (bp.kind === 'group')
+      for (const entry of bp.children) {
         validOrigin(entry.origin)
         validateBlueprint(entry.blueprint, ancestors)
-      } else validateBlueprint(entry, ancestors)
-    }
+      }
+    else for (const entry of bp.children) validateBlueprint(entry, ancestors)
   }
   ancestors.delete(bp)
 }
-function overlayMocks(base, own) {
+function overlayMocks(base: RuntimeMock[], own: RuntimeMock[]) {
   const merged = [...base]
   for (const mock of own) {
     const index = merged.findIndex((x) => x.object === mock.object && x.key === mock.key)
@@ -132,7 +193,13 @@ function overlayMocks(base, own) {
   }
   return merged
 }
-function expand(bp, config, mocks, frames, entryOrigin) {
+function expand(
+  bp: RuntimeBlueprint,
+  config: import('./api.js').ResolvedExecutionConfig,
+  mocks: RuntimeMock[],
+  frames: Frame[],
+  entryOrigin: SourceLocation | null,
+): ExecutionNode[] {
   const settings = configWith(config, bp.config)
   const currentMocks = overlayMocks(mocks, bp.mocks)
   const currentFrames = [...frames, { steps: bp.steps, fields: {} }]
@@ -166,11 +233,11 @@ function expand(bp, config, mocks, frames, entryOrigin) {
     },
   ]
 }
-function allCases(nodes) {
+function allCases(nodes: ExecutionNode[]): CaseBlueprint[] {
   return nodes.flatMap((node) => (node.kind === 'test' ? node.bp.cases : allCases(node.children)))
 }
-function filterNodes(nodes, text) {
-  return nodes.flatMap((node, originalIndex) => {
+function filterNodes(nodes: ExecutionNode[], text: string): ExecutionNode[] {
+  return nodes.flatMap<ExecutionNode>((node, originalIndex) => {
     if (node.kind === 'test') {
       const cases = node.bp.cases.flatMap((item, index) =>
         item.name.includes(text) ? [{ ...item, originalIndex: index }] : [],
@@ -181,21 +248,31 @@ function filterNodes(nodes, text) {
     return children.length ? [{ ...node, originalIndex, children }] : []
   })
 }
-function callReference(condition, index) {
+function callReference(condition: RuntimeCallAssertion, index: number): AssertionReference {
   return { index, source: 'expectCalls', subject: 'call', key: condition.key, matcher: condition.check.matcher }
 }
-function expectationReference(condition, index) {
-  return { index, source: 'expect', subject: condition.subject, matcher: condition.check.matcher }
+function expectationReference(condition: RuntimeValueAssertion, index: number): AssertionReference {
+  return v.parse(assertionReferenceSchema, {
+    index,
+    source: 'expect',
+    subject: condition.subject,
+    matcher: condition.check.matcher,
+  })
 }
-function failure(kind, phase, message, more) {
-  return { kind, phase, message, ...more }
+function failure<K extends Failure['kind']>(
+  kind: K,
+  phase: Extract<Failure, { kind: K }>['phase'],
+  message: string,
+  more: Omit<Extract<Failure, { kind: K }>, 'kind' | 'phase' | 'message'>,
+): Failure {
+  return v.parse(failureSchema, { kind, phase, message, ...more })
 }
-function executableMode(item, only) {
+function executableMode(item: CaseBlueprint, only: boolean) {
   if (item.mode === 'todo') return 'todo'
   if (item.mode === 'skip' || (only && item.mode !== 'only')) return 'skipped'
   return null
 }
-function cancelledTree(node, path, only) {
+function cancelledTree(node: ExecutionNode, path: number[], only: boolean): MutableNodeResult {
   if (node.kind === 'test')
     return {
       kind: 'test',
@@ -221,17 +298,25 @@ function cancelledTree(node, path, only) {
       : null,
     path,
     children: node.children.map((child, index) => ({
-      origin: child.entryOrigin,
+      origin: required(child.entryOrigin),
       result: cancelledTree(child, [...path, child.originalIndex ?? index], only),
     })),
   }
 }
-async function withMiddleware(step, ctx, body, onTimeout, onStage) {
+async function withMiddleware<T>(
+  step: RuntimeMiddleware,
+  ctx: Readonly<Fields>,
+  body: (fields: Fields) => Promise<T>,
+  onTimeout?: () => void,
+  onStage?: (stage: Stage, timeoutMs: number) => void,
+): Promise<T | undefined> {
   let calls = 0
-  let stage = 'before'
-  let downstreamError,
+  const stage: { value: 'before' | 'inside' | 'after' } = { value: 'before' }
+  let downstreamError: Value,
     hasDownstreamError = false
-  let innerResult, nextPromise, nextToken
+  let innerResult: T | undefined,
+    nextPromise: Promise<import('./internal.js').RuntimeMiddlewareResult> | undefined,
+    nextToken: import('./internal.js').RuntimeMiddlewareResult | undefined
   let timedOut = false
   const timeoutMs = step.timeout ?? 10_000
   let timer = setTimeout(() => {
@@ -240,29 +325,29 @@ async function withMiddleware(step, ctx, body, onTimeout, onStage) {
   }, timeoutMs)
   const start = now()
   onStage?.('before', timeoutMs)
-  const next = (fields) => {
+  const next = (fields?: object) => {
     calls++
     if (calls !== 1) throw new MiddlewareFault(new Error('next called more than once'), 'contract')
     clearTimeout(timer)
     if (timedOut || now() - start > timeoutMs)
       throw new MiddlewareFault(new Error('middleware before timed out'), 'before', 'timeout', timeoutMs)
-    stage = 'inside'
+    stage.value = 'inside'
     onStage?.('inside', timeoutMs)
     let extra
     try {
       extra = plainFields(fields)
     } catch (error) {
-      throw new MiddlewareFault(error, 'contract')
+      throw new MiddlewareFault(valueOf(error), 'contract')
     }
     nextPromise = (async () => {
       try {
         innerResult = await body(extra)
       } catch (error) {
-        downstreamError = error
+        downstreamError = valueOf(error)
         hasDownstreamError = true
         throw error
       }
-      stage = 'after'
+      stage.value = 'after'
       timedOut = false
       timer = setTimeout(() => {
         timedOut = true
@@ -280,27 +365,27 @@ async function withMiddleware(step, ctx, body, onTimeout, onStage) {
       thrown,
       threw = false
     try {
-      token = await step.run(ctx, next)
+      token = await invoke(step.run, undefined, [ctx, next])
     } catch (error) {
       thrown = error
       threw = true
     }
-    if (nextPromise && stage === 'inside') {
+    if (nextPromise && stage.value === 'inside') {
       try {
         await nextPromise
       } catch (error) {
         if (!hasDownstreamError) {
-          downstreamError = error
+          downstreamError = valueOf(error)
           hasDownstreamError = true
         }
       }
     }
     clearTimeout(timer)
     if (threw) throw thrown
-    if (timedOut || (stage === 'before' && now() - start > timeoutMs))
+    if (timedOut || (stage.value === 'before' && now() - start > timeoutMs))
       throw new MiddlewareFault(
         new Error('middleware timed out'),
-        stage === 'before' ? 'before' : 'after',
+        stage.value === 'before' ? 'before' : 'after',
         'timeout',
         timeoutMs,
       )
@@ -312,13 +397,13 @@ async function withMiddleware(step, ctx, body, onTimeout, onStage) {
     clearTimeout(timer)
     if (hasDownstreamError && error === downstreamError) throw error
     if (error instanceof MiddlewareFault) throw error
-    if (hasDownstreamError) throw new CleanupFault([downstreamError, error])
-    throw new MiddlewareFault(error, stage === 'inside' ? 'after' : stage)
+    if (hasDownstreamError) throw new CleanupFault([downstreamError, valueOf(error)])
+    throw new MiddlewareFault(valueOf(error), stage.value === 'inside' ? 'after' : stage.value)
   } finally {
     onStage?.('end', timeoutMs)
   }
 }
-function executeAction(action, state, thisArg, args) {
+function executeAction(action: BehaviorBlueprint, state: { index: number }, thisArg: Value, args: Value[]): Value {
   const selected =
     action.kind === 'sequence'
       ? state.index < action.once.length
@@ -335,12 +420,12 @@ function executeAction(action, state, thisArg, args) {
     case 'rejects':
       return Promise.reject(selected.error)
     case 'callsFake':
-      return selected.fn.apply(thisArg, args)
+      return invoke(selected.fn, thisArg, args)
   }
 }
-function patchMethods(mocks, calls, target) {
-  const entries = [...mocks]
-  for (const call of calls)
+function patchMethods(mocks: RuntimeMock[], calls: readonly RuntimeCallAssertion[], target: RuntimeTarget) {
+  const entries: (Omit<RuntimeMock, 'behavior'> & { behavior: BehaviorBlueprint | null })[] = [...mocks]
+  for (const call of arrayValue(calls).map(checkedCall))
     if (!entries.some((x) => x.object === call.object && x.key === call.key))
       entries.push({ object: call.object, key: call.key, behavior: null })
   if (
@@ -350,8 +435,8 @@ function patchMethods(mocks, calls, target) {
     )
   )
     throw new TypeError('target method cannot be mocked')
-  const records = new Map(),
-    restore = []
+  const records = new Map<object, Map<string, Value[][]>>(),
+    restore: (() => Value | void)[] = []
   let recording = true
   try {
     for (const entry of entries) {
@@ -366,16 +451,16 @@ function patchMethods(mocks, calls, target) {
       )
         throw new TypeError(`method ${key} cannot be instrumented`)
       const state = { index: 0 }
-      const history = []
-      records.set(object, (records.get(object) ?? new Map()).set(key, history))
-      const wrapped = function (...args) {
+      const history: Value[][] = []
+      records.set(object, (records.get(object) ?? new Map<string, Value[][]>()).set(key, history))
+      const wrapped = function (this: Value, ...args: Value[]) {
         if (recording) history.push(args)
-        return entry.behavior ? executeAction(entry.behavior, state, this, args) : original.apply(this, args)
+        return entry.behavior ? executeAction(entry.behavior, state, this, args) : invoke(original, this, args)
       }
       if (own && !own.configurable) {
-        object[key] = wrapped
+        Reflect.set(object, key, wrapped)
         restore.push(() => {
-          object[key] = original
+          Reflect.set(object, key, original)
         })
       } else {
         Object.defineProperty(object, key, {
@@ -389,7 +474,7 @@ function patchMethods(mocks, calls, target) {
     }
   } catch (error) {
     const errors = restoreMethods(restore)
-    if (errors.length) throw new CleanupFault([error, ...errors])
+    if (errors.length) throw new CleanupFault([valueOf(error), ...errors])
     throw error
   }
   return {
@@ -400,17 +485,17 @@ function patchMethods(mocks, calls, target) {
     },
   }
 }
-function restoreMethods(actions) {
-  const errors = []
+function restoreMethods(actions: (() => Value | void)[]): Value[] {
+  const errors: Value[] = []
   for (const action of [...actions].reverse())
     try {
       if (action() === false) throw new Error('method restoration failed')
     } catch (error) {
-      errors.push(error)
+      errors.push(valueOf(error))
     }
   return errors
 }
-function checkCondition(condition, actual) {
+function checkCondition(condition: RuntimeValueAssertion, actual: Value) {
   const c = condition.check
   switch (c.matcher) {
     case 'toBe':
@@ -420,12 +505,13 @@ function checkCondition(condition, actual) {
     case 'toMatchObject':
       return matchObject(actual, c.expected)
     case 'toSatisfy': {
-      const result = c.predicate(actual)
-      if (result && typeof result.then === 'function') throw new TypeError('toSatisfy predicate must be synchronous')
+      const result = invoke(c.predicate, undefined, [actual])
+      if (result && typeof property(Object(result), 'then') === 'function')
+        throw new TypeError('toSatisfy predicate must be synchronous')
       return result === true
     }
     case 'toBeInstanceOf':
-      return actual instanceof c.ctor
+      return actual instanceof functionValue(c.ctor)
     case 'toThrow':
       if (!(actual instanceof Error)) return false
       return typeof c.message === 'string'
@@ -434,7 +520,7 @@ function checkCondition(condition, actual) {
   }
   return false
 }
-function checkCalls(condition, history) {
+function checkCalls(condition: RuntimeCallAssertion, history: Value[][]) {
   const c = condition.check
   switch (c.matcher) {
     case 'calledTimes':
@@ -450,20 +536,27 @@ function checkCalls(condition, history) {
   }
   return false
 }
-function snapshotExpected(condition) {
+function snapshotExpected(condition: RuntimeAssertion) {
   const check = condition.check
   if ('expected' in check) return diagnostic(check.expected)
   if ('args' in check) return diagnostic(check.args)
   if ('count' in check) return diagnostic(check.count)
   return diagnostic(check.matcher)
 }
-function evaluate(item, ctx, outcome, rawValue, records, failures, assertions) {
-  let expected = []
+function evaluate(
+  item: RuntimeCase,
+  ctx: Readonly<Fields>,
+  outcome: TargetOutcome,
+  rawValue: Value,
+  records: Map<object, Map<string, Value[][]>>,
+  failures: Failure[],
+  assertions: AssertionResult[],
+) {
+  let expected: readonly RuntimeValueAssertion[] = []
   if (item.expect) {
     try {
-      expected = item.expect.build(ctx)
+      expected = arrayValue(invoke(item.expect.build, undefined, [ctx])).map(checkedAssertion)
       if (
-        !Array.isArray(expected) ||
         !expected.length ||
         expected.some((x) => !validateAssertion(x) || !['result', 'error'].includes(x.subject)) ||
         new Set(expected.map((x) => x.subject)).size !== 1
@@ -547,28 +640,34 @@ function evaluate(item, ctx, outcome, rawValue, records, failures, assertions) {
     }
   }
 }
-function faultToFailure(error, phase = 'middleware') {
+function faultToFailure<T>(input: T, phase: ExecutionPhase = 'middleware'): Failure {
+  const error = valueOf(input)
   if (error instanceof MiddlewareFault)
     return error.kind === 'timeout'
       ? failure('timeout', phase, error.message, {
-          timeoutMs: error.timeoutMs,
+          timeoutMs: required(error.timeoutMs),
           cleanup: 'complete',
-          stage: error.stage,
+          ...(error.stage === 'contract' ? {} : { stage: error.stage }),
         })
       : failure('execution', phase, error.message, { cause: diagnostic(error.cause) })
-  return failure('execution', phase, String(error?.message ?? error), { cause: diagnostic(error) })
+  return failure('execution', phase, errorMessage(error), { cause: diagnostic(error) })
 }
-export async function executeAttempt(node, item, number, state) {
+export async function executeAttempt(
+  node: SuiteNode,
+  item: RuntimeCase,
+  number: number,
+  state: AttemptState,
+): Promise<AttemptReply> {
   const started = now()
   const config = configWith(node.config, item.config)
-  const failures = [],
-    assertions = []
-  let outcome = null,
-    activePhase = 'middleware',
-    timedOut = false,
-    timeoutPhase = null,
-    cleanup = 'complete',
-    retryable = true
+  const failures: Failure[] = [],
+    assertions: AssertionResult[] = []
+  let outcome: TargetOutcome | null = null
+  let activePhase: ExecutionPhase = 'middleware'
+  let timedOut = false
+  let timeoutPhase: ExecutionPhase | null = null
+  let cleanup: 'complete' | 'incomplete' = 'complete'
+  let retryable = true
   const timer = setTimeout(() => {
     timedOut = true
     timeoutPhase = activePhase
@@ -576,25 +675,28 @@ export async function executeAttempt(node, item, number, state) {
     if (state.activeAttempt) state.activeAttempt.phase = activePhase
     state.onTimeout?.()
   }, config.timeout)
-  let instruments
-  const core = async (ctx) => {
+  const core = async (ctx: Readonly<Fields>) => {
     if (timedOut) return
     activePhase = 'instrumentation'
-    instruments = patchMethods(overlayMocks(node.mocks, item.mocks), item.calls, node.bp.target)
+    const instruments = patchMethods(overlayMocks(node.mocks, item.mocks), item.calls, node.bp.target)
     let failed = false,
       originalError
     try {
       activePhase = 'args'
-      const args = item.args.kind === 'value' ? item.args.value : item.args.build(ctx)
+      const args = item.args.kind === 'value' ? item.args.value : arrayValue(invoke(item.args.build, undefined, [ctx]))
       if (!Array.isArray(args)) throw new TypeError('argsFrom must return an array')
       activePhase = 'target'
       let rawValue
       try {
         const target = node.bp.target
-        rawValue = await (target.kind === 'method' ? target.object[target.key](...args) : target.fn(...args))
+        rawValue = valueOf(
+          await (target.kind === 'method'
+            ? invoke(methodValue(target.object, target.key), target.object, args)
+            : invoke(target.fn, undefined, args)),
+        )
         outcome = { kind: 'return', value: diagnostic(rawValue) }
       } catch (error) {
-        rawValue = error
+        rawValue = valueOf(error)
         outcome = { kind: 'throw', value: diagnostic(error) }
       }
       instruments.stopRecording()
@@ -603,18 +705,18 @@ export async function executeAttempt(node, item, number, state) {
       if (failures.length) throw new CaseFailed()
     } catch (error) {
       failed = true
-      originalError = error
+      originalError = valueOf(error)
     }
     activePhase = 'cleanup'
     const errors = restoreMethods(instruments.restore)
     if (errors.length) throw new CleanupFault(failed ? [originalError, ...errors] : errors)
     if (failed) throw originalError
   }
-  const runFrame = async (index, ctx) => {
+  const runFrame = async (index: number, ctx: Fields): Promise<void> => {
     if (timedOut) return
     if (index === node.frames.length) return core(Object.freeze(ctx))
     const frame = node.frames[index]
-    const walkSteps = async (stepIndex, current) => {
+    const walkSteps = async (stepIndex: number, current: Fields): Promise<void> => {
       if (stepIndex === frame.steps.length) return runFrame(index + 1, { ...current, ...frame.fields })
       return withMiddleware(
         frame.steps[stepIndex],
@@ -656,7 +758,7 @@ export async function executeAttempt(node, item, number, state) {
     )
   }
   if (failures.some((x) => x.kind === 'timeout')) state.reason = 'timeout'
-  const result = {
+  const result: MutableAttempt = {
     attempt: number,
     status: failures.length ? 'failed' : state.reason === 'interrupted' ? 'cancelled' : 'passed',
     durationMs: now() - started,
@@ -670,12 +772,17 @@ export async function executeAttempt(node, item, number, state) {
 export function failChildren() {
   throw new CaseFailed()
 }
-export async function executeGroupMiddleware(node, body, state, onStage) {
+export async function executeGroupMiddleware(
+  node: GroupNode,
+  body: (fields: Fields) => Promise<void>,
+  state: AttemptState,
+  onStage: (stage: Stage, timeoutMs: number) => void,
+): Promise<GroupReply> {
   const started = now()
-  let middleware
+  let middleware: MutableGroupMiddleware
   try {
     await withMiddleware(
-      node.bp.middleware,
+      required(node.bp.middleware),
       Object.freeze(node.stable ?? {}),
       body,
       () => {
@@ -694,18 +801,16 @@ export async function executeGroupMiddleware(node, body, state, onStage) {
     const issues = (error instanceof CleanupFault ? error.errors : [error]).filter(
       (issue) => !(issue instanceof CaseFailed),
     )
-    const failures = issues.map((issue) =>
+    const failures = issues.map((issue): GroupMiddlewareFailure =>
       issue instanceof MiddlewareFault
-        ? {
-            kind: issue.kind === 'timeout' ? 'timeout' : 'execution',
-            phase: issue.stage,
-            message: issue.message,
-            ...(issue.kind === 'timeout' ? { timeoutMs: issue.timeoutMs } : { cause: diagnostic(issue.cause) }),
-          }
-        : { kind: 'execution', phase: 'after', message: String(issue?.message ?? issue), cause: diagnostic(issue) },
+        ? issue.kind === 'timeout'
+          ? { kind: 'timeout', phase: issue.stage, message: issue.message, timeoutMs: required(issue.timeoutMs) }
+          : { kind: 'execution', phase: issue.stage, message: issue.message, cause: diagnostic(issue.cause) }
+        : { kind: 'execution', phase: 'after', message: errorMessage(issue), cause: diagnostic(issue) },
     )
     if (failures.some((x) => x.kind === 'timeout')) state.reason = 'timeout'
-    else if (error instanceof CleanupFault || issues.some((x) => x.stage === 'after')) state.reason = 'cleanup-failed'
+    else if (error instanceof CleanupFault || issues.some((x) => x instanceof MiddlewareFault && x.stage === 'after'))
+      state.reason = 'cleanup-failed'
     const cleanup =
       error instanceof CleanupFault ||
       issues.some((issue) => issue instanceof MiddlewareFault && issue.stage === 'after' && issue.kind !== 'timeout')
@@ -715,9 +820,14 @@ export async function executeGroupMiddleware(node, body, state, onStage) {
   }
   return { middleware, reason: state.reason }
 }
-async function runNode(node, path, only, state) {
+async function runNode(
+  node: ExecutionNode,
+  path: number[],
+  only: boolean,
+  state: RunState,
+): Promise<MutableNodeResult> {
   if (node.kind === 'test') {
-    const cases = []
+    const cases: MutableCaseResult[] = []
     for (const [index, item] of node.bp.cases.entries()) {
       const casePath = [...path, item.originalIndex ?? index]
       const base = {
@@ -728,14 +838,14 @@ async function runNode(node, path, only, state) {
         config: configWith(node.config, item.config),
       }
       const mode = executableMode(item, only)
-      if (mode || state.reason) {
-        const value = { ...base, durationMs: 0, attempts: [], notRun: mode ?? 'cancelled' }
+      if (item.mode === 'todo' || mode || state.reason) {
+        const value: MutableCaseResult = { ...base, durationMs: 0, attempts: [], notRun: mode ?? 'cancelled' }
         cases.push(value)
         recordCase(state, value)
         continue
       }
       const started = now(),
-        attempts = []
+        attempts: MutableAttempt[] = []
       for (let number = 1; number <= base.config.retry + 1; number++) {
         state.activeAttempt = {
           path: casePath,
@@ -760,18 +870,25 @@ async function runNode(node, path, only, state) {
       cases.push(value)
       recordCase(state, value)
     }
-    const value = { kind: 'test', name: node.bp.name, path, cases }
+    const value: MutableNodeResult = { kind: 'test', name: node.bp.name, path, cases }
     recordNode(state, value)
     return value
   }
-  const result = { kind: 'group', name: node.bp.name, origin: node.bp.origin, middleware: null, path, children: [] }
-  const executeChildren = async (fields) => {
+  const result: MutableGroupResult = {
+    kind: 'group',
+    name: node.bp.name,
+    origin: node.bp.origin,
+    middleware: null,
+    path,
+    children: [],
+  }
+  const executeChildren = async (fields: Fields) => {
     const stable = { ...node.stable, ...fields }
     for (const [index, child] of node.children.entries()) {
       const frames = [...node.frames, { steps: [], fields }, ...child.frames.slice(node.frameCount)]
       const prepared = { ...child, stable, frames }
       result.children.push({
-        origin: child.entryOrigin,
+        origin: required(child.entryOrigin),
         result: state.reason
           ? cancelledTree(prepared, [...path, child.originalIndex ?? index], only)
           : await runNode(prepared, [...path, child.originalIndex ?? index], only, state),
@@ -819,10 +936,10 @@ async function runNode(node, path, only, state) {
     : await executeGroupMiddleware(node, executeChildren, state, (stage) => {
         if (stage === 'inside' || stage === 'end') state.onDeadline?.({ kind: 'end' })
         else {
-          state.activeGroup = { path, stage, started, timeoutMs: node.bp.middleware.timeout ?? 10_000 }
+          state.activeGroup = { path, stage, started, timeoutMs: required(node.bp.middleware).timeout ?? 10_000 }
           state.onDeadline?.({
             kind: 'start',
-            timeoutMs: node.bp.middleware.timeout ?? 10_000,
+            timeoutMs: required(node.bp.middleware).timeout ?? 10_000,
             result: snapshotRun(state, 'timeout'),
           })
         }
@@ -833,7 +950,7 @@ async function runNode(node, path, only, state) {
     for (let index = result.children.length; index < node.children.length; index++) {
       const child = node.children[index]
       result.children.push({
-        origin: child.entryOrigin,
+        origin: required(child.entryOrigin),
         result: cancelledTree(child, [...path, child.originalIndex ?? index], only),
       })
     }
@@ -842,7 +959,7 @@ async function runNode(node, path, only, state) {
   recordNode(state, result)
   return result
 }
-function resultFailed(nodes, failOnFlaky) {
+function resultFailed(nodes: MutableNodeResult[], failOnFlaky = false): boolean {
   for (const node of nodes) {
     if (node.kind === 'group') {
       if (
@@ -862,10 +979,10 @@ function resultFailed(nodes, failOnFlaky) {
   }
   return false
 }
-function samePath(left, right) {
+function samePath(left: number[], right: number[]) {
   return left.length === right.length && left.every((part, index) => part === right[index])
 }
-function findNode(nodes, path) {
+function findNode(nodes: MutableNodeResult[], path: number[]): MutableNodeResult | null {
   for (const node of nodes) {
     if (samePath(node.path, path)) return node
     if (node.kind === 'group') {
@@ -878,29 +995,30 @@ function findNode(nodes, path) {
   }
   return null
 }
-function recordNode(state, value) {
+function recordNode(state: RunState, value: MutableNodeResult) {
   const path = value.path
   if (path.length === 1) state.partial[state.partial.findIndex((node) => samePath(node.path, path))] = value
   else {
     const parent = findNode(state.partial, path.slice(0, -1))
-    const entry = parent?.children.find((child) => samePath(child.result.path, path))
+    const entry =
+      parent?.kind === 'group' ? parent.children.find((child) => samePath(child.result.path, path)) : undefined
     if (entry) entry.result = value
   }
   state.onProgress?.(snapshotRun(state, state.reason ?? 'interrupted'))
 }
-function recordCase(state, value) {
+function recordCase(state: RunState, value: MutableCaseResult) {
   const parent = findNode(state.partial, value.path.slice(0, -1))
-  const index = parent?.cases.findIndex((item) => samePath(item.path, value.path)) ?? -1
-  if (index >= 0) parent.cases[index] = value
+  const index = parent?.kind === 'test' ? parent.cases.findIndex((item) => samePath(item.path, value.path)) : -1
+  if (parent?.kind === 'test' && index >= 0) parent.cases[index] = value
   state.onProgress?.(snapshotRun(state, state.reason ?? 'interrupted'))
 }
-function snapshotRun(state, reason) {
+function snapshotRun(state: RunState, reason: Reason): MutableRunResult {
   const tests = structuredClone(state.partial)
   if (state.activeAttempt) {
     const { path, base, attempts, number, started, timeoutMs, phase } = state.activeAttempt
     const parent = findNode(tests, path.slice(0, -1))
-    const index = parent?.cases.findIndex((item) => samePath(item.path, path)) ?? -1
-    if (index >= 0)
+    const index = parent?.kind === 'test' ? parent.cases.findIndex((item) => samePath(item.path, path)) : -1
+    if (parent?.kind === 'test' && index >= 0)
       parent.cases[index] = {
         ...base,
         durationMs: now() - started,
@@ -928,7 +1046,7 @@ function snapshotRun(state, reason) {
   } else if (reason === 'timeout' && state.activeGroup) {
     const { path, stage, started, timeoutMs } = state.activeGroup
     const group = findNode(tests, path)
-    if (group)
+    if (group?.kind === 'group')
       group.middleware = {
         status: 'failed',
         durationMs: now() - started,
@@ -945,15 +1063,18 @@ function snapshotRun(state, reason) {
     tests,
   }
 }
-export function collectBlueprints(input) {
-  const definitions = Array.isArray(input) ? input : [input]
+export function collectBlueprints(input: Value): RuntimeBlueprint[] {
+  const definitions = Array.isArray(input) ? arrayValue(input) : [input]
   if (!definitions.length || definitions.some((x) => !isDefinition(x)))
     throw new TypeError('run requires completed definitions')
-  const blueprints = definitions.map((def) => def.blueprint())
+  const blueprints = definitions.map((def: Value) => {
+    if (!isDefinition(def)) throw new TypeError('run requires completed definitions')
+    return v.parse(v.instance(DefinitionBuilder), def).blueprint()
+  })
   blueprints.forEach((bp) => validateBlueprint(bp))
   return blueprints
 }
-export function createPlan(blueprints, options = {}) {
+export function createPlan(blueprints: RuntimeBlueprint[], options: InternalRunOptions = {}): Plan {
   const allNodes = blueprints.flatMap((bp) => expand(bp, { timeout: 5_000, retry: 0 }, [], [], null))
   const unfilteredOnly = allCases(allNodes).some((item) => item.mode === 'only')
   if (unfilteredOnly && options.forbidOnly) throw new TypeError('only is forbidden')
@@ -963,18 +1084,25 @@ export function createPlan(blueprints, options = {}) {
   return { blueprints, allNodes, nodes, only }
 }
 let active = false
-export async function run(input, options = {}) {
-  return runActive(() => createPlan(collectBlueprints(input), options), options)
+export async function run(
+  input: TestDefinition | readonly TestDefinition[],
+  options: RunOptions = {},
+): Promise<RunResult> {
+  return finalizeRun(await runActive(() => createPlan(collectBlueprints(input), options), options))
 }
-export async function runPlan(plan, options = {}, executor = null) {
+export async function runPlan(plan: Plan, options: InternalRunOptions = {}, executor: Executor | null = null) {
   return runActive(() => plan, options, executor)
 }
-async function runActive(buildPlan, options, executor = null) {
+async function runActive(
+  buildPlan: () => Plan,
+  options: InternalRunOptions,
+  executor: Executor | null = null,
+): Promise<MutableRunResult> {
   if (active) throw new TypeError('a run is already active')
   active = true
   try {
     const { nodes, only } = buildPlan()
-    const state = {
+    const state: RunState = {
       reason: options.signal?.aborted ? 'interrupted' : null,
       partial: [],
       activeAttempt: null,
@@ -991,7 +1119,7 @@ async function runActive(buildPlan, options, executor = null) {
       if (state.reason !== 'timeout') state.reason = 'interrupted'
     }
     options.signal?.addEventListener('abort', interrupt)
-    const results = []
+    const results: MutableNodeResult[] = []
     try {
       for (const [index, node] of nodes.entries())
         results.push(

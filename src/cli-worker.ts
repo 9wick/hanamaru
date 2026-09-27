@@ -1,9 +1,16 @@
-import { parentPort, workerData } from 'node:worker_threads'
+import * as v from 'valibot'
+import { required, property } from './value.js'
+import { cliWorkerDataSchema, configSchema } from './schemas.js'
+import type { Value } from './value.js'
+import type { Config } from './api.js'
+import type { CliMessage, RootReference, InternalRunOptions } from './internal.js'
+import { errorStack } from './shared.js'
+import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import { globSync } from 'node:fs'
 import { resolve, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfigFromFile } from '@hanamaru/vite'
-import { Test, isDefinition } from './definition.js'
+import { Test, DefinitionBuilder, isDefinition } from './definition.js'
 import { collectBlueprints, createPlan, runPlan } from './runner.js'
 import { describeExecutionPlan } from './execution-plan.js'
 import { collectModulePreparation } from './module-reference.js'
@@ -12,21 +19,26 @@ import { positive } from './shared.js'
 import { createModuleCompiler } from './module-compiler.js'
 import { createModuleRuntime } from './module-runtime.js'
 
-for (const method of ['log', 'info', 'warn', 'error', 'debug'])
-  console[method] = (...values) => process.stderr.write(values.map(String).join(' ') + '\n')
-function send(value) {
-  parentPort.postMessage(value)
+if (!parentPort) throw new Error('collection requires a worker thread')
+const port = parentPort
+const workerData = v.parse(cliWorkerDataSchema, rawWorkerData)
+const consoleMethods: ('log' | 'info' | 'warn' | 'error' | 'debug')[] = ['log', 'info', 'warn', 'error', 'debug']
+for (const method of consoleMethods)
+  console[method] = (...values: Value[]) => process.stderr.write(values.map(String).join(' ') + '\n')
+function send(value: CliMessage) {
+  port.postMessage(value)
 }
 const controller = new AbortController()
-parentPort.on('message', (message) => {
-  if (message?.type === 'interrupt') controller.abort()
+port.on('message', (message) => {
+  if (property(message, 'type') === 'interrupt') controller.abort()
 })
-let compiler, runtime
-function importFile(file, timeout) {
+let compiler: Awaited<ReturnType<typeof createModuleCompiler>> | undefined
+let runtime: ReturnType<typeof createModuleRuntime> | undefined
+function importFile(file: string, timeout: number) {
   send({ type: 'loading', file, timeout })
-  return runtime.import(pathToFileURL(file).href)
+  return required(runtime).import(pathToFileURL(file).href)
 }
-function selectFiles(config) {
+function selectFiles(config: Config) {
   if (workerData.files.length) return [...new Set(workerData.files.map((file) => resolve(file)))].sort()
   const include = config.include ?? ['**/*.{test,spec}.ts']
   const exclude = config.exclude ?? ['**/node_modules/**', '**/dist/**']
@@ -40,26 +52,33 @@ async function collectAndRun() {
     positive(initialTimeout, 'collectionTimeout')
     const foundConfigs = [...globSync('hanamaru.config.{ts,js,mts,mjs}', { cwd: process.cwd() })].sort()
     const configPath = resolve(workerData.options.config ?? foundConfigs[0] ?? 'hanamaru.config.ts')
-    let config = {}
+    let config: Config = {}
     if (workerData.options.config || foundConfigs.length) {
       send({ type: 'loading', file: configPath, timeout: initialTimeout })
       const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, configPath, process.cwd(), 'silent')
-      config = loaded.config
+      if (!loaded) throw new Error(`cannot load config: ${configPath}`)
+      const viteConfig = property(loaded.config, 'vite')
+      if (
+        viteConfig !== undefined &&
+        (viteConfig === null || typeof viteConfig !== 'object' || Array.isArray(viteConfig))
+      )
+        throw new TypeError('vite must be a config object')
+      config = v.parse(configSchema, loaded.config)
     }
     const timeout = workerData.options.collectionTimeout ?? config.collectionTimeout ?? 30_000
     const shutdownGrace = workerData.options.shutdownGrace ?? config.shutdownGrace ?? 1_000
     positive(timeout, 'collectionTimeout')
     positive(shutdownGrace, 'shutdownGrace')
     const reporter = workerData.options.reporter ?? config.reporter ?? 'pretty'
-    if (!['pretty', 'json'].includes(reporter)) throw new TypeError('reporter must be pretty or json')
+    if (reporter !== 'pretty' && reporter !== 'json') throw new TypeError('reporter must be pretty or json')
     const files = selectFiles(config)
     if (!files.length) throw new TypeError('no test files matched')
     send({ type: 'loading', file: 'test runtime setup', timeout })
     compiler = await createModuleCompiler(config.vite)
     runtime = createModuleRuntime(compiler.invoke)
-    const definitions = [],
-      roots = [],
-      collected = new Set()
+    const definitions: Value[] = [],
+      roots: RootReference[] = [],
+      collected = new Set<object>()
     for (const file of files) {
       const module = await importFile(file, timeout)
       for (const name of Object.keys(module).sort()) {
@@ -67,15 +86,16 @@ async function collectAndRun() {
         if (value instanceof Test && !isDefinition(value))
           throw new TypeError(`${relative(process.cwd(), file)}:${name} is an incomplete test builder`)
         if (!isDefinition(value)) continue
-        if (collected.has(value))
+        const definition = v.parse(v.instance(DefinitionBuilder), value)
+        if (collected.has(definition))
           throw new TypeError(`duplicate root definition: ${relative(process.cwd(), file)}:${name}`)
-        collected.add(value)
-        definitions.push(value)
+        collected.add(definition)
+        definitions.push(definition)
         roots.push({ file, name })
       }
     }
     if (!definitions.length) throw new TypeError('no completed test definitions found')
-    const options = {
+    const options: InternalRunOptions = {
       forbidOnly: workerData.options.ci,
       failOnFlaky: workerData.options.failOnFlaky,
       filter: workerData.options.filter,
@@ -89,7 +109,7 @@ async function collectAndRun() {
     const execution = await openExecution({
       roots,
       preparation: collectModulePreparation(blueprints),
-      shape: describeExecutionPlan(plan.allNodes),
+      shape: JSON.stringify(describeExecutionPlan(plan.allNodes)),
       invoke: compiler.invoke,
       signal: controller.signal,
       onLoading: (file) => send({ type: 'loading', file, timeout }),
@@ -103,10 +123,10 @@ async function collectAndRun() {
     }
     send({ type: 'result', result, reporter })
   } catch (error) {
-    send({ type: 'error', message: String(error?.stack ?? error) })
+    send({ type: 'error', message: errorStack(error) })
   } finally {
     await runtime?.close()
     await compiler?.close()
   }
 }
-collectAndRun().catch((error) => send({ type: 'error', message: String(error?.stack ?? error) }))
+collectAndRun().catch((error) => send({ type: 'error', message: errorStack(error) }))

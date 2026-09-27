@@ -1,9 +1,17 @@
+import * as v from 'valibot'
+interface Tsconfig {
+  compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> }
+}
+interface ConfigEntry {
+  directory: string
+  config: Tsconfig
+}
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, extname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const cache = new Map()
-function jsonc(text) {
+const cache = new Map<string, ConfigEntry | null>()
+function jsonc(text: string): Tsconfig {
   let clean = '',
     quote = false,
     escaped = false,
@@ -50,15 +58,23 @@ function jsonc(text) {
     }
     clean += char
   }
-  return JSON.parse(clean.replace(/,\s*([}\]])/g, '$1'))
+  return v.parse(
+    v.object({
+      compilerOptions: v.optional(
+        v.object({ baseUrl: v.optional(v.string()), paths: v.optional(v.record(v.string(), v.array(v.string()))) }),
+      ),
+    }),
+    JSON.parse(clean.replace(/,\s*([}\]])/g, '$1')),
+  )
 }
-function configFor(parentURL) {
+function configFor(parentURL: string): ConfigEntry | null {
   if (!parentURL?.startsWith('file:')) return null
   let directory = dirname(fileURLToPath(parentURL))
-  const visited = []
+  const visited: string[] = []
   while (true) {
     if (cache.has(directory)) {
       const value = cache.get(directory)
+      if (value === undefined) throw new Error('tsconfig cache entry is missing')
       for (const path of visited) cache.set(path, value)
       return value
     }
@@ -76,12 +92,12 @@ function configFor(parentURL) {
   for (const part of visited) cache.set(part, null)
   return null
 }
-function aliasCandidates(specifier, parentURL) {
+function aliasCandidates(specifier: string, parentURL: string) {
   const entry = configFor(parentURL)
   if (!entry) return []
   const options = entry.config.compilerOptions ?? {}
   const base = resolvePath(entry.directory, options.baseUrl ?? '.')
-  const matches = []
+  const matches: string[] = []
   for (const [pattern, replacements] of Object.entries(options.paths ?? {})) {
     const star = pattern.indexOf('*')
     const prefix = star < 0 ? pattern : pattern.slice(0, star)
@@ -93,12 +109,12 @@ function aliasCandidates(specifier, parentURL) {
   }
   return matches
 }
-function extensions(file) {
+function extensions(file: string) {
   if (extname(file) === '.js') return [file.slice(0, -3) + '.ts', file.slice(0, -3) + '.mts']
   if (!extname(file)) return [file + '.ts', file + '.mts', file + '.js', file + '/index.ts', file + '/index.js']
   return [file]
 }
-export function resolveTsconfigPath(specifier, parentURL) {
+export function resolveTsconfigPath(specifier: string, parentURL: string) {
   for (const candidate of aliasCandidates(specifier, parentURL))
     for (const file of extensions(candidate)) if (existsSync(file)) return file
   return null

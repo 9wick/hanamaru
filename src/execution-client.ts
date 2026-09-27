@@ -1,25 +1,39 @@
+import * as v from 'valibot'
+import { required } from './value.js'
+import { executionMessageSchema } from './schemas.js'
+import type { Value } from './value.js'
+import type { ExecutionOptions, CommandInput, ReplyValue } from './protocol.js'
+import type { RunState, Reason, MutableRunResult, Executor } from './internal.js'
+import { errorStack } from './shared.js'
 import { Worker } from 'node:worker_threads'
 
-export async function openExecution({ roots, preparation, shape, signal, onLoading, invoke }) {
+export async function openExecution({
+  roots,
+  preparation,
+  shape,
+  signal,
+  onLoading,
+  invoke,
+}: ExecutionOptions): Promise<Executor> {
   onLoading('execution worker setup')
   const worker = new Worker(new URL('./execution-worker.js', import.meta.url), {
     workerData: { role: 'execution', roots, preparation, shape },
   })
-  const pending = new Map()
-  let nextId = 0,
-    state = null,
-    snapshot = null,
-    closing = false,
-    fatal = null,
-    readyResolve,
-    readyReject
-  const ready = new Promise((resolve, reject) => {
+  const pending = new Map<number, { resolve: (value: ReplyValue) => void; reject: (error: Value) => void }>()
+  let nextId = 0
+  let state: RunState | null = null
+  let snapshot: ((reason: Reason) => MutableRunResult) | null = null
+  let closing = false
+  let fatal: Value
+  let readyResolve: (() => void) | undefined
+  let readyReject: ((error: Value) => void) | undefined
+  const ready = new Promise<void>((resolve, reject) => {
     readyResolve = resolve
     readyReject = reject
   })
-  const fail = (error) => {
+  const fail = (error: Value) => {
     fatal = error
-    readyReject(error)
+    required(readyReject)(error)
     for (const entry of pending.values()) entry.reject(error)
     pending.clear()
   }
@@ -30,7 +44,8 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
   worker.on('exit', (code) => {
     if (!closing) fail(new Error(`execution worker exited (${code})`))
   })
-  worker.on('message', (message) => {
+  worker.on('message', (input) => {
+    const message = v.parse(executionMessageSchema, input)
     if (message.type === 'compile') {
       invoke(message.name, message.args)
         .then(
@@ -38,11 +53,11 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
             if (!closing) worker.postMessage({ type: 'compiled', id: message.id, result })
           },
           (error) => {
-            if (!closing) worker.postMessage({ type: 'compiled', id: message.id, error: String(error?.stack ?? error) })
+            if (!closing) worker.postMessage({ type: 'compiled', id: message.id, error: errorStack(error) })
           },
         )
         .catch(fail)
-    } else if (message.type === 'ready') readyResolve()
+    } else if (message.type === 'ready') required(readyResolve)()
     else if (message.type === 'loading') onLoading(message.file)
     else if (message.type === 'error') fail(new Error(message.message))
     else if (message.type === 'reply') {
@@ -52,13 +67,15 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
         return
       }
       pending.delete(message.id)
-      if (message.value.reason && state) state.reason = message.value.reason
+      if ('reason' in message.value && message.value.reason && state) state.reason = message.value.reason
       entry.resolve(message.value)
     } else if (message.type === 'timeout') {
+      if (!state) return fail(new Error('execution state is not attached'))
       state.reason = 'timeout'
       if (state.activeAttempt && message.phase) state.activeAttempt.phase = message.phase
       state.onTimeout?.()
     } else if (message.type === 'group-stage') {
+      if (!state || !snapshot) return fail(new Error('execution state is not attached'))
       if (message.stage === 'inside' || message.stage === 'end') state.onDeadline?.({ kind: 'end' })
       else {
         state.activeGroup = {
@@ -82,11 +99,11 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
     await close()
     throw error
   }
-  const request = (command) => {
+  const request = (command: CommandInput): Promise<ReplyValue> => {
     if (fatal) return Promise.reject(fatal)
     if (closing) return Promise.reject(new Error('execution worker is closed'))
     const id = nextId++
-    return new Promise((resolve, reject) => {
+    return new Promise<ReplyValue>((resolve, reject) => {
       pending.set(id, { resolve, reject })
       worker.postMessage({ ...command, id })
     })
@@ -96,9 +113,14 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
       state = runState
       snapshot = snapshotRun
     },
-    attempt: (path, number) => request({ type: 'attempt', path, number }),
+    async attempt(path, number) {
+      const reply = await request({ type: 'attempt', path, number })
+      if (!('result' in reply)) throw new TypeError('unexpected attempt reply')
+      return reply
+    },
     async group(path, body) {
       const opened = await request({ type: 'group-open', path })
+      if ('result' in opened) throw new TypeError('unexpected group reply')
       if (!opened.entered) return opened
       let failed = true
       let bodyError,
@@ -110,6 +132,7 @@ export async function openExecution({ roots, preparation, shape, signal, onLoadi
         bodyError = error
       }
       const result = await request({ type: 'group-close', path, failed })
+      if (!('middleware' in result)) throw new TypeError('unexpected group close reply')
       if (bodyFailed) throw bodyError
       return result
     },

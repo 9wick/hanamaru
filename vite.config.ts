@@ -12,7 +12,7 @@ export default defineConfig({
   },
   pack: {
     deps: { neverBundle: ['@hanamaru/vite', '@hanamaru/vite/module-runner', 'acorn'] },
-    entry: ['src/index.js', 'src/cli.js', 'src/cli-worker.js', 'src/execution-worker.js'],
+    entry: ['src/index.ts', 'src/cli.ts', 'src/cli-worker.ts', 'src/execution-worker.ts'],
     dts: false,
     fixedExtension: false,
     format: 'esm',

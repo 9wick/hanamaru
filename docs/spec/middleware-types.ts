@@ -133,7 +133,7 @@ run(dependent)
 run(configured.group([dependent]))
 
 for (const step of suite.blueprint().steps) {
-  expectType<Function>(step.run)
+  expectType<(...args: never[]) => void>(step.run)
   expectType<number | undefined>(step.timeout)
 }
 // @ts-expect-error ordered middleware steps are immutable.

@@ -1,16 +1,21 @@
-function keyOf(key, symbols) {
+import { valueOf, required, invoke, objectValue } from './value.js'
+import type { Value } from './value.js'
+import type { DiagnosticKey, DiagnosticValue, DiagnosticProperty } from './api.js'
+function keyOf(key: string | symbol, symbols: Map<symbol, number>): DiagnosticKey {
   if (typeof key === 'string') return { kind: 'string', value: key }
   if (!symbols.has(key)) symbols.set(key, symbols.size + 1)
-  return { kind: 'symbol', id: symbols.get(key), description: key.description ?? null }
+  return { kind: 'symbol', id: required(symbols.get(key)), description: key.description ?? null }
 }
-export function diagnostic(value) {
-  const objects = new WeakMap()
-  const symbols = new Map()
+export function diagnostic<T>(value: T): DiagnosticValue {
+  const objects = new WeakMap<object, number>()
+  const symbols = new Map<symbol, number>()
   let nextId = 1
-  function visit(input, depth = 0) {
+  function visit<T>(value: T, depth = 0): DiagnosticValue {
+    const input = valueOf(value)
     if (input === undefined) return { kind: 'undefined' }
     if (input === null) return { kind: 'null' }
-    if (typeof input === 'boolean' || typeof input === 'string') return { kind: typeof input, value: input }
+    if (typeof input === 'boolean') return { kind: 'boolean', value: input }
+    if (typeof input === 'string') return { kind: 'string', value: input }
     if (typeof input === 'number')
       return {
         kind: 'number',
@@ -26,7 +31,7 @@ export function diagnostic(value) {
       }
     if (typeof input === 'bigint') return { kind: 'bigint', value: String(input) }
     if (typeof input === 'symbol') return keyOf(input, symbols)
-    if (objects.has(input)) return { kind: 'reference', id: objects.get(input) }
+    if (objects.has(input)) return { kind: 'reference', id: required(objects.get(input)) }
     const id = nextId++
     objects.set(input, id)
     if (typeof input === 'function') return { kind: 'function', id, name: input.name || '' }
@@ -37,7 +42,8 @@ export function diagnostic(value) {
         value: Number.isNaN(Date.prototype.getTime.call(input)) ? null : Date.prototype.toISOString.call(input),
       }
     if (input instanceof RegExp) {
-      const get = (name) => Object.getOwnPropertyDescriptor(RegExp.prototype, name).get.call(input)
+      const get = (name: string) =>
+        invoke(required(required(Object.getOwnPropertyDescriptor(RegExp.prototype, name)).get), input, [])
       const flags = [
         ['hasIndices', 'd'],
         ['global', 'g'],
@@ -51,7 +57,7 @@ export function diagnostic(value) {
         .filter(([name]) => get(name))
         .map(([, letter]) => letter)
         .join('')
-      return { kind: 'regexp', id, source: get('source'), flags }
+      return { kind: 'regexp', id, source: String(get('source')), flags }
     }
     if (depth >= 8) return { kind: 'omitted', reason: 'depth limit' }
     if (input instanceof Map)
@@ -62,15 +68,16 @@ export function diagnostic(value) {
       }
     if (input instanceof Set)
       return { kind: 'set', id, values: [...Set.prototype.values.call(input)].map((v) => visit(v, depth + 1)) }
-    const properties = []
-    const omitted = []
+    const properties: DiagnosticProperty[] = []
+    const omitted: string[] = []
     if (input instanceof Error)
       for (const key of ['name', 'message', 'cause', 'stack']) {
-        let source = input,
+        let source: object | null = input,
           desc
         while (source && !desc) {
           desc = Object.getOwnPropertyDescriptor(source, key)
-          source = Object.getPrototypeOf(source)
+          const prototype: Value = valueOf(Object.getPrototypeOf(source))
+          source = prototype === null ? null : objectValue(prototype)
         }
         if (desc)
           properties.push({
@@ -83,7 +90,7 @@ export function diagnostic(value) {
       const desc = Object.getOwnPropertyDescriptor(input, key)
       if (!desc?.enumerable) continue
       if (Array.isArray(input) && typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key)) continue
-      if (input instanceof Error && ['name', 'message', 'cause', 'stack'].includes(key)) continue
+      if (input instanceof Error && ['name', 'message', 'cause', 'stack'].includes(String(key))) continue
       if (properties.length >= 100) {
         omitted.push(String(key))
         continue
@@ -94,7 +101,7 @@ export function diagnostic(value) {
       })
     }
     if (Array.isArray(input)) {
-      const items = Array.from({ length: input.length }, (_, index) => {
+      const items = Array.from({ length: input.length }, (_, index): DiagnosticValue => {
         const desc = Object.getOwnPropertyDescriptor(input, index)
         return !desc
           ? { kind: 'hole' }
@@ -105,8 +112,11 @@ export function diagnostic(value) {
       return { kind: 'array', id, items, properties }
     }
     let type = 'Object'
-    const ctor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input) ?? {}, 'constructor')?.value
-    if (typeof ctor === 'function') type = Object.getOwnPropertyDescriptor(ctor, 'name')?.value || 'Object'
+    const ctor = valueOf(
+      Object.getOwnPropertyDescriptor(valueOf(Object.getPrototypeOf(input)) ?? {}, 'constructor')?.value,
+    )
+    if (typeof ctor === 'function')
+      type = String(valueOf(Object.getOwnPropertyDescriptor(ctor, 'name')?.value) || 'Object')
     return { kind: 'object', id, type, properties, omitted }
   }
   return visit(value)

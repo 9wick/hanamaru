@@ -5,6 +5,7 @@ import { mailService } from '../examples/user.ts'
 import { registrations } from '../examples/groups.test.ts'
 
 declare function expectType<T>(value: T): void
+const optionalSeed: { seed?: number } = {}
 
 const child = new Test<{ seed: number }>()
   .use(middleware(async (ctx, next) => {
@@ -60,7 +61,7 @@ new Test().group('不足', [child])
 // @ts-expect-error a field with the wrong type cannot satisfy the child.
 new Test().use(middleware(async (_, next) => next({ seed: '2' }))).group([child])
 // @ts-expect-error an optional field cannot satisfy a required field.
-new Test().use(middleware(async (_, next) => next({} as { seed?: number }))).group([child])
+new Test().use(middleware(async (_, next) => next(optionalSeed))).group([child])
 // @ts-expect-error nesting cannot discard the context requirement.
 new Test().group([nested])
 // @ts-expect-error type annotations must not erase required context.
@@ -146,7 +147,7 @@ blueprint.name
 for (const entry of blueprint.children) {
   expectType<'group'>(entry.kind)
   expectType<string | null>(entry.name)
-  expectType<Function | null>(entry.middleware?.run ?? null)
+  expectType<((...args: never[]) => void) | null>(entry.middleware?.run ?? null)
   for (const childEntry of entry.children) {
     expectType<GroupEntry>(childEntry)
     // @ts-expect-error the name belongs to the group, not its placement in the parent.
@@ -162,9 +163,9 @@ for (const node of result.tests) {
     expectType<string | null>(node.name)
     expectType<number>(node.origin.line)
     expectType<GroupMiddlewareResult | null>(node.middleware)
-    expectType<readonly unknown[]>(node.children)
+    expectType<readonly object[]>(node.children)
   }
-  else expectType<readonly unknown[]>(node.cases)
+  else expectType<readonly object[]>(node.cases)
 }
 
 
@@ -219,7 +220,7 @@ new Test()
   }), [groupScopedCombinedChild])
 for (const entry of groupedWithMiddleware.blueprint().children) {
   if (entry.middleware) {
-    expectType<Function>(entry.middleware.run)
+    expectType<(...args: never[]) => void>(entry.middleware.run)
     expectType<number | undefined>(entry.middleware.timeout)
   }
 }
@@ -260,7 +261,7 @@ new Test().use(seedProvider).group(sharedServer, [groupConsumer])
 // @ts-expect-error field types still have to match the dependency requirement.
 new Test().group(middleware(async (_, next) => next({ seed: '2' })), [groupConsumer])
 // @ts-expect-error an optional field cannot satisfy a required dependency.
-new Test().group(middleware(async (_, next) => next({} as { seed?: number })), [groupConsumer])
+new Test().group(middleware(async (_, next) => next(optionalSeed)), [groupConsumer])
 
 const relay = new Test<Seed>().group([groupConsumer]).group('再利用', [groupConsumer])
 run(new Test().group(seedProvider, [relay]))

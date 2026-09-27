@@ -6,8 +6,17 @@ npm run check
 ```
 
 `npm run check` は型・lint・整形・ビルド・実行テスト・文書検査を実施します。
-lintはOxlint、整形はOxfmt、ビルドはtsdownをVite+経由で実行します。
-型契約と文書サンプルはTypeScript 5.8.3で検証します。
+lintはVite+のOxlintと型情報を使うESLint、整形はOxfmt、ビルドはtsdownをVite+経由で実行します。
+実装・型契約・文書サンプルはTypeScript 5.8.3で検証します。
+
+TypeScriptファイルでは `unknown`、`any`、型アサーション（`as const` を除く）、非nullアサーション、
+手書きの型述語（`is` / `asserts`）、`Function` 型を禁止します。実装には依存やネイティブAPI由来の
+`any` の未検証利用とPromiseの未処理も検出します。入力はValibotまたは実際の値の種類を確認して扱い、
+公開APIの型推論をキャストで補いません。値からリテラル型・readonlyを導く `as const` は許可します。
+任意の型を指定する `as Type` と `as const as Type` は禁止します。
+ESLintの無効化コメントとTypeScriptのエラー抑制も使えません。
+例外は `docs/spec/*.ts` の型エラーテストだけで、説明付きの `@ts-expect-error` を許可します。
+`test/lint.test.js` が、`as const` の許可、禁止コードの検出、抑制コメントで回避できないことを検証します。
 
 | コマンド | 検証対象 |
 | --- | --- |
@@ -52,7 +61,8 @@ Vite等の実行時依存はnpmレジストリから取得するため、ネッ�
 | CLIの結果と終了コード | 成功0・実行失敗1・収集エラー2、filterとonly、retryとfail-on-flaky |
 | CLIは期限超過・中断後に終了する | stuck importの収集期限、非同期・同期のstuck targetの終了猶予、Ctrl+Cの終了コード130と未完了cleanup |
 
-テストは内部の関数やfreezeの実装方式を参照しません。
+実行時契約とE2Eのテストは公開APIから検証し、freezeの実装方式を参照しません。
+lintと通信境界のテストは、禁止コードと不正な受信値を直接入力して検証します。
 時間・スタック全文・診断参照の採番を固定せず、公開結果のフィールドを検証します。
 
 ## CI
