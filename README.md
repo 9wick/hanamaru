@@ -197,10 +197,26 @@ expectは現在の書き方と実行時のコンテキストを保つため、bl
 READMEとドキュメントは公開契約です。ビルダー・ランナー・CLIのローカル実装と、[型契約](./docs/spec/hanamaru.d.ts)・[サンプル](./docs/examples/)を次のコマンドで検証できます。
 
 ```console
+npm ci
 npm run check
 node dist/cli.js docs/examples/math.test.ts
 ```
 
 `npm run lint` はOxlint、`npm run format:check` と `npm run format` はOxfmt、`npm run build` はtsdownをVite+経由で実行します。型チェックはTypeScript 5.8、実行テストはNode標準のテストランナーを使います。
+
+[CI](./.github/workflows/ci.yml) はpush・PR・手動実行でNode.js 22.18.0と24を検証します。`npm ci` で依存をインストールし、`npm run check` と同じ検査を工程ごとに実行します。
+
+個別に検証するときは、次のコマンドを使います。
+
+| コマンド | 検証対象 |
+| --- | --- |
+| `npm run typecheck` | 型契約とドキュメントのTypeScriptサンプル |
+| `npm run lint` | 実装・テスト・サンプルのlint |
+| `npm run format:check` | 実装・テスト・ビルド設定の整形 |
+| `npm run test:runtime` | ビルダー・ランナーの実行時契約 |
+| `npm run test:cli` | ビルドしたCLIのファイル読込・結果・終了コード |
+| `npm run check:docs` | 文書のリンク・構造・サンプルの一致 |
+
+`npm test` はビルドと両方の実行テストを実施します。`test:cli` は単独でも実行できるよう、先にビルドします。CIのOSはLinuxです。Bunと他のOSでの自動検証は含みません。
 
 実行時依存は0です。Node.js 22.18・24とBun 1.3.5で実行テストを確認しています。ローカルtarballのインストールとCLI起動も確認済みです。公開npmレジストリへの配布は未検証です。
