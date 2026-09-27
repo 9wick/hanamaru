@@ -8,6 +8,20 @@
 
 関数のunit testだけを確認するときに、e2eのDockerを起動しない構成を考えます。この例ではunitのテストファイルを `src` 配下に置き、e2eで実行するルートを `e2e/root.ts` に登録します。
 
+```text
+hanamaru.config.ts
+src/
+  math.ts
+  math.test.ts       単独で実行できるルートを登録
+e2e/
+  root.ts            usersとordersをgroupにまとめ、ルートを登録
+  users.ts           親のコンテキストを要求する子を定義
+  orders.ts          親のコンテキストを要求する子を定義
+  environment.ts     環境を取得・解放するmiddlewareを定義
+```
+
+この配置は利用例です。`math.test.ts` をソースの隣に置くことも、子を別ファイルに置くことも必須ではありません。`users.ts` と `orders.ts` の子は `root.ts` からimportするためにexportしますが、そのexportはCLIへの登録ではありません。
+
 `hanamaru.config.ts` で、それぞれ読むファイルを指定します。どちらも文字列による同じ指定方法です。`unit` と `e2e` はCLIで選ぶために付けた名前です。
 
 <!-- example: none — projectの実装前の利用例。公開APIの型検証・実行例にはまだ含めない -->
