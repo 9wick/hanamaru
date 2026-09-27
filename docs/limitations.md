@@ -11,6 +11,7 @@
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
 | ビルダー・ランナー・CLIの実装 | `src/` のTypeScript実装を `strict` で型検査。`npm test` がunit・e2e・文書サンプルの3層で実行を検証 |
 | 名前付きで収集入口を選ぶproject | [機能の契約](./projects.md)と[利用例](./project-use-cases.md)を文書化。`projects`・`glob`・`entry`・`--project` はAPI案で未実装、型・実行は未検証 |
+| 登録ベースのCLI収集 | [登録の契約](./registration.md)を文書化。`registerTest` はAPI案で未実装、型・実行は未検証 |
 | npmパッケージのインストールと実行 | ローカルtarballのインストール・型解決・CLI起動を確認。公開npmレジストリへの配布は未検証 |
 | モックの復元、middleware、失敗集約等の実行時保証 | 実行テストで主な経路を検証。全ての入力・環境は未検証 |
 
@@ -72,7 +73,7 @@ blueprintはreadonlyだが、利用者から渡されたオブジェクト内部
 `group` と `run` の型検査では不足を防ぐが、現在のCLIは型チェックをせず、exportされた定義の型引数を検査できない。
 収集するテストファイルには親のコンテキストを要求しないルートをexportし、親のコンテキストが必要な子は探索対象外に置く。
 
-未実装のproject機能では、[globで未供給のctx要求を持つルートを収集したら設定エラーで停止する](./projects.md#globで未供給のctx要求を見つけたとき)契約とします。現在のCLIで検出できるという意味ではなく、要求の検出方式は実装前に決める事項です。
+未実装の[登録ベースのCLI収集](./registration.md)では、親のctx供給を要求しない完成定義だけを `registerTest` の型で受け付けます。CLIは型検査を実行せず、projectは登録を収集するファイルを選びます。登録を経ない完成定義の診断範囲は実装前に検証します。
 
 middlewareの戻り値から後続コンテキストを推論するため、nextの完了値を返す必要がある。
 `return await next(...)` のreturn忘れは型で防ぐが、nextの呼び出し回数や待機の正しさは実行時にも検査する。

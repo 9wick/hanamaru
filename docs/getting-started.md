@@ -45,7 +45,7 @@ export const addition = new Test()
 npx hanamaru src/math.test.ts
 ```
 
-CLIがexportされた定義を収集して実行するので、テストファイル内で `run()` を呼ぶ必要はありません。CLI自体は型チェックをしないため、日常の実行では後述の[型チェックを含むtest script](#実行環境とコマンド)を使います。
+現在のCLIはexportされた定義を収集して実行するので、テストファイル内で `run()` を呼ぶ必要はありません。将来の[登録ベースの収集](./registration.md)ではexportを不要にする契約です。CLI自体は型チェックをしないため、日常の実行では後述の[型チェックを含むtest script](#実行環境とコマンド)を使います。
 
 ## モックを使う
 
