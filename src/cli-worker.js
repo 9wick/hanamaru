@@ -2,14 +2,23 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { globSync } from 'node:fs'
 import { resolve, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { register } from 'node:module'
+import * as moduleHooks from 'node:module'
 import { Test, isDefinition } from './definition.js'
 import { run } from './runner.js'
 import { positive } from './shared.js'
 
 for (const method of ['log', 'info', 'warn', 'error', 'debug'])
   console[method] = (...values) => process.stderr.write(values.map(String).join(' ') + '\n')
-register('./resolver.js', import.meta.url)
+if (process.versions.deno) {
+  const { resolveSync } = await import('./resolver.js')
+  moduleHooks.registerHooks({
+    resolve: resolveSync,
+    // Deno needs a load hook to route static dependencies through the resolver.
+    load: (url, context, nextLoad) => nextLoad(url, context),
+  })
+} else {
+  moduleHooks.register('./resolver.js', import.meta.url)
+}
 function send(value) {
   parentPort.postMessage(value)
 }
