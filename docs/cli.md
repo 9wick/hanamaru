@@ -3,7 +3,7 @@
 CLIは、テストファイルの読込・完成したテストの収集・実行・結果表示を行う入口である。
 インストールしたパッケージのCLIを、利用するランタイムで起動します。
 
-このページは現在実装されているCLIの使い方です。unitのファイル探索とintegration/e2eの合成ルートを名前付きで選ぶproject機能は、[unitとintegration/e2eを分けて実行する](./projects.md)に実装前の契約を記載しています。`projects` 設定と `--project` は未実装です。
+このページは現在実装されているCLIの使い方です。収集入口を名前付きで選ぶ[project機能](./projects.md)は実装前の契約として記載しています。unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)を参照してください。`projects` 設定と `--project` は未実装です。
 
 ```text
 hanamaru [files...] [options]

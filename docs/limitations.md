@@ -10,7 +10,7 @@
 | 公開APIの型 | `src/api.ts` に定義し、`dist/` に型定義を生成。`docs/spec/hanamaru.d.ts` は公開APIを再export |
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
 | ビルダー・ランナー・CLIの実装 | `src/` のTypeScript実装を `strict` で型検査。`npm test` がunit・e2e・文書サンプルの3層で実行を検証 |
-| unitとintegration/e2eの実行入口を選ぶproject | [利用者との契約](./projects.md)を先に文書化。`projects`・`glob`・`entry`・`--project` はAPI案で未実装、型・実行は未検証 |
+| 名前付きで収集入口を選ぶproject | [機能の契約](./projects.md)と[利用例](./project-use-cases.md)を文書化。`projects`・`glob`・`entry`・`--project` はAPI案で未実装、型・実行は未検証 |
 | npmパッケージのインストールと実行 | ローカルtarballのインストール・型解決・CLI起動を確認。公開npmレジストリへの配布は未検証 |
 | モックの復元、middleware、失敗集約等の実行時保証 | 実行テストで主な経路を検証。全ての入力・環境は未検証 |
 

@@ -205,17 +205,39 @@ expectは現在の書き方と実行時のコンテキストを保つため、bl
 
 ## ドキュメント
 
-- [はじめる](./docs/getting-started.md)
-- [unitとintegration/e2eを分けて実行する — projectの契約（未実装）](./docs/projects.md)
-- [設計思想](./docs/concepts.md)
+最初のテストを書いて実行する手順は、[はじめる](./docs/getting-started.md)を参照してください。
+
+### テストを書く
+
 - [Test ビルダー](./docs/api-test.md) / [it ビルダー](./docs/api-it.md)
-- [モック](./docs/api-mock.md) / [マッチャ](./docs/api-expect.md)
-- [テストをグループにまとめる](./docs/grouping.md) / [middleware](./docs/middleware.md)
-- [each](./docs/each.md) / [timeoutとretry](./docs/execution-options.md)
-- [プラグイン向けblueprint](./docs/metadata.md) / [宣言位置と実行結果](./docs/results.md)
-- [実行セマンティクス](./docs/semantics.md) / [CLI](./docs/cli.md)
-- [型推論](./docs/type-inference.md) / [制約と実装状況](./docs/limitations.md)
+- [マッチャ](./docs/api-expect.md) / [モック](./docs/api-mock.md)
+- [行データからケースを書く（each）](./docs/each.md)
+- [middleware](./docs/middleware.md) / [テストをグループにまとめる](./docs/grouping.md)
+
+### 実行して結果を確認する
+
+- [CLIと設定ファイル](./docs/cli.md)
+- [timeoutとretry](./docs/execution-options.md)
+- [宣言位置と実行結果](./docs/results.md)
+
+### 仕様を詳しく知る
+
+- [設計思想](./docs/concepts.md)
+- [型推論](./docs/type-inference.md)
+- [実行セマンティクス](./docs/semantics.md)
+- [制約と実装状況](./docs/limitations.md)
 - [用語集](./docs/glossary.md)
+
+### プラグインを作る
+
+- [プラグイン向けblueprint](./docs/metadata.md)
+
+### 実装前の契約
+
+以下のproject機能は未実装です。機能の契約と、その機能を使った構成例を分けて記載しています。
+
+- [projectで実行入口を選ぶ](./docs/projects.md)
+- [projectの利用例：unitとintegration/e2eを分ける](./docs/project-use-cases.md)
 
 ## 対応環境
 
