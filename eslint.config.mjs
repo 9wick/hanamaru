@@ -35,7 +35,7 @@ export default [
     rules: typeSafetyRules,
   },
   {
-    files: ['src/**/*.ts', 'vite.config.ts'],
+    files: ['src/**/*.ts', 'vite.config.ts', 'eslint.config.test.ts'],
     languageOptions: { parserOptions: { project: './tsconfig.json', tsconfigRootDir: import.meta.dirname } },
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'error',
