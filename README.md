@@ -3,6 +3,7 @@
 Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
 対象・モック・引数・期待を書き、完成したテストを `run(test)` で実行します。
 
+<!-- example: docs/examples/user.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -32,6 +33,7 @@ export const users = new Test()
     ])
   )
 ```
+出典: [docs/examples/user.test.ts](docs/examples/user.test.ts)
 
 `.target()` から引数と戻り値の型が決まります。
 戻り値・例外は `.expect()`、呼ばれ方は `.expectCalls()` に条件を並べます。
@@ -42,6 +44,7 @@ export const users = new Test()
 
 純粋関数なら、対象・引数・期待だけで書けます。
 
+<!-- example: docs/examples/math.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { add } from './math.ts'
@@ -52,9 +55,11 @@ export const addition = new Test()
     e.result.toBe(3),
   ]))
 ```
+出典: [docs/examples/math.test.ts](docs/examples/math.test.ts)
 
 ## 行データからケースを書く
 
+<!-- example: docs/examples/each.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { add } from './math.ts'
@@ -68,12 +73,14 @@ export const addition = new Test()
     .args(row.a, row.b)
     .expect(e => [e.result.toBe(row.expected)]))
 ```
+出典: [docs/examples/each.test.ts](docs/examples/each.test.ts)
 
 eachはitと並ぶ入口です。行ごとに名前やIDを追加せず、引数・期待の型を保ってケースを並べます。
 [eachの表示と実行](./docs/each.md)を参照してください。
 
 ## モックなしでも呼び出しを検証する
 
+<!-- example: docs/examples/calls.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -88,6 +95,7 @@ export const calls = new Test()
       call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ]))
 ```
+出典: [docs/examples/calls.test.ts](docs/examples/calls.test.ts)
 
 この例ではsaveとsendの本物の処理を呼び、その呼ばれ方を検証します。
 

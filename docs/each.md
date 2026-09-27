@@ -2,6 +2,7 @@
 
 `each(name, rows, body)` はitと並ぶ入口です。一行ごとに独立したケースを作ります。
 
+<!-- example: docs/examples/each.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { add } from './math.ts'
@@ -15,6 +16,7 @@ export const addition = new Test()
     .args(row.a, row.b)
     .expect(e => [e.result.toBe(row.expected)]))
 ```
+出典: [docs/examples/each.test.ts](examples/each.test.ts)
 
 rowは行データから、argsとresultはテスト対象から型推論します。
 行はオブジェクトでもタプルでも渡せます。IDや行名の追加登録は不要です。

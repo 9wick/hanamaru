@@ -9,6 +9,7 @@
 ユーザーに関するテストをまとめ、作成のテストだけで保存処理をモックする例です。
 [groups.test.ts](./examples/groups.test.ts)と[対象のコード](./examples/user.ts)を掲載しています。
 
+<!-- example: docs/examples/groups.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -39,6 +40,7 @@ export const registrations = new Test()
   .group('作成', [creation])
   .group([saving])
 ```
+出典: [docs/examples/groups.test.ts](examples/groups.test.ts)
 
 外側のsendのモックは、グループ内の全ケースに適用します。
 「作成」のsaveのモックは、その中の2ケースだけに適用します。
@@ -175,6 +177,7 @@ middlewareはグループ全体で1回ではなく、実行する各ケースの
 
 次は[user-cases.ts](./examples/user-cases.ts)の例です。
 
+<!-- example: docs/examples/user-cases.ts -->
 ```ts
 import { Test, middleware } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -197,6 +200,7 @@ export const userCases = new Test<UserContext>()
     .expect(e => [e.error.toThrow('save failed')])
     .expectCalls(call => [call(mailService, 'send').notCalled()]))
 ```
+出典: [docs/examples/user-cases.ts](examples/user-cases.ts)
 
 親で必要な値を用意してから子を追加します。
 

@@ -3,6 +3,7 @@
 実行設定は下流へ引き継ぎ、指定した項目だけを上書きします。
 group、`.target()` の前後、ケースで同じ `.timeout(ms)` / `.retry(count)` を使います。
 
+<!-- example: docs/examples/execution-options.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { add } from './math.ts'
@@ -24,6 +25,7 @@ export const tests = new Test()
   .retry(2)
   .group([addition])
 ```
+出典: [docs/examples/execution-options.test.ts](examples/execution-options.test.ts)
 
 | ケース | timeout | retry |
 |---|---|---|
