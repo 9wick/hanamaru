@@ -1,7 +1,11 @@
+import { valueOf, required } from './value.js'
+
 const enumerableKeys = (value: object) =>
   Reflect.ownKeys(value).filter((key) => Object.getOwnPropertyDescriptor(value, key)?.enumerable)
 
-export function equal(a: unknown, b: unknown, seen = new WeakMap<object, WeakSet<object>>()): boolean {
+export function equal<T, U>(first: T, second: U, seen = new WeakMap<object, WeakSet<object>>()): boolean {
+  const a = valueOf(first),
+    b = valueOf(second)
   if (Object.is(a, b)) return true
   if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return false
   if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false
@@ -21,7 +25,8 @@ export function equal(a: unknown, b: unknown, seen = new WeakMap<object, WeakSet
       const unmatched = [...b.entries()]
       for (const [key, value] of a) {
         const index = unmatched.findIndex(
-          ([otherKey, otherValue]) => equal(key, otherKey, seen) && equal(value, otherValue, seen),
+          ([otherKey, otherValue]) =>
+            equal(valueOf(key), valueOf(otherKey), seen) && equal(valueOf(value), valueOf(otherValue), seen),
         )
         if (index < 0) return false
         unmatched.splice(index, 1)
@@ -32,7 +37,7 @@ export function equal(a: unknown, b: unknown, seen = new WeakMap<object, WeakSet
       if (a.size !== b.size) return false
       const unmatched = [...b.values()]
       for (const value of a) {
-        const index = unmatched.findIndex((other) => equal(value, other, seen))
+        const index = unmatched.findIndex((other) => equal(valueOf(value), valueOf(other), seen))
         if (index < 0) return false
         unmatched.splice(index, 1)
       }
@@ -54,12 +59,12 @@ export function equal(a: unknown, b: unknown, seen = new WeakMap<object, WeakSet
     if (keysA.length !== keysB.length) return false
     for (const key of keysA) {
       if (!keysB.includes(String(key))) return false
-      const descriptorA = Object.getOwnPropertyDescriptor(a, key)!
-      const descriptorB = Object.getOwnPropertyDescriptor(b, key)!
+      const descriptorA = required(Object.getOwnPropertyDescriptor(a, key))
+      const descriptorB = required(Object.getOwnPropertyDescriptor(b, key))
       if ('value' in descriptorA !== 'value' in descriptorB) return false
       if (
         'value' in descriptorA
-          ? !equal(descriptorA.value, descriptorB.value, seen)
+          ? !equal(valueOf(descriptorA.value), valueOf(descriptorB.value), seen)
           : !Object.is(descriptorA.get, descriptorB.get) || !Object.is(descriptorA.set, descriptorB.set)
       )
         return false
@@ -70,11 +75,9 @@ export function equal(a: unknown, b: unknown, seen = new WeakMap<object, WeakSet
   }
 }
 
-export function matchObject(
-  actual: unknown,
-  expected: unknown,
-  seen = new WeakMap<object, WeakSet<object>>(),
-): boolean {
+export function matchObject<T, U>(first: T, second: U, seen = new WeakMap<object, WeakSet<object>>()): boolean {
+  const actual = valueOf(first),
+    expected = valueOf(second)
   if (typeof expected !== 'object' || !expected || typeof actual !== 'object' || !actual) return equal(actual, expected)
   let pairs = seen.get(expected)
   if (pairs?.has(actual)) return true
@@ -86,12 +89,12 @@ export function matchObject(
   try {
     for (const key of enumerableKeys(expected)) {
       if (!Object.prototype.hasOwnProperty.call(actual, key)) return false
-      const expectedDescriptor = Object.getOwnPropertyDescriptor(expected, key)!
-      const actualDescriptor = Object.getOwnPropertyDescriptor(actual, key)!
+      const expectedDescriptor = required(Object.getOwnPropertyDescriptor(expected, key))
+      const actualDescriptor = required(Object.getOwnPropertyDescriptor(actual, key))
       if ('value' in expectedDescriptor !== 'value' in actualDescriptor) return false
       if (
         'value' in expectedDescriptor
-          ? !matchObject(actualDescriptor.value, expectedDescriptor.value, seen)
+          ? !matchObject(valueOf(actualDescriptor.value), valueOf(expectedDescriptor.value), seen)
           : !Object.is(expectedDescriptor.get, actualDescriptor.get) ||
             !Object.is(expectedDescriptor.set, actualDescriptor.set)
       )

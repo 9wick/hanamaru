@@ -1,18 +1,16 @@
+import * as v from 'valibot'
+import { required, property } from './value.js'
+import { cliWorkerDataSchema, configSchema } from './schemas.js'
+import type { Value } from './value.js'
 import type { Config } from './api.js'
-import type {
-  CliWorkerData,
-  CliMessage,
-  RuntimeDefinitionHandle,
-  RootReference,
-  InternalRunOptions,
-} from './internal.js'
+import type { CliMessage, RootReference, InternalRunOptions } from './internal.js'
 import { errorStack } from './shared.js'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import { globSync } from 'node:fs'
 import { resolve, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfigFromFile } from '@hanamaru/vite'
-import { Test, isDefinition } from './definition.js'
+import { Test, DefinitionBuilder, isDefinition } from './definition.js'
 import { collectBlueprints, createPlan, runPlan } from './runner.js'
 import { describeExecutionPlan } from './execution-plan.js'
 import { collectModulePreparation } from './module-reference.js'
@@ -23,21 +21,22 @@ import { createModuleRuntime } from './module-runtime.js'
 
 if (!parentPort) throw new Error('collection requires a worker thread')
 const port = parentPort
-const workerData = rawWorkerData as CliWorkerData
-for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const)
-  console[method] = (...values: unknown[]) => process.stderr.write(values.map(String).join(' ') + '\n')
+const workerData = v.parse(cliWorkerDataSchema, rawWorkerData)
+const consoleMethods: ('log' | 'info' | 'warn' | 'error' | 'debug')[] = ['log', 'info', 'warn', 'error', 'debug']
+for (const method of consoleMethods)
+  console[method] = (...values: Value[]) => process.stderr.write(values.map(String).join(' ') + '\n')
 function send(value: CliMessage) {
   port.postMessage(value)
 }
 const controller = new AbortController()
 port.on('message', (message) => {
-  if (message?.type === 'interrupt') controller.abort()
+  if (property(message, 'type') === 'interrupt') controller.abort()
 })
 let compiler: Awaited<ReturnType<typeof createModuleCompiler>> | undefined
 let runtime: ReturnType<typeof createModuleRuntime> | undefined
 function importFile(file: string, timeout: number) {
   send({ type: 'loading', file, timeout })
-  return runtime!.import(pathToFileURL(file).href)
+  return required(runtime).import(pathToFileURL(file).href)
 }
 function selectFiles(config: Config) {
   if (workerData.files.length) return [...new Set(workerData.files.map((file) => resolve(file)))].sort()
@@ -58,7 +57,13 @@ async function collectAndRun() {
       send({ type: 'loading', file: configPath, timeout: initialTimeout })
       const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, configPath, process.cwd(), 'silent')
       if (!loaded) throw new Error(`cannot load config: ${configPath}`)
-      config = loaded.config as Config
+      const viteConfig = property(loaded.config, 'vite')
+      if (
+        viteConfig !== undefined &&
+        (viteConfig === null || typeof viteConfig !== 'object' || Array.isArray(viteConfig))
+      )
+        throw new TypeError('vite must be a config object')
+      config = v.parse(configSchema, loaded.config)
     }
     const timeout = workerData.options.collectionTimeout ?? config.collectionTimeout ?? 30_000
     const shutdownGrace = workerData.options.shutdownGrace ?? config.shutdownGrace ?? 1_000
@@ -71,7 +76,7 @@ async function collectAndRun() {
     send({ type: 'loading', file: 'test runtime setup', timeout })
     compiler = await createModuleCompiler(config.vite)
     runtime = createModuleRuntime(compiler.invoke)
-    const definitions: RuntimeDefinitionHandle[] = [],
+    const definitions: Value[] = [],
       roots: RootReference[] = [],
       collected = new Set<object>()
     for (const file of files) {
@@ -81,10 +86,11 @@ async function collectAndRun() {
         if (value instanceof Test && !isDefinition(value))
           throw new TypeError(`${relative(process.cwd(), file)}:${name} is an incomplete test builder`)
         if (!isDefinition(value)) continue
-        if (collected.has(value))
+        const definition = v.parse(v.instance(DefinitionBuilder), value)
+        if (collected.has(definition))
           throw new TypeError(`duplicate root definition: ${relative(process.cwd(), file)}:${name}`)
-        collected.add(value)
-        definitions.push(value)
+        collected.add(definition)
+        definitions.push(definition)
         roots.push({ file, name })
       }
     }
@@ -103,7 +109,7 @@ async function collectAndRun() {
     const execution = await openExecution({
       roots,
       preparation: collectModulePreparation(blueprints),
-      shape: describeExecutionPlan(plan.allNodes),
+      shape: JSON.stringify(describeExecutionPlan(plan.allNodes)),
       invoke: compiler.invoke,
       signal: controller.signal,
       onLoading: (file) => send({ type: 'loading', file, timeout }),

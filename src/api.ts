@@ -1,5 +1,8 @@
+import { assertionTag, doneTag, middlewareTag } from './shared.js'
+
+import type { Value } from './value.js'
 /** 公開APIの型。内部実装とともに型検査し、パッケージへ配布する。 */
-export type AnyFn = (...args: any[]) => any
+export type AnyFn = (...args: never[]) => void
 export type FnKeys<O> = Extract<
   {
     [K in keyof O]-?: O[K] extends AnyFn ? K : never
@@ -8,15 +11,13 @@ export type FnKeys<O> = Extract<
 >
 export type MethodOf<O, K extends keyof O> = Extract<O[K], AnyFn>
 
-declare const assertionBrand: unique symbol
-declare const doneBrand: unique symbol
 declare const definitionBrand: unique symbol
 declare const behaviorBrand: unique symbol
 declare const blueprintBrand: unique symbol
 declare const middlewareBrand: unique symbol
-declare const middlewareDefBrand: unique symbol
+
 export interface ItDone {
-  readonly [doneBrand]: true
+  readonly [doneTag]: true
 }
 type InputPhase = 'attempt' | 'group'
 interface DefinitionHandle<R extends object, P extends InputPhase> {
@@ -29,7 +30,11 @@ interface DefinitionHandle<R extends object, P extends InputPhase> {
 }
 /** run()やgroup()へ渡す完成したチェーンの値。要求は供給元によらず一つ。 */
 export type TestDefinition<R extends object = {}> = DefinitionHandle<R, 'attempt'> | DefinitionHandle<R, 'group'>
-export type ExtendContext<C, S> = C extends unknown ? (S extends unknown ? Omit<C, keyof S> & S : never) : never
+export type ExtendContext<C, S> = C extends infer Current
+  ? S extends infer Added
+    ? Omit<Current, keyof Added> & Added
+    : never
+  : never
 /** nextの完了値。追加フィールドの型をmiddlewareの戻り値まで伝える。 */
 export interface MiddlewareResult<S extends object> {
   readonly [middlewareBrand]: S
@@ -46,22 +51,27 @@ export interface MiddlewareOptions {
   readonly timeout?: number
 }
 /** middleware()が返す値。関数をそのまま.use/.groupへ渡せないようにする。 */
-export interface Middleware<C = unknown, S extends object = object> {
-  readonly [middlewareDefBrand]: MiddlewareFn<C, S>
+export interface Middleware<C = Value, S extends object = object> {
+  readonly [middlewareTag]: true
+  readonly run: MiddlewareFn<C, S>
+  readonly kind: 'middleware'
+  readonly timeout: number | undefined
 }
 export type Behavior<F extends AnyFn> = BehaviorBlueprint & {
   readonly [behaviorBrand]: (fn: F) => F
 }
 export interface BehaviorBuilder<F extends AnyFn> {
   returnsOnce(value: ReturnType<F>): BehaviorBuilder<F>
-  resolvesOnce(value: ReturnType<F> extends PromiseLike<unknown> ? Awaited<ReturnType<F>> : never): BehaviorBuilder<F>
-  throwsOnce(error: unknown): BehaviorBuilder<F>
-  rejectsOnce(error: ReturnType<F> extends PromiseLike<unknown> ? unknown : never): BehaviorBuilder<F>
+  resolvesOnce(
+    value: ReturnType<F> extends PromiseLike<Value | void> ? Awaited<ReturnType<F>> : never,
+  ): BehaviorBuilder<F>
+  throwsOnce(error: Value): BehaviorBuilder<F>
+  rejectsOnce(error: ReturnType<F> extends PromiseLike<Value | void> ? Value : never): BehaviorBuilder<F>
   callsFakeOnce(fn: F): BehaviorBuilder<F>
   returns(value: ReturnType<F>): Behavior<F>
-  resolves(value: ReturnType<F> extends PromiseLike<unknown> ? Awaited<ReturnType<F>> : never): Behavior<F>
-  throws(error: unknown): Behavior<F>
-  rejects(error: ReturnType<F> extends PromiseLike<unknown> ? unknown : never): Behavior<F>
+  resolves(value: ReturnType<F> extends PromiseLike<Value | void> ? Awaited<ReturnType<F>> : never): Behavior<F>
+  throws(error: Value): Behavior<F>
+  rejects(error: ReturnType<F> extends PromiseLike<Value | void> ? Value : never): Behavior<F>
   callsFake(fn: F): Behavior<F>
 }
 export type MockDef<F extends AnyFn> = (m: BehaviorBuilder<F>) => Behavior<F>
@@ -72,10 +82,10 @@ export interface ValueAssertions<V> {
   toSatisfy(predicate: (value: V) => boolean): ResultAssertion<V>
 }
 export interface ErrorAssertions {
-  toBeInstanceOf(ctor: new (...args: any[]) => object): ErrorAssertion
+  toBeInstanceOf(ctor: new (...args: never[]) => object): ErrorAssertion
   toThrow(message: string | RegExp): ErrorAssertion
-  toMatchObject(value: Record<string, unknown>): ErrorAssertion
-  toSatisfy(predicate: (error: unknown) => boolean): ErrorAssertion
+  toMatchObject(value: Record<string, Value>): ErrorAssertion
+  toSatisfy(predicate: (error: Value) => boolean): ErrorAssertion
 }
 export interface CallMatchers<F extends AnyFn> {
   calledTimes(count: number): CallAssertion
@@ -135,12 +145,12 @@ export type GroupChildren<C extends object> = readonly [TestDefinition<C>, ...Te
 type CompatibleChild<C extends object, Before extends object> =
   | DefinitionHandle<C, 'attempt'>
   | DefinitionHandle<Before, 'group'>
-type CompatibleChildren<C extends object, Before extends object> = readonly [
+export type CompatibleChildren<C extends object, Before extends object> = readonly [
   CompatibleChild<C, Before>,
   ...CompatibleChild<C, Before>[],
 ]
-type FirstPhase<P extends InputPhase> = 'group' extends P ? 'group' : 'attempt'
-type ChildrenPhase<D extends readonly TestDefinition<never>[]> = D[number][typeof definitionBrand]['phase']
+export type FirstPhase<P extends InputPhase> = 'group' extends P ? 'group' : 'attempt'
+export type ChildrenPhase<D extends readonly TestDefinition<never>[]> = D[number][typeof definitionBrand]['phase']
 interface GroupMethods<C extends object, R extends object, P extends InputPhase = 'attempt'> {
   /** middlewareを取る形を先に並べ、その場で書いたmiddlewareのctxを文脈から型付けする。 */
   group<S extends object>(
@@ -158,7 +168,7 @@ interface GroupMethods<C extends object, R extends object, P extends InputPhase 
     children: D,
   ): GroupStage<C, R, FirstPhase<P | ChildrenPhase<D>>>
 }
-interface GroupStage<C extends object, R extends object, P extends InputPhase>
+export interface GroupStage<C extends object, R extends object, P extends InputPhase>
   extends GroupMethods<C, R, P>, DefinitionHandle<R, P> {
   /** チェーン内の複数groupと共通設定を取得する。GroupSuite自体は実行階層ではない。 */
   blueprint(): DefinitionBlueprint<R>
@@ -199,7 +209,7 @@ export interface SourceLocation {
 }
 export interface RowBlueprint {
   readonly index: number
-  readonly value: unknown
+  readonly value: Value
 }
 
 /** blueprintは値・参照・遅延評価する関数を保持する。 */
@@ -209,21 +219,21 @@ export type ValueBlueprint<V, C> =
 export type TargetBlueprint<F extends AnyFn> =
   | { readonly kind: 'function'; readonly fn: F }
   | { readonly kind: 'method'; readonly object: object; readonly key: string; readonly fn: F }
-export interface MiddlewareBlueprint<C = any, S extends object = any> {
+export interface MiddlewareBlueprint<C = object, S extends object = object> {
   readonly kind: 'middleware'
   readonly run: MiddlewareFn<C, S>
   /** middlewareの定義で指定した前処理・後処理の期限。未指定はundefined。 */
   readonly timeout: number | undefined
 }
-export interface GroupMiddlewareBlueprint<C = any, S extends object = any> {
+export interface GroupMiddlewareBlueprint<C = object, S extends object = object> {
   readonly kind: 'middleware'
   readonly run: MiddlewareFn<C, S>
   readonly timeout: number | undefined
 }
 export type StepBlueprint = MiddlewareBlueprint
 export type BehaviorAction =
-  | { readonly kind: 'returns' | 'resolves'; readonly value: unknown }
-  | { readonly kind: 'throws' | 'rejects'; readonly error: unknown }
+  | { readonly kind: 'returns' | 'resolves'; readonly value: Value }
+  | { readonly kind: 'throws' | 'rejects'; readonly error: Value }
   | { readonly kind: 'callsFake'; readonly fn: AnyFn }
 export type BehaviorBlueprint =
   | BehaviorAction
@@ -242,37 +252,45 @@ export type ValueCheck<V> =
   | { readonly matcher: 'toMatchObject'; readonly expected: V extends object ? Partial<V> : never }
   | { readonly matcher: 'toSatisfy'; readonly predicate: (value: V) => boolean }
 /** 検証前の条件を表す記述子。判定後の結果ではない。 */
-export type ResultAssertion<V = any> = {
-  readonly [assertionBrand]: true
+export type ResultAssertion<V = Value> = {
+  readonly [assertionTag]: true
   readonly subject: 'result'
   readonly check: ValueCheck<V>
 }
+/** 異なる戻り値の型を持つ記述子をまとめる際の形。関数の呼び出しは境界で検証する。 */
+export type ErasedResultAssertion = {
+  readonly [assertionTag]: true
+  readonly subject: 'result'
+  readonly check:
+    | { readonly matcher: 'toBe' | 'toEqual' | 'toMatchObject'; readonly expected: Value | void }
+    | { readonly matcher: 'toSatisfy'; readonly predicate: object }
+}
 /** 例外について照合する条件の記述子。判定後の結果ではない。 */
 export type ErrorAssertion = {
-  readonly [assertionBrand]: true
+  readonly [assertionTag]: true
   readonly subject: 'error'
   readonly check:
-    | { readonly matcher: 'toBeInstanceOf'; readonly ctor: new (...args: any[]) => object }
+    | { readonly matcher: 'toBeInstanceOf'; readonly ctor: new (...args: never[]) => object }
     | { readonly matcher: 'toThrow'; readonly message: string | RegExp }
-    | { readonly matcher: 'toMatchObject'; readonly expected: Record<string, unknown> }
-    | { readonly matcher: 'toSatisfy'; readonly predicate: (error: unknown) => boolean }
+    | { readonly matcher: 'toMatchObject'; readonly expected: Record<string, Value> }
+    | { readonly matcher: 'toSatisfy'; readonly predicate: (error: Value) => boolean }
 }
 /** 呼び出し記録について照合する条件の記述子。判定後の結果ではない。 */
 export type CallAssertion = {
-  readonly [assertionBrand]: true
+  readonly [assertionTag]: true
   readonly subject: 'call'
   readonly object: object
   readonly key: string
   readonly check:
     | { readonly matcher: 'calledTimes'; readonly count: number }
     | { readonly matcher: 'notCalled' }
-    | { readonly matcher: 'calledWith' | 'calledOnceWith'; readonly args: readonly unknown[] }
-    | { readonly matcher: 'calledNthWith'; readonly n: number; readonly args: readonly unknown[] }
+    | { readonly matcher: 'calledWith' | 'calledOnceWith'; readonly args: readonly Value[] }
+    | { readonly matcher: 'calledNthWith'; readonly n: number; readonly args: readonly Value[] }
 }
 /** 結果または例外について照合する条件の記述子。 */
-export type Assertion = ResultAssertion | ErrorAssertion
+export type Assertion = ErasedResultAssertion | ErrorAssertion
 export type Assertions =
-  | readonly [ResultAssertion, ...ResultAssertion[]]
+  | readonly [ErasedResultAssertion, ...ErasedResultAssertion[]]
   | readonly [ErrorAssertion, ...ErrorAssertion[]]
 export interface ExpectationBlueprint<C> {
   readonly kind: 'deferred'
@@ -305,7 +323,7 @@ interface BlueprintBase<R extends object> {
   readonly steps: readonly StepBlueprint[]
   readonly mocks: readonly MockBlueprint[]
 }
-export interface SuiteBlueprint<F extends AnyFn = AnyFn, C = any, R extends object = {}> extends BlueprintBase<R> {
+export interface SuiteBlueprint<F extends AnyFn = AnyFn, C = object, R extends object = {}> extends BlueprintBase<R> {
   readonly kind: 'test'
   readonly name: string
   readonly target: TargetBlueprint<F>
@@ -328,10 +346,28 @@ export interface GroupEntry {
   /** 子の要求型は階層内では隠す。取り出して単独実行はできない。 */
   readonly blueprint: TestBlueprint<never>
 }
-export type TestBlueprint<R extends object = {}> =
-  | SuiteBlueprint<AnyFn, any, R>
-  | GroupBlueprint<R>
-  | DefinitionBlueprint<R>
+export interface ErasedSuiteBlueprint<R extends object = {}> extends BlueprintBase<R> {
+  readonly kind: 'test'
+  readonly name: string
+  readonly target: TargetBlueprint<AnyFn>
+  readonly cases: readonly (
+    | TodoCase
+    | {
+        readonly name: string
+        readonly mode: 'run' | 'only' | 'skip'
+        readonly origin: SourceLocation
+        readonly row: RowBlueprint | null
+        readonly config: ExecutionConfig
+        readonly mocks: readonly MockBlueprint[]
+        readonly args:
+          | { readonly kind: 'value'; readonly value: readonly Value[] }
+          | { readonly kind: 'from-context'; readonly build: object }
+        readonly expect: object | null
+        readonly calls: readonly CallAssertion[]
+      }
+  )[]
+}
+export type TestBlueprint<R extends object = {}> = ErasedSuiteBlueprint<R> | GroupBlueprint<R> | DefinitionBlueprint<R>
 /** JSONにも同じ形で出す診断値。id/referenceは一つの診断値の中で対応する。 */
 export type DiagnosticKey =
   | { readonly kind: 'string'; readonly value: string }

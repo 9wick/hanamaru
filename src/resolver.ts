@@ -1,3 +1,4 @@
+import * as v from 'valibot'
 interface Tsconfig {
   compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> }
 }
@@ -57,7 +58,14 @@ function jsonc(text: string): Tsconfig {
     }
     clean += char
   }
-  return JSON.parse(clean.replace(/,\s*([}\]])/g, '$1'))
+  return v.parse(
+    v.object({
+      compilerOptions: v.optional(
+        v.object({ baseUrl: v.optional(v.string()), paths: v.optional(v.record(v.string(), v.array(v.string()))) }),
+      ),
+    }),
+    JSON.parse(clean.replace(/,\s*([}\]])/g, '$1')),
+  )
 }
 function configFor(parentURL: string): ConfigEntry | null {
   if (!parentURL?.startsWith('file:')) return null
@@ -65,7 +73,8 @@ function configFor(parentURL: string): ConfigEntry | null {
   const visited: string[] = []
   while (true) {
     if (cache.has(directory)) {
-      const value = cache.get(directory)!
+      const value = cache.get(directory)
+      if (value === undefined) throw new Error('tsconfig cache entry is missing')
       for (const path of visited) cache.set(path, value)
       return value
     }

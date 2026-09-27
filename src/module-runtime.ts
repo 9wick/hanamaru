@@ -1,3 +1,15 @@
+import * as v from 'valibot'
+import {
+  invoke as invokeFunction,
+  property,
+  fieldsValue,
+  objectValue,
+  arrayValue,
+  functionValue,
+  required,
+  valueOf,
+} from './value.js'
+import type { Value } from './value.js'
 import type {
   ModuleRunnerContext,
   EvaluatedModuleNode,
@@ -7,7 +19,7 @@ import type {
 import type { ModuleInvoke } from './protocol.js'
 import type { AnyFn } from './api.js'
 import type { ModulePreparation, ExecutionNode, RuntimeCase } from './internal.js'
-type Namespace = Record<PropertyKey, unknown>
+type Namespace = Record<PropertyKey, Value>
 import { ModuleRunner, ESModulesEvaluator, ssrModuleExportsKey } from '@hanamaru/vite/module-runner'
 import { moduleIdentity, registerModule } from './module-reference.js'
 
@@ -17,23 +29,24 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
       id,
       {
         keys: new Set<PropertyKey>(keys),
-        values: Object.create(null) as Record<PropertyKey, AnyFn>,
+        values: fieldsValue(Object.create(null)),
         dispatchers: new Map<PropertyKey, AnyFn>(),
       },
     ]),
   )
   const views = new WeakMap<object, Namespace>()
-  function view(id: string, original: Namespace): Namespace {
-    if (views.has(original)) return views.get(original)!
+  function view<T>(id: string, input: T): Namespace {
+    const original = objectValue(valueOf(input))
+    if (views.has(original)) return required(views.get(original))
     const slot = slots.get(id)
-    const facade: Namespace = new Proxy(Object.create(null) as Namespace, {
+    const facade: Namespace = new Proxy(fieldsValue(Object.create(null)), {
       get(_, key) {
-        if (!slot?.keys.has(key)) return Reflect.get(original, key)
+        if (!slot?.keys.has(key)) return property(original, key)
         if (!slot.dispatchers.has(key)) {
-          const target = Reflect.get(original, key)
+          const target = property(original, key)
           if (typeof target !== 'function') return target
-          const callOriginal = function (this: unknown, ...args: unknown[]) {
-            return Reflect.apply(original[key] as AnyFn, this, args)
+          const callOriginal = function (this: Value, ...args: Value[]) {
+            return invokeFunction(objectValue(property(original, key)), this, args)
           }
           Object.defineProperty(slot.values, key, {
             value: callOriginal,
@@ -41,14 +54,19 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
             enumerable: true,
             configurable: true,
           })
-          const dispatch: AnyFn = new Proxy(target as AnyFn, {
-            apply: (_, receiver, args) => Reflect.apply(slot.values[key], receiver, args),
+          const dispatch: AnyFn = new Proxy(functionValue(target), {
+            apply: (_, receiver, args) =>
+              invokeFunction(objectValue(slot.values[key]), valueOf(receiver), arrayValue(args)),
             construct(_, args, newTarget): object {
-              const implementation = slot.values[key] === callOriginal ? original[key] : slot.values[key]
-              return Reflect.construct(
-                implementation as AnyFn,
-                args,
-                (newTarget === dispatch ? implementation : newTarget) as AnyFn,
+              const implementation = slot.values[key] === callOriginal ? property(original, key) : slot.values[key]
+              return objectValue(
+                valueOf(
+                  Reflect.construct(
+                    functionValue(implementation),
+                    args,
+                    functionValue(newTarget === dispatch ? implementation : newTarget),
+                  ),
+                ),
               )
             },
           })
@@ -82,12 +100,12 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
       // Cyclic imports must see the same dispatchers as imports after evaluation.
       if (!module) throw new Error('module evaluator requires a module node')
       Reflect.set(module, 'exports', view(module.id, context[ssrModuleExportsKey]))
-      return super.runInlinedModule(context, code)
+      return valueOf(await super.runInlinedModule(context, code))
     }
   }
   class Runner extends ModuleRunner {
     override async directRequest(url: string, module: EvaluatedModuleNode, callstack: string[]): Promise<Namespace> {
-      const original = await super.directRequest(url, module, callstack)
+      const original = valueOf(await super.directRequest(url, module, callstack))
       const facade = view(module.id, original)
       module.exports = facade
       return facade
@@ -100,19 +118,18 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
         async invoke(payload) {
           if (payload.type !== 'custom' || payload.event !== 'vite:invoke')
             throw new Error('unexpected module transport payload')
-          return { result: await invoke(payload.data.name, payload.data.data) }
+          const data = v.parse(
+            v.object({ name: v.string(), data: v.array(v.union([v.string(), v.undefined(), v.looseObject({})])) }),
+            payload.data,
+          )
+          return { result: await invoke(data.name, data.data) }
         },
       },
     },
     new Evaluator(),
   )
   // Vite marks this extension point private in its declarations. Keep the adapter at the integration boundary.
-  const processImport = Reflect.get(ModuleRunner.prototype, 'processImport') as (
-    this: ModuleRunner,
-    exports: Namespace,
-    result: ResolvedResult,
-    metadata?: SSRImportMetadata,
-  ) => Namespace
+  const processImport = functionValue(property(ModuleRunner.prototype, 'processImport'))
   Reflect.defineProperty(runner, 'processImport', {
     value(exports: Namespace, result: ResolvedResult, metadata?: SSRImportMetadata) {
       if (!metadata?.isDynamicImport)
@@ -120,7 +137,7 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
           if (!(name in exports))
             throw new SyntaxError(`The requested module '${result.url}' does not provide an export named '${name}'`)
         }
-      return processImport.call(runner, exports, result, metadata)
+      return objectValue(invokeFunction(processImport, runner, [exports, result, metadata]))
     },
   })
   const bindEntry = <T extends { object: object; key: string }>(entry: T): T & { sourceObject?: object } => {
@@ -132,7 +149,7 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
     return { ...entry, object: slot.values, sourceObject: entry.object }
   }
   return {
-    import: (file: string): Promise<Record<string, unknown>> => runner.import(file),
+    import: async (file: string): Promise<Record<string, Value>> => view(file, await runner.import(file)),
     close: () => runner.close(),
     bindNode: <N extends ExecutionNode>(node: N): N => ({ ...node, mocks: node.mocks.map(bindEntry) }),
     bindCase: (item: RuntimeCase): RuntimeCase => ({

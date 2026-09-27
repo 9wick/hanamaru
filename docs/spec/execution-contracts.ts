@@ -122,15 +122,15 @@ const failure = {
   expected: { kind: 'number', value: 1 }, actual: { kind: 'number', value: 2 },
 } satisfies Failure
 const thrownUndefined = { kind: 'outcome', phase: 'target', message: 'unexpected throw', expected: 'return', actual: { kind: 'throw', value: { kind: 'undefined' } } } satisfies Failure
-const attemptInfo = { attempt: 1, durationMs: 1, outcome: null, assertions: [] } as const
+const attemptInfo: { attempt: number; durationMs: number; outcome: null; assertions: readonly [] } = { attempt: 1, durationMs: 1, outcome: null, assertions: [] }
 const passedAttempt: PassedAttemptResult = { ...attemptInfo, status: 'passed', failures: [], cleanup: 'complete' }
-const failedAttempt = { ...attemptInfo, status: 'failed', failures: [failure], cleanup: 'complete' } as const satisfies FailedAttemptResult
-const failedCleanupAttempt = { ...attemptInfo, status: 'failed', failures: [failure], cleanup: 'incomplete' } as const satisfies FailedAttemptResult
+const failedAttempt = { ...attemptInfo, status: 'failed', failures: [failure], cleanup: 'complete' } satisfies FailedAttemptResult
+const failedCleanupAttempt = { ...attemptInfo, status: 'failed', failures: [failure], cleanup: 'incomplete' } satisfies FailedAttemptResult
 const cancelledAttempt: AttemptResult = { ...attemptInfo, status: 'cancelled', failures: [], cleanup: 'incomplete' }
 const failedAssertion = {
   assertion: failure.assertion, status: 'failed',
   expected: { kind: 'number', value: 1 }, actual: { kind: 'number', value: 2 },
-} as const satisfies AssertionResult
+} satisfies AssertionResult
 // @ts-expect-error a passed attempt cannot contain a failure.
 const passedWithFailure: AttemptResult = { ...attemptInfo, status: 'passed', failures: [failure], cleanup: 'complete' }
 // @ts-expect-error a failed attempt must explain at least one failure.
@@ -143,7 +143,7 @@ const cancelledWithFailure: AttemptResult = { ...attemptInfo, status: 'cancelled
 const passedWithFailedAssertion: AttemptResult = { ...attemptInfo, status: 'passed', assertions: [failedAssertion], failures: [], cleanup: 'complete' }
 void [passedAttempt, failedAttempt, cancelledAttempt, passedWithFailure, failedWithoutFailure, passedWithoutCleanup, cancelledWithFailure, passedWithFailedAssertion]
 
-const middlewareInfo = { durationMs: 1 } as const
+const middlewareInfo = { durationMs: 1 }
 const passedMiddleware = { ...middlewareInfo, status: 'passed', failures: [], cleanup: 'complete' } satisfies GroupMiddlewareResult
 // @ts-expect-error middleware with a failed cleanup cannot pass.
 const passedMiddlewareWithFailedCleanup = { ...middlewareInfo, status: 'passed', failures: [], cleanup: 'incomplete' } satisfies GroupMiddlewareResult
@@ -152,7 +152,7 @@ const failedMiddlewareWithoutFailure = { ...middlewareInfo, status: 'failed', fa
 void [passedMiddleware, passedMiddlewareWithFailedCleanup, failedMiddlewareWithoutFailure]
 
 declare const testResult: TestResult
-const runInfo = { version: 1, tests: [testResult] } as const
+const runInfo: { version: 1; tests: readonly TestResult[] } = { version: 1, tests: [testResult] }
 const passedRun = { ...runInfo, status: 'passed', reason: 'completed' } satisfies RunResult
 const failedRun = { ...runInfo, status: 'failed', reason: 'timeout' } satisfies RunResult
 const cancelledRun = { ...runInfo, status: 'cancelled', reason: 'interrupted' } satisfies RunResult
@@ -182,7 +182,7 @@ result.flaky
 const caseInfo = {
   name: '足す', origin: { file: '/tests/math.test.ts', line: 1, column: 1 },
   path: [0, 0], row: null, config: { timeout: 500, retry: 2 }, durationMs: 0,
-} as const
+}
 const executed: CaseResult = { ...caseInfo, attempts: [passedAttempt] }
 // @ts-expect-error result attempts cannot be appended even with a valid attempt.
 executed.attempts.push(passedAttempt)

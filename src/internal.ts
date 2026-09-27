@@ -1,3 +1,4 @@
+import type { Value } from './value.js'
 import type {
   AnyFn,
   AssertionResult,
@@ -14,7 +15,7 @@ import type {
 } from './api.js'
 import { assertionTag, behaviorTag, definitionTag, doneTag, middlewareTag, resultTag } from './shared.js'
 
-export type Fields = Record<PropertyKey, unknown>
+export type Fields = Record<PropertyKey, Value>
 export type RuntimeBehavior = BehaviorBlueprint & { readonly [behaviorTag]?: true }
 export interface RuntimeMiddlewareResult {
   readonly [resultTag]: true
@@ -23,19 +24,19 @@ export interface RuntimeMiddlewareResult {
 export interface RuntimeMiddleware {
   readonly [middlewareTag]: true
   readonly kind: 'middleware'
-  readonly run: (ctx: Readonly<Fields>, next: (fields?: object) => Promise<RuntimeMiddlewareResult>) => Promise<unknown>
+  readonly run: object
   readonly timeout: number | undefined
 }
 export type ValueCheck =
-  | { matcher: 'toBe' | 'toEqual' | 'toMatchObject'; expected: unknown }
-  | { matcher: 'toSatisfy'; predicate: (value: unknown) => unknown }
-  | { matcher: 'toBeInstanceOf'; ctor: new (...args: never[]) => object }
+  | { matcher: 'toBe' | 'toEqual' | 'toMatchObject'; expected: Value }
+  | { matcher: 'toSatisfy'; predicate: object }
+  | { matcher: 'toBeInstanceOf'; ctor: object }
   | { matcher: 'toThrow'; message: string | RegExp }
 export type CallCheck =
   | { matcher: 'calledTimes'; count: number }
   | { matcher: 'notCalled' }
-  | { matcher: 'calledWith' | 'calledOnceWith'; args: readonly unknown[] }
-  | { matcher: 'calledNthWith'; n: number; args: readonly unknown[] }
+  | { matcher: 'calledWith' | 'calledOnceWith'; args: readonly Value[] }
+  | { matcher: 'calledNthWith'; n: number; args: readonly Value[] }
 export interface RuntimeValueAssertion {
   readonly [assertionTag]: true
   subject: 'result' | 'error'
@@ -57,12 +58,10 @@ export interface RuntimeMock {
   sourceObject?: object
 }
 export type RuntimeTarget = { kind: 'function'; fn: AnyFn } | { kind: 'method'; object: object; key: string; fn: AnyFn }
-export type RuntimeArgs =
-  | { kind: 'value'; value: unknown[] }
-  | { kind: 'from-context'; build: (ctx: Readonly<Fields>) => unknown[] }
+export type RuntimeArgs = { kind: 'value'; value: Value[] } | { kind: 'from-context'; build: object }
 export interface RuntimeExpectation {
   kind: 'deferred'
-  build: (ctx: Readonly<Fields>) => readonly RuntimeValueAssertion[]
+  build: object
 }
 export interface CaseData {
   readonly [doneTag]?: true
@@ -75,7 +74,7 @@ export interface CaseData {
 export interface CaseBase {
   name: string
   origin: SourceLocation
-  row: { index: number; value: unknown } | null
+  row: { index: number; value: Value } | null
   config: ExecutionConfig
   originalIndex?: number
 }

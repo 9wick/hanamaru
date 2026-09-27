@@ -1,12 +1,12 @@
+import type { Value } from './value.js'
 import type { ExecutionPhase } from './api.js'
 import type { AttemptReply, Executor, GroupReply, ModulePreparation, RootReference, Stage } from './internal.js'
-import type { describeExecutionPlan } from './execution-plan.js'
 
-export type ModuleInvoke = (name: string, args: unknown[]) => Promise<unknown>
+export type ModuleInvoke = (name: string, args: Value[]) => Promise<Value>
 export interface ExecutionWorkerData {
   roots: RootReference[]
   preparation: ModulePreparation[]
-  shape: ReturnType<typeof describeExecutionPlan>
+  shape: string
 }
 export type ExecutionCommand =
   | { type: 'attempt'; id: number; path: number[]; number: number }
@@ -19,7 +19,7 @@ export type CommandInput = ExecutionCommand extends infer C
   : never
 export type ReplyValue = AttemptReply | GroupReply | { entered: true }
 export type ExecutionMessage =
-  | { type: 'compile'; id: number; name: string; args: unknown[] }
+  | { type: 'compile'; id: number; name: string; args: Value[] }
   | { type: 'ready' }
   | { type: 'loading'; file: string }
   | { type: 'error'; message: string }
@@ -29,7 +29,7 @@ export type ExecutionMessage =
 export type ExecutionIncoming =
   | ExecutionCommand
   | { type: 'interrupt' }
-  | { type: 'compiled'; id: number; result?: unknown; error?: string }
+  | { type: 'compiled'; id: number; result?: Value; error?: string }
 export interface ExecutionOptions extends ExecutionWorkerData {
   signal?: AbortSignal
   onLoading: (file: string) => void

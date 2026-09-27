@@ -1,8 +1,11 @@
-import type { ExecutionWorkerData, ExecutionCommand, ExecutionIncoming, ExecutionMessage } from './protocol.js'
+import * as v from 'valibot'
+import { required } from './value.js'
+import { executionWorkerDataSchema, executionIncomingSchema } from './schemas.js'
+import type { Value } from './value.js'
+import type { ExecutionCommand, ExecutionMessage } from './protocol.js'
 import type { AttemptState, ExecutionNode, Frame, Fields } from './internal.js'
 import { errorStack } from './shared.js'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
-import { isDeepStrictEqual } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { collectBlueprints, createPlan, executeAttempt, executeGroupMiddleware, failChildren } from './runner.js'
 import { describeExecutionPlan, indexExecutionNodes } from './execution-plan.js'
@@ -10,15 +13,16 @@ import { createModuleRuntime } from './module-runtime.js'
 
 if (!parentPort) throw new Error('execution requires a worker thread')
 const port = parentPort
-const workerData = rawWorkerData as ExecutionWorkerData
-for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const)
-  console[method] = (...values: unknown[]) => process.stderr.write(values.map(String).join(' ') + '\n')
+const workerData = v.parse(executionWorkerDataSchema, rawWorkerData)
+const consoleMethods: ('log' | 'info' | 'warn' | 'error' | 'debug')[] = ['log', 'info', 'warn', 'error', 'debug']
+for (const method of consoleMethods)
+  console[method] = (...values: Value[]) => process.stderr.write(values.map(String).join(' ') + '\n')
 const send = (message: ExecutionMessage) => port.postMessage(message)
-const compiling = new Map<number, { resolve: (value: unknown) => void; reject: (error: unknown) => void }>()
+const compiling = new Map<number, { resolve: (value: Value) => void; reject: (error: Value) => void }>()
 let nextCompileId = 0
 const runtime = createModuleRuntime(
   (name, args) =>
-    new Promise<unknown>((resolve, reject) => {
+    new Promise<Value>((resolve, reject) => {
       const id = nextCompileId++
       compiling.set(id, { resolve, reject })
       send({ type: 'compile', id, name, args })
@@ -32,7 +36,8 @@ const state: AttemptState = {
   activeAttempt: null,
   onTimeout: () => send({ type: 'timeout', phase: state.activeAttempt?.phase }),
 }
-port.on('message', (message: ExecutionIncoming) => {
+port.on('message', (input) => {
+  const message = v.parse(executionIncomingSchema, input)
   if (message.type === 'compiled') {
     const entry = compiling.get(message.id)
     if (!entry) return reportError(new Error('unexpected module compilation reply'))
@@ -52,7 +57,7 @@ port.on('message', (message: ExecutionIncoming) => {
   } else pending.push(message)
 })
 function take(): Promise<ExecutionCommand> {
-  if (pending.length) return Promise.resolve(pending.shift()!)
+  if (pending.length) return Promise.resolve(required(pending.shift()))
   return new Promise<ExecutionCommand>((resolve) => {
     waiting = resolve
   })
@@ -72,30 +77,30 @@ function withGroups<N extends ExecutionNode>(node: N, groups: ActiveGroup[]): N 
   })
   return { ...node, frames, stable }
 }
-function reportError(error: unknown) {
+function reportError<T>(error: T) {
   send({ type: 'error', message: errorStack(error) })
   port.close()
 }
 async function startExecution() {
   try {
-    const files = new Map<string, Record<string, unknown>>()
-    const definitions: unknown[] = []
+    const files = new Map<string, Record<string, Value>>()
+    const definitions: Value[] = []
     for (const root of workerData.roots) {
       if (!files.has(root.file)) {
         send({ type: 'loading', file: root.file })
         files.set(root.file, await runtime.import(pathToFileURL(root.file).href))
       }
-      definitions.push(files.get(root.file)![root.name])
+      definitions.push(required(files.get(root.file))[root.name])
     }
     const plan = createPlan(collectBlueprints(definitions))
-    if (!isDeepStrictEqual(describeExecutionPlan(plan.allNodes), workerData.shape))
+    if (JSON.stringify(describeExecutionPlan(plan.allNodes)) !== workerData.shape)
       throw new TypeError('test definitions changed between collection and execution')
     const nodes = indexExecutionNodes(plan.allNodes)
     async function serve(groups: ActiveGroup[] = []): Promise<Extract<ExecutionCommand, { type: 'group-close' }>> {
       while (true) {
         const command = await take()
         if (command.type === 'group-close') {
-          if (!groups.length || JSON.stringify(command.path) !== JSON.stringify(groups.at(-1)!.path))
+          if (!groups.length || JSON.stringify(command.path) !== JSON.stringify(required(groups.at(-1)).path))
             throw new TypeError('group close does not match the active group')
           return command
         }
@@ -105,7 +110,7 @@ async function startExecution() {
         const node = runtime.bindNode(withGroups(original, groups))
         if (command.type === 'attempt') {
           if (node.kind !== 'test') throw new TypeError('attempt requires a test node')
-          const item = node.bp.cases[command.path.at(-1)!]
+          const item = node.bp.cases[required(command.path.at(-1))]
           if (
             !item ||
             item.mode === 'skip' ||

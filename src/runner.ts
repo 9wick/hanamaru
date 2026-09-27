@@ -1,3 +1,8 @@
+import type { Value } from './value.js'
+import { valueOf, invoke, arrayValue, functionValue, required, property } from './value.js'
+import * as v from 'valibot'
+import { assertionReferenceSchema, failureSchema } from './schemas.js'
+import { finalizeRun } from './result.js'
 import type {
   TestDefinition,
   RunOptions,
@@ -46,7 +51,7 @@ import type {
 import { errorMessage } from './shared.js'
 import { equal, matchObject } from './compare.js'
 import { diagnostic } from './diagnostic.js'
-import { isDefinition, validateAssertion } from './definition.js'
+import { DefinitionBuilder, isDefinition, validateAssertion, checkedAssertion, checkedCall } from './definition.js'
 import { configWith, methodValue, middlewareTag, plainFields, positive, resultTag, retryCount } from './shared.js'
 
 const now = () => performance.now()
@@ -56,12 +61,12 @@ class CaseFailed extends Error {
   }
 }
 class MiddlewareFault extends Error {
-  override cause: unknown
+  override cause: Value
   stage: 'before' | 'after' | 'contract'
   kind: 'execution' | 'timeout'
   timeoutMs: number | undefined
   constructor(
-    cause: unknown,
+    cause: Value,
     stage: 'before' | 'after' | 'contract',
     kind: 'execution' | 'timeout' = 'execution',
     timeoutMs?: number,
@@ -74,8 +79,8 @@ class MiddlewareFault extends Error {
   }
 }
 class CleanupFault extends Error {
-  errors: unknown[]
-  constructor(errors: unknown[]) {
+  errors: Value[]
+  constructor(errors: Value[]) {
     super('cleanup failed')
     this.errors = errors
   }
@@ -102,7 +107,7 @@ function validBehavior(value: BehaviorBlueprint) {
     if (!Array.isArray(value.once) || !value.once.length) throw new TypeError('empty mock sequence')
     value.once.forEach(validBehavior)
     validBehavior(value.fallback)
-    if (Reflect.get(value.fallback as object, 'kind') === 'sequence') throw new TypeError('nested mock sequence')
+    if (property(value.fallback, 'kind') === 'sequence') throw new TypeError('nested mock sequence')
   } else if (!['returns', 'resolves', 'throws', 'rejects', 'callsFake'].includes(value.kind))
     throw new TypeError('invalid mock action')
   else if (value.kind === 'callsFake' && typeof value.fn !== 'function') throw new TypeError('invalid mock fake')
@@ -117,7 +122,7 @@ function validMocks(mocks: RuntimeMock[]) {
 }
 function validCalls(calls: readonly RuntimeCallAssertion[]) {
   if (!Array.isArray(calls)) throw new TypeError('invalid call conditions')
-  for (const call of calls) {
+  for (const call of arrayValue(calls).map(checkedCall)) {
     if (!validateAssertion(call) || call.subject !== 'call' || typeof call.key !== 'string')
       throw new TypeError('invalid call condition')
     methodValue(call.object, call.key)
@@ -247,15 +252,20 @@ function callReference(condition: RuntimeCallAssertion, index: number): Assertio
   return { index, source: 'expectCalls', subject: 'call', key: condition.key, matcher: condition.check.matcher }
 }
 function expectationReference(condition: RuntimeValueAssertion, index: number): AssertionReference {
-  return { index, source: 'expect', subject: condition.subject, matcher: condition.check.matcher } as AssertionReference
+  return v.parse(assertionReferenceSchema, {
+    index,
+    source: 'expect',
+    subject: condition.subject,
+    matcher: condition.check.matcher,
+  })
 }
 function failure<K extends Failure['kind']>(
   kind: K,
   phase: Extract<Failure, { kind: K }>['phase'],
   message: string,
   more: Omit<Extract<Failure, { kind: K }>, 'kind' | 'phase' | 'message'>,
-): Extract<Failure, { kind: K }> {
-  return { kind, phase, message, ...more } as Extract<Failure, { kind: K }>
+): Failure {
+  return v.parse(failureSchema, { kind, phase, message, ...more })
 }
 function executableMode(item: CaseBlueprint, only: boolean) {
   if (item.mode === 'todo') return 'todo'
@@ -288,7 +298,7 @@ function cancelledTree(node: ExecutionNode, path: number[], only: boolean): Muta
       : null,
     path,
     children: node.children.map((child, index) => ({
-      origin: child.entryOrigin!,
+      origin: required(child.entryOrigin),
       result: cancelledTree(child, [...path, child.originalIndex ?? index], only),
     })),
   }
@@ -301,8 +311,8 @@ async function withMiddleware<T>(
   onStage?: (stage: Stage, timeoutMs: number) => void,
 ): Promise<T | undefined> {
   let calls = 0
-  let stage: 'before' | 'inside' | 'after' = 'before'
-  let downstreamError: unknown,
+  const stage: { value: 'before' | 'inside' | 'after' } = { value: 'before' }
+  let downstreamError: Value,
     hasDownstreamError = false
   let innerResult: T | undefined,
     nextPromise: Promise<import('./internal.js').RuntimeMiddlewareResult> | undefined,
@@ -321,23 +331,23 @@ async function withMiddleware<T>(
     clearTimeout(timer)
     if (timedOut || now() - start > timeoutMs)
       throw new MiddlewareFault(new Error('middleware before timed out'), 'before', 'timeout', timeoutMs)
-    stage = 'inside'
+    stage.value = 'inside'
     onStage?.('inside', timeoutMs)
     let extra
     try {
       extra = plainFields(fields)
     } catch (error) {
-      throw new MiddlewareFault(error, 'contract')
+      throw new MiddlewareFault(valueOf(error), 'contract')
     }
     nextPromise = (async () => {
       try {
         innerResult = await body(extra)
       } catch (error) {
-        downstreamError = error
+        downstreamError = valueOf(error)
         hasDownstreamError = true
         throw error
       }
-      stage = 'after'
+      stage.value = 'after'
       timedOut = false
       timer = setTimeout(() => {
         timedOut = true
@@ -355,27 +365,27 @@ async function withMiddleware<T>(
       thrown,
       threw = false
     try {
-      token = await step.run(ctx, next)
+      token = await invoke(step.run, undefined, [ctx, next])
     } catch (error) {
       thrown = error
       threw = true
     }
-    if (nextPromise && (stage as string) === 'inside') {
+    if (nextPromise && stage.value === 'inside') {
       try {
         await nextPromise
       } catch (error) {
         if (!hasDownstreamError) {
-          downstreamError = error
+          downstreamError = valueOf(error)
           hasDownstreamError = true
         }
       }
     }
     clearTimeout(timer)
     if (threw) throw thrown
-    if (timedOut || ((stage as string) === 'before' && now() - start > timeoutMs))
+    if (timedOut || (stage.value === 'before' && now() - start > timeoutMs))
       throw new MiddlewareFault(
         new Error('middleware timed out'),
-        (stage as string) === 'before' ? 'before' : 'after',
+        stage.value === 'before' ? 'before' : 'after',
         'timeout',
         timeoutMs,
       )
@@ -387,18 +397,13 @@ async function withMiddleware<T>(
     clearTimeout(timer)
     if (hasDownstreamError && error === downstreamError) throw error
     if (error instanceof MiddlewareFault) throw error
-    if (hasDownstreamError) throw new CleanupFault([downstreamError, error])
-    throw new MiddlewareFault(error, (stage as string) === 'inside' ? 'after' : stage)
+    if (hasDownstreamError) throw new CleanupFault([downstreamError, valueOf(error)])
+    throw new MiddlewareFault(valueOf(error), stage.value === 'inside' ? 'after' : stage.value)
   } finally {
     onStage?.('end', timeoutMs)
   }
 }
-function executeAction(
-  action: BehaviorBlueprint,
-  state: { index: number },
-  thisArg: unknown,
-  args: unknown[],
-): unknown {
+function executeAction(action: BehaviorBlueprint, state: { index: number }, thisArg: Value, args: Value[]): Value {
   const selected =
     action.kind === 'sequence'
       ? state.index < action.once.length
@@ -415,12 +420,12 @@ function executeAction(
     case 'rejects':
       return Promise.reject(selected.error)
     case 'callsFake':
-      return selected.fn.apply(thisArg, args)
+      return invoke(selected.fn, thisArg, args)
   }
 }
 function patchMethods(mocks: RuntimeMock[], calls: readonly RuntimeCallAssertion[], target: RuntimeTarget) {
   const entries: (Omit<RuntimeMock, 'behavior'> & { behavior: BehaviorBlueprint | null })[] = [...mocks]
-  for (const call of calls)
+  for (const call of arrayValue(calls).map(checkedCall))
     if (!entries.some((x) => x.object === call.object && x.key === call.key))
       entries.push({ object: call.object, key: call.key, behavior: null })
   if (
@@ -430,8 +435,8 @@ function patchMethods(mocks: RuntimeMock[], calls: readonly RuntimeCallAssertion
     )
   )
     throw new TypeError('target method cannot be mocked')
-  const records = new Map<object, Map<string, unknown[][]>>(),
-    restore: (() => unknown)[] = []
+  const records = new Map<object, Map<string, Value[][]>>(),
+    restore: (() => Value | void)[] = []
   let recording = true
   try {
     for (const entry of entries) {
@@ -446,11 +451,11 @@ function patchMethods(mocks: RuntimeMock[], calls: readonly RuntimeCallAssertion
       )
         throw new TypeError(`method ${key} cannot be instrumented`)
       const state = { index: 0 }
-      const history: unknown[][] = []
-      records.set(object, (records.get(object) ?? new Map()).set(key, history))
-      const wrapped = function (this: unknown, ...args: unknown[]) {
+      const history: Value[][] = []
+      records.set(object, (records.get(object) ?? new Map<string, Value[][]>()).set(key, history))
+      const wrapped = function (this: Value, ...args: Value[]) {
         if (recording) history.push(args)
-        return entry.behavior ? executeAction(entry.behavior, state, this, args) : original.apply(this, args)
+        return entry.behavior ? executeAction(entry.behavior, state, this, args) : invoke(original, this, args)
       }
       if (own && !own.configurable) {
         Reflect.set(object, key, wrapped)
@@ -469,7 +474,7 @@ function patchMethods(mocks: RuntimeMock[], calls: readonly RuntimeCallAssertion
     }
   } catch (error) {
     const errors = restoreMethods(restore)
-    if (errors.length) throw new CleanupFault([error, ...errors])
+    if (errors.length) throw new CleanupFault([valueOf(error), ...errors])
     throw error
   }
   return {
@@ -480,17 +485,17 @@ function patchMethods(mocks: RuntimeMock[], calls: readonly RuntimeCallAssertion
     },
   }
 }
-function restoreMethods(actions: (() => unknown)[]): unknown[] {
-  const errors: unknown[] = []
+function restoreMethods(actions: (() => Value | void)[]): Value[] {
+  const errors: Value[] = []
   for (const action of [...actions].reverse())
     try {
       if (action() === false) throw new Error('method restoration failed')
     } catch (error) {
-      errors.push(error)
+      errors.push(valueOf(error))
     }
   return errors
 }
-function checkCondition(condition: RuntimeValueAssertion, actual: unknown) {
+function checkCondition(condition: RuntimeValueAssertion, actual: Value) {
   const c = condition.check
   switch (c.matcher) {
     case 'toBe':
@@ -500,13 +505,13 @@ function checkCondition(condition: RuntimeValueAssertion, actual: unknown) {
     case 'toMatchObject':
       return matchObject(actual, c.expected)
     case 'toSatisfy': {
-      const result = c.predicate(actual)
-      if (result && typeof Reflect.get(Object(result), 'then') === 'function')
+      const result = invoke(c.predicate, undefined, [actual])
+      if (result && typeof property(Object(result), 'then') === 'function')
         throw new TypeError('toSatisfy predicate must be synchronous')
       return result === true
     }
     case 'toBeInstanceOf':
-      return actual instanceof c.ctor
+      return actual instanceof functionValue(c.ctor)
     case 'toThrow':
       if (!(actual instanceof Error)) return false
       return typeof c.message === 'string'
@@ -515,7 +520,7 @@ function checkCondition(condition: RuntimeValueAssertion, actual: unknown) {
   }
   return false
 }
-function checkCalls(condition: RuntimeCallAssertion, history: unknown[][]) {
+function checkCalls(condition: RuntimeCallAssertion, history: Value[][]) {
   const c = condition.check
   switch (c.matcher) {
     case 'calledTimes':
@@ -542,17 +547,16 @@ function evaluate(
   item: RuntimeCase,
   ctx: Readonly<Fields>,
   outcome: TargetOutcome,
-  rawValue: unknown,
-  records: Map<object, Map<string, unknown[][]>>,
+  rawValue: Value,
+  records: Map<object, Map<string, Value[][]>>,
   failures: Failure[],
   assertions: AssertionResult[],
 ) {
   let expected: readonly RuntimeValueAssertion[] = []
   if (item.expect) {
     try {
-      expected = item.expect.build(ctx)
+      expected = arrayValue(invoke(item.expect.build, undefined, [ctx])).map(checkedAssertion)
       if (
-        !Array.isArray(expected) ||
         !expected.length ||
         expected.some((x) => !validateAssertion(x) || !['result', 'error'].includes(x.subject)) ||
         new Set(expected.map((x) => x.subject)).size !== 1
@@ -636,11 +640,12 @@ function evaluate(
     }
   }
 }
-function faultToFailure(error: unknown, phase: ExecutionPhase = 'middleware'): Failure {
+function faultToFailure<T>(input: T, phase: ExecutionPhase = 'middleware'): Failure {
+  const error = valueOf(input)
   if (error instanceof MiddlewareFault)
     return error.kind === 'timeout'
       ? failure('timeout', phase, error.message, {
-          timeoutMs: error.timeoutMs!,
+          timeoutMs: required(error.timeoutMs),
           cleanup: 'complete',
           ...(error.stage === 'contract' ? {} : { stage: error.stage }),
         })
@@ -678,18 +683,20 @@ export async function executeAttempt(
       originalError
     try {
       activePhase = 'args'
-      const args = item.args.kind === 'value' ? item.args.value : item.args.build(ctx)
+      const args = item.args.kind === 'value' ? item.args.value : arrayValue(invoke(item.args.build, undefined, [ctx]))
       if (!Array.isArray(args)) throw new TypeError('argsFrom must return an array')
       activePhase = 'target'
       let rawValue
       try {
         const target = node.bp.target
-        rawValue = await (target.kind === 'method'
-          ? Reflect.apply(Reflect.get(target.object, target.key), target.object, args)
-          : target.fn(...args))
+        rawValue = valueOf(
+          await (target.kind === 'method'
+            ? invoke(methodValue(target.object, target.key), target.object, args)
+            : invoke(target.fn, undefined, args)),
+        )
         outcome = { kind: 'return', value: diagnostic(rawValue) }
       } catch (error) {
-        rawValue = error
+        rawValue = valueOf(error)
         outcome = { kind: 'throw', value: diagnostic(error) }
       }
       instruments.stopRecording()
@@ -698,7 +705,7 @@ export async function executeAttempt(
       if (failures.length) throw new CaseFailed()
     } catch (error) {
       failed = true
-      originalError = error
+      originalError = valueOf(error)
     }
     activePhase = 'cleanup'
     const errors = restoreMethods(instruments.restore)
@@ -775,7 +782,7 @@ export async function executeGroupMiddleware(
   let middleware: MutableGroupMiddleware
   try {
     await withMiddleware(
-      node.bp.middleware!,
+      required(node.bp.middleware),
       Object.freeze(node.stable ?? {}),
       body,
       () => {
@@ -797,7 +804,7 @@ export async function executeGroupMiddleware(
     const failures = issues.map((issue): GroupMiddlewareFailure =>
       issue instanceof MiddlewareFault
         ? issue.kind === 'timeout'
-          ? { kind: 'timeout', phase: issue.stage, message: issue.message, timeoutMs: issue.timeoutMs! }
+          ? { kind: 'timeout', phase: issue.stage, message: issue.message, timeoutMs: required(issue.timeoutMs) }
           : { kind: 'execution', phase: issue.stage, message: issue.message, cause: diagnostic(issue.cause) }
         : { kind: 'execution', phase: 'after', message: errorMessage(issue), cause: diagnostic(issue) },
     )
@@ -831,7 +838,7 @@ async function runNode(
         config: configWith(node.config, item.config),
       }
       const mode = executableMode(item, only)
-      if (mode || state.reason) {
+      if (item.mode === 'todo' || mode || state.reason) {
         const value: MutableCaseResult = { ...base, durationMs: 0, attempts: [], notRun: mode ?? 'cancelled' }
         cases.push(value)
         recordCase(state, value)
@@ -853,7 +860,7 @@ async function runNode(
         state.onDeadline?.({ kind: 'start', timeoutMs: base.config.timeout, result: snapshotRun(state, 'timeout') })
         const { result, retryable } = state.executor
           ? await state.executor.attempt(casePath, number)
-          : await executeAttempt(node, item as RuntimeCase, number, state)
+          : await executeAttempt(node, item, number, state)
         state.onDeadline?.({ kind: 'end' })
         state.activeAttempt = null
         attempts.push(result)
@@ -881,7 +888,7 @@ async function runNode(
       const frames = [...node.frames, { steps: [], fields }, ...child.frames.slice(node.frameCount)]
       const prepared = { ...child, stable, frames }
       result.children.push({
-        origin: child.entryOrigin!,
+        origin: required(child.entryOrigin),
         result: state.reason
           ? cancelledTree(prepared, [...path, child.originalIndex ?? index], only)
           : await runNode(prepared, [...path, child.originalIndex ?? index], only, state),
@@ -929,10 +936,10 @@ async function runNode(
     : await executeGroupMiddleware(node, executeChildren, state, (stage) => {
         if (stage === 'inside' || stage === 'end') state.onDeadline?.({ kind: 'end' })
         else {
-          state.activeGroup = { path, stage, started, timeoutMs: node.bp.middleware!.timeout ?? 10_000 }
+          state.activeGroup = { path, stage, started, timeoutMs: required(node.bp.middleware).timeout ?? 10_000 }
           state.onDeadline?.({
             kind: 'start',
-            timeoutMs: node.bp.middleware!.timeout ?? 10_000,
+            timeoutMs: required(node.bp.middleware).timeout ?? 10_000,
             result: snapshotRun(state, 'timeout'),
           })
         }
@@ -943,7 +950,7 @@ async function runNode(
     for (let index = result.children.length; index < node.children.length; index++) {
       const child = node.children[index]
       result.children.push({
-        origin: child.entryOrigin!,
+        origin: required(child.entryOrigin),
         result: cancelledTree(child, [...path, child.originalIndex ?? index], only),
       })
     }
@@ -1056,13 +1063,13 @@ function snapshotRun(state: RunState, reason: Reason): MutableRunResult {
     tests,
   }
 }
-export function collectBlueprints(input: unknown): RuntimeBlueprint[] {
-  const definitions = Array.isArray(input) ? input : [input]
+export function collectBlueprints(input: Value): RuntimeBlueprint[] {
+  const definitions = Array.isArray(input) ? arrayValue(input) : [input]
   if (!definitions.length || definitions.some((x) => !isDefinition(x)))
     throw new TypeError('run requires completed definitions')
-  const blueprints = definitions.map((def: unknown) => {
+  const blueprints = definitions.map((def: Value) => {
     if (!isDefinition(def)) throw new TypeError('run requires completed definitions')
-    return def.blueprint()
+    return v.parse(v.instance(DefinitionBuilder), def).blueprint()
   })
   blueprints.forEach((bp) => validateBlueprint(bp))
   return blueprints
@@ -1081,7 +1088,7 @@ export async function run(
   input: TestDefinition | readonly TestDefinition[],
   options: RunOptions = {},
 ): Promise<RunResult> {
-  return (await runActive(() => createPlan(collectBlueprints(input), options), options)) as RunResult
+  return finalizeRun(await runActive(() => createPlan(collectBlueprints(input), options), options))
 }
 export async function runPlan(plan: Plan, options: InternalRunOptions = {}, executor: Executor | null = null) {
   return runActive(() => plan, options, executor)

@@ -1,5 +1,8 @@
+import * as v from 'valibot'
+import { required } from './value.js'
+
 import type { UserConfig } from '@hanamaru/vite'
-import type { FetchResult, FetchFunctionOptions } from '@hanamaru/vite/module-runner'
+import type { FetchResult } from '@hanamaru/vite/module-runner'
 import type { ModuleInvoke } from './protocol.js'
 import { builtinModules } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
@@ -46,7 +49,7 @@ export async function createModuleCompiler(vite: UserConfig = {}) {
     const manifest = resolve(directory, 'package.json')
     const parent = dirname(directory)
     const type = existsSync(manifest)
-      ? (JSON.parse(readFileSync(manifest, 'utf8')).type ?? 'commonjs')
+      ? v.parse(v.object({ type: v.optional(v.string(), 'commonjs') }), JSON.parse(readFileSync(manifest, 'utf8'))).type
       : parent === directory || directory.endsWith('/node_modules')
         ? undefined
         : packageType(parent)
@@ -73,7 +76,7 @@ export async function createModuleCompiler(vite: UserConfig = {}) {
     configFile: false,
     appType: 'custom',
     clearScreen: false,
-    server: { ...options.server, middlewareMode: true, watch: null, ws: false },
+    server: { ...vite.server, middlewareMode: true, watch: null, ws: false },
     plugins: [
       {
         name: 'hanamaru-runtime',
@@ -89,7 +92,7 @@ export async function createModuleCompiler(vite: UserConfig = {}) {
           if (found) return { id: found.externalize, external: true }
         },
       },
-      ...(options.plugins ?? []),
+      ...(vite.plugins ?? []),
       {
         name: 'hanamaru-js-paths',
         enforce: 'post',
@@ -105,7 +108,14 @@ export async function createModuleCompiler(vite: UserConfig = {}) {
   const invoke: ModuleInvoke = async (name, args) => {
     if (name === 'getBuiltins') return [...builtinModules, { type: 'regexp', source: '^node:', flags: '' }]
     if (name !== 'fetchModule') throw new Error(`unknown module request: ${name}`)
-    const [url, importer, fetchOptions] = args as [string, string | undefined, FetchFunctionOptions]
+    const [url, importer, fetchOptions] = v.parse(
+      v.tuple([
+        v.string(),
+        v.optional(v.string()),
+        v.object({ cached: v.optional(v.boolean()), startOffset: v.optional(v.number()) }),
+      ]),
+      args,
+    )
     if (url.startsWith('file:')) {
       const found = external(url)
       if (found) return found
@@ -115,7 +125,10 @@ export async function createModuleCompiler(vite: UserConfig = {}) {
       records.set(
         key,
         (async () => {
-          const result = await server.environments.ssr.fetchModule(url, importer, { ...fetchOptions, cached: false })
+          const result = await required(server.environments.ssr).fetchModule(url, importer, {
+            ...fetchOptions,
+            cached: false,
+          })
           if ('file' in result && result.file) {
             const found = external(result.file)
             if (found) return found
@@ -127,7 +140,7 @@ export async function createModuleCompiler(vite: UserConfig = {}) {
           }
         })(),
       )
-    return { ...(await records.get(key)) }
+    return { ...(await required(records.get(key))) }
   }
   return { invoke, close: () => server.close() }
 }

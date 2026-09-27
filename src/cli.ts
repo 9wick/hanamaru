@@ -1,13 +1,18 @@
 #!/usr/bin/env node
+
 import type { DiagnosticValue, SourceLocation, TargetOutcome } from './api.js'
 import type { CliOptions, CliMessage, MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
 import { errorMessage } from './shared.js'
+import * as v from 'valibot'
 import { Worker } from 'node:worker_threads'
 import { inspect } from 'node:util'
 import { readFileSync } from 'node:fs'
 import { relative } from 'node:path'
 
-const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+const { version } = v.parse(
+  v.object({ version: v.string() }),
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')),
+)
 function parse(argv: string[]) {
   const options: CliOptions = {},
     files: string[] = []
@@ -164,7 +169,7 @@ async function main(): Promise<number> {
     interrupted = false,
     reporter = options.reporter
   let partial: MutableRunResult | null = null
-  const done = new Promise<number>((resolve) => {
+  const done = new Promise<number>((resolve, reject) => {
     const printResult = (result: MutableRunResult) => {
       if (reporter === 'json') process.stdout.write(`${JSON.stringify(result)}\n`)
       else process.stdout.write(result.tests.flatMap((node) => formatNode(node)).join('\n') + '\n')
@@ -176,8 +181,7 @@ async function main(): Promise<number> {
       clearTimeout(deadlineTimer)
       clearTimeout(graceTimer)
       process.off('SIGINT', interrupt)
-      worker.terminate()
-      resolve(code)
+      worker.terminate().then(() => resolve(code), reject)
     }
     const interrupt = () => {
       interrupted = true

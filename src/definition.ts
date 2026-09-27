@@ -1,6 +1,32 @@
-import type { Middleware, MiddlewareFn, MiddlewareOptions, TestConstructor, AnyFn } from './api.js'
+import * as v from 'valibot'
 import type {
-  RuntimeAssertion,
+  AnyFn,
+  Middleware,
+  MiddlewareFn,
+  MiddlewareOptions,
+  TestConstructor,
+  TargetStage,
+  TestBuilder,
+  FnKeys,
+  MethodOf,
+  MockDef,
+  ExtendContext,
+  ItBuilder,
+  ItArgs,
+  ItDone,
+  ItExpected,
+  ItCalls,
+  Expect,
+  Assertions,
+  CallsBuilder,
+  Suite,
+  CompatibleChildren,
+  GroupChildren,
+  GroupStage,
+  ChildrenPhase,
+  FirstPhase,
+} from './api.js'
+import type {
   RuntimeValueAssertion,
   RuntimeCallAssertion,
   ValueCheck,
@@ -27,14 +53,16 @@ import {
   positive,
   retryCount,
 } from './shared.js'
+import { property, invoke, objectValue, functionValue, arrayValue, nonempty } from './value.js'
+import type { Value } from './value.js'
 
 function valueAssertions(subject: 'result' | 'error') {
   const assertion = (check: ValueCheck): RuntimeValueAssertion => ({ [assertionTag]: true, subject, check })
   return {
-    toBe: (value: unknown) => assertion({ matcher: 'toBe', expected: value }),
-    toEqual: (value: unknown) => assertion({ matcher: 'toEqual', expected: value }),
-    toMatchObject: (value: unknown) => assertion({ matcher: 'toMatchObject', expected: value }),
-    toSatisfy: (predicate: (value: unknown) => unknown) => assertion({ matcher: 'toSatisfy', predicate }),
+    toBe: (value: Value) => assertion({ matcher: 'toBe', expected: value }),
+    toEqual: (value: Value) => assertion({ matcher: 'toEqual', expected: value }),
+    toMatchObject: (value: Value) => assertion({ matcher: 'toMatchObject', expected: value }),
+    toSatisfy: (predicate: (value: Value) => Value) => assertion({ matcher: 'toSatisfy', predicate }),
     toBeInstanceOf: (ctor: new (...args: never[]) => object) => assertion({ matcher: 'toBeInstanceOf', ctor }),
     toThrow: (message: string | RegExp) => assertion({ matcher: 'toThrow', message }),
   }
@@ -50,17 +78,14 @@ function callBuilder(object: object, key: string) {
   return {
     calledTimes: (count: number) => item({ matcher: 'calledTimes', count }),
     notCalled: () => item({ matcher: 'notCalled' }),
-    calledWith: (...args: unknown[]) => item({ matcher: 'calledWith', args }),
-    calledOnceWith: (...args: unknown[]) => item({ matcher: 'calledOnceWith', args }),
-    calledNthWith: (n: number, ...args: unknown[]) => item({ matcher: 'calledNthWith', n, args }),
+    calledWith: (...args: Value[]) => item({ matcher: 'calledWith', args }),
+    calledOnceWith: (...args: Value[]) => item({ matcher: 'calledOnceWith', args }),
+    calledNthWith: (n: number, ...args: Value[]) => item({ matcher: 'calledNthWith', n, args }),
   }
 }
 function validateCalls(calls: readonly RuntimeCallAssertion[]): readonly RuntimeCallAssertion[] {
-  if (!Array.isArray(calls) || !calls.length || calls.some((x) => x?.[assertionTag] !== true || x.subject !== 'call')) {
-    throw new TypeError('expectCalls must return a nonempty array of call assertions')
-  }
+  if (!calls.length) throw new TypeError('expectCalls must return a nonempty array of call assertions')
   for (const item of calls) {
-    if (typeof item.key !== 'string') throw new TypeError('call target must be a method')
     methodValue(item.object, item.key)
     if (item.check.matcher === 'calledNthWith' && (!Number.isSafeInteger(item.check.n) || item.check.n < 1))
       throw new TypeError('calledNthWith index must be positive')
@@ -70,26 +95,21 @@ function validateCalls(calls: readonly RuntimeCallAssertion[]): readonly Runtime
   return calls
 }
 interface RuntimeBehaviorBuilder {
-  returnsOnce(value: unknown): RuntimeBehaviorBuilder
-  resolvesOnce(value: unknown): RuntimeBehaviorBuilder
-  throwsOnce(error: unknown): RuntimeBehaviorBuilder
-  rejectsOnce(error: unknown): RuntimeBehaviorBuilder
+  returnsOnce(value: Value): RuntimeBehaviorBuilder
+  resolvesOnce(value: Value): RuntimeBehaviorBuilder
+  throwsOnce(error: Value): RuntimeBehaviorBuilder
+  rejectsOnce(error: Value): RuntimeBehaviorBuilder
   callsFakeOnce(fn: AnyFn): RuntimeBehaviorBuilder
-  returns(value: unknown): RuntimeBehavior
-  resolves(value: unknown): RuntimeBehavior
-  throws(error: unknown): RuntimeBehavior
-  rejects(error: unknown): RuntimeBehavior
+  returns(value: Value): RuntimeBehavior
+  resolves(value: Value): RuntimeBehavior
+  throws(error: Value): RuntimeBehavior
+  rejects(error: Value): RuntimeBehavior
   callsFake(fn: AnyFn): RuntimeBehavior
 }
 function behaviorBuilder(once: import('./api.js').BehaviorAction[] = []): RuntimeBehaviorBuilder {
   const finish = (action: import('./api.js').BehaviorAction): RuntimeBehavior =>
     once.length
-      ? {
-          [behaviorTag]: true,
-          kind: 'sequence',
-          once: once as [import('./api.js').BehaviorAction, ...import('./api.js').BehaviorAction[]],
-          fallback: action,
-        }
+      ? { [behaviorTag]: true, kind: 'sequence', once: nonempty(once), fallback: action }
       : { [behaviorTag]: true, ...action }
   const add = (action: import('./api.js').BehaviorAction) => behaviorBuilder([...once, action])
   return {
@@ -105,20 +125,45 @@ function behaviorBuilder(once: import('./api.js').BehaviorAction[] = []): Runtim
     callsFake: (fn) => finish({ kind: 'callsFake', fn }),
   }
 }
-function createMock(
-  object: object,
-  key: string,
-  def: (builder: RuntimeBehaviorBuilder) => RuntimeBehavior,
-): RuntimeMock {
+function checkedBehavior(input: Value, completed = true): RuntimeBehavior {
+  const value = objectValue(input)
+  if (completed && property(value, behaviorTag) !== true)
+    throw new TypeError('mock builder must return a completed behavior')
+  const kind = property(value, 'kind')
+  switch (kind) {
+    case 'returns':
+    case 'resolves':
+      return { [behaviorTag]: true, kind, value: property(value, 'value') }
+    case 'throws':
+    case 'rejects':
+      return { [behaviorTag]: true, kind, error: property(value, 'error') }
+    case 'callsFake':
+      return { [behaviorTag]: true, kind, fn: functionValue(property(value, 'fn')) }
+    case 'sequence': {
+      const action = (entry: Value) => {
+        const result = checkedBehavior(entry, false)
+        if (result.kind === 'sequence') throw new TypeError('nested mock sequence')
+        return result
+      }
+      return {
+        [behaviorTag]: true,
+        kind,
+        once: nonempty(arrayValue(property(value, 'once')).map(action)),
+        fallback: action(property(value, 'fallback')),
+      }
+    }
+    default:
+      throw new TypeError('invalid mock behavior')
+  }
+}
+function createMock(object: object, key: string, def: object): RuntimeMock {
   if (typeof key !== 'string') throw new TypeError('mock target must be a method')
   methodValue(object, key)
-  const behavior = def(behaviorBuilder())
-  if (behavior?.[behaviorTag] !== true) throw new TypeError('mock builder must return a completed behavior')
-  return { object, key, behavior }
+  return { object, key, behavior: checkedBehavior(invoke(def, undefined, [behaviorBuilder()])) }
 }
 function mergeMock(mocks: RuntimeMock[], mock: RuntimeMock) {
-  const index = mocks.findIndex((item) => item.object === mock.object && item.key === mock.key)
-  const copy = [...mocks]
+  const copy = [...mocks],
+    index = mocks.findIndex((item) => item.object === mock.object && item.key === mock.key)
   if (index < 0) copy.push(mock)
   else copy[index] = mock
   return copy
@@ -129,23 +174,20 @@ export function middleware<C, S extends object>(
 ): Middleware<C, S> {
   if (typeof fn !== 'function') throw new TypeError('middleware requires a function')
   const timeout = options.timeout === undefined ? undefined : positive(options.timeout, 'middleware timeout')
-  return Object.freeze({ [middlewareTag]: true, kind: 'middleware', run: fn, timeout }) as unknown as Middleware<C, S>
+  const value: Middleware<C, S> = { [middlewareTag]: true, kind: 'middleware', run: fn, timeout }
+  return Object.freeze(value)
 }
 
-type ExpectBuilder = (e: {
-  result: ReturnType<typeof valueAssertions>
-  error: ReturnType<typeof valueAssertions>
-  ctx: Readonly<Fields>
-}) => readonly RuntimeValueAssertion[]
-type CaseBody = (builder: CaseBuilder) => CaseBuilder
-class CaseBuilder {
+class CaseBuilder<F extends AnyFn, C> {
   readonly data: CaseData
-  readonly [doneTag]?: true
   constructor(data: CaseData) {
     this.data = data
-    if (data[doneTag]) this[doneTag] = true
   }
-  copy(patch: Partial<CaseData>) {
+  get [doneTag](): true {
+    if (!this.data[doneTag]) throw new TypeError('case must return args and an expectation')
+    return true
+  }
+  copy(patch: Partial<CaseData>): CaseBuilder<F, C> {
     return new CaseBuilder({ ...this.data, ...patch })
   }
   timeout(ms: number) {
@@ -154,32 +196,34 @@ class CaseBuilder {
   retry(count: number) {
     return this.copy({ config: { ...this.data.config, retry: retryCount(count) } })
   }
-  mock(object: object, key: string, def: (builder: RuntimeBehaviorBuilder) => RuntimeBehavior) {
+  mock<O extends object, K extends FnKeys<O>>(object: O, key: K, def: MockDef<MethodOf<O, K>>): CaseBuilder<F, C> {
     return this.copy({ mocks: mergeMock(this.data.mocks, createMock(object, key, def)) })
   }
-  args(...args: unknown[]) {
-    return this.copy({ args: { kind: 'value', value: args } })
+  args(...args: Parameters<F>): ItArgs<F, C> {
+    return this.copy({ args: { kind: 'value', value: arrayValue(args) } })
   }
-  argsFrom(build: (ctx: Readonly<Fields>) => unknown[]) {
+  argsFrom(build: (ctx: Readonly<C>) => Parameters<F>): ItArgs<F, C> {
     return this.copy({ args: { kind: 'from-context', build } })
   }
-  expect(build: ExpectBuilder) {
+  expect(build: (e: Expect<F, C>) => Assertions): ItExpected {
     if (this.data.expect) throw new TypeError('expect already set')
     return this.copy({
       [doneTag]: true,
       expect: {
         kind: 'deferred',
-        build: (ctx) => build({ result: valueAssertions('result'), error: valueAssertions('error'), ctx }),
+        build: (ctx: Fields) =>
+          invoke(build, undefined, [{ result: valueAssertions('result'), error: valueAssertions('error'), ctx }]),
       },
     })
   }
-  expectCalls(build: (call: typeof callBuilder) => readonly RuntimeCallAssertion[]) {
+  expectCalls(build: CallsBuilder): ItCalls<F, C> {
     if (this.data.calls.length) throw new TypeError('expectCalls already set')
-    return this.copy({ [doneTag]: true, calls: validateCalls(build(callBuilder)) })
+    const calls = arrayValue(invoke(build, undefined, [callBuilder])).map(checkedCall)
+    return this.copy({ [doneTag]: true, calls: validateCalls(calls) })
   }
 }
 
-class DefinitionBuilder {
+export class DefinitionBuilder<R extends object = {}, C extends object = R, F extends AnyFn = AnyFn> {
   readonly data: DefinitionData
   readonly [definitionTag]?: true
   constructor(data: DefinitionData | null = null) {
@@ -195,7 +239,7 @@ class DefinitionBuilder {
     }
     if (data?.stage === 'group' || data?.stage === 'suite') this[definitionTag] = true
   }
-  copy(patch: Partial<DefinitionData>) {
+  copy(patch: Partial<DefinitionData>): DefinitionBuilder<R, C, F> {
     return new DefinitionBuilder({ ...this.data, ...patch })
   }
   settingAllowed() {
@@ -210,34 +254,44 @@ class DefinitionBuilder {
     this.settingAllowed()
     return this.copy({ config: { ...this.data.config, retry: retryCount(count) } })
   }
-  use(step: RuntimeMiddleware) {
+  use<S extends object>(step: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R> {
     this.settingAllowed()
     if (step?.[middlewareTag] !== true) throw new TypeError('use requires middleware()')
-    return this.copy({ steps: [...this.data.steps, step] })
+    return new DefinitionBuilder<R, ExtendContext<C, S>, F>({ ...this.data, steps: [...this.data.steps, step] })
   }
-  mock(object: object, key: string, def: (builder: RuntimeBehaviorBuilder) => RuntimeBehavior) {
+  mock<O extends object, K extends FnKeys<O>>(
+    object: O,
+    key: K,
+    def: MockDef<MethodOf<O, K>>,
+  ): DefinitionBuilder<R, C, F> {
     this.settingAllowed()
     return this.copy({ mocks: mergeMock(this.data.mocks, createMock(object, key, def)) })
   }
-  target(...args: unknown[]) {
+  target<T extends AnyFn>(fn: T): TestBuilder<T, C, R>
+  target<T extends AnyFn>(name: string, fn: T): TestBuilder<T, C, R>
+  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
+  target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
+  target(...input: Value[]): object {
     if (this.data.stage !== 'base') throw new TypeError('target already selected')
-    let name = null
-    if (typeof args[0] === 'string' && args.length > 1) name = args.shift() as string
+    const [first, ...rest] = input
+    const name = typeof first === 'string' && rest.length ? first : null
+    const args = name === null ? input : rest
+    const [subject, key] = args
     let target: RuntimeTarget
-    if (args.length === 1 && typeof args[0] === 'function') target = { kind: 'function', fn: args[0] as AnyFn }
-    else if (args.length === 2 && args[0] && typeof args[1] === 'string')
-      target = { kind: 'method', object: args[0], key: args[1], fn: methodValue(args[0], args[1]) }
+    if (args.length === 1 && typeof subject === 'function') target = { kind: 'function', fn: functionValue(subject) }
+    else if (args.length === 2 && subject && typeof key === 'string')
+      target = { kind: 'method', object: objectValue(subject), key, fn: methodValue(subject, key) }
     else throw new TypeError('target requires a function or object method')
     return this.copy({
       stage: 'target',
-      name: name ?? (target.kind === 'method' ? target.key : target.fn.name || '<anonymous>'),
+      name: name ?? (target.kind === 'method' ? target.key : functionValue(target.fn).name || '<anonymous>'),
       target,
     })
   }
   addCase(
     mode: CaseBlueprint['mode'],
     name: string,
-    body?: CaseBody,
+    body?: object,
     row: CaseBlueprint['row'] = null,
     origin = location(),
   ) {
@@ -246,56 +300,82 @@ class DefinitionBuilder {
     let item: CaseBlueprint
     if (mode === 'todo') item = { name, mode, origin, row: null, config: {} }
     else {
-      const built = body!(new CaseBuilder({ config: {}, mocks: [], args: null, expect: null, calls: [] }))
-      if (
-        !(built instanceof CaseBuilder) ||
-        !built[doneTag] ||
-        !built.data.args ||
-        (!built.data.expect && !built.data.calls.length)
+      if (!body) throw new TypeError('case requires a body')
+      const built = v.parse(
+        v.instance(CaseBuilder),
+        invoke(body, undefined, [
+          new CaseBuilder<F, C>({ config: {}, mocks: [], args: null, expect: null, calls: [] }),
+        ]),
       )
+      if (!built.data[doneTag] || !built.data.args || (!built.data.expect && !built.data.calls.length))
         throw new TypeError('case must return args and an expectation')
       item = { name, mode, origin, row, ...built.data, args: built.data.args }
     }
     return this.copy({ stage: 'suite', cases: [...this.data.cases, item] })
   }
-  it(name: string, body: CaseBody) {
+  it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
+  it(name: string, body: object): object {
     return this.addCase('run', name, body)
   }
-  only(name: string, body: CaseBody) {
+  only(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
+  only(name: string, body: object): object {
     return this.addCase('only', name, body)
   }
-  skip(name: string, body: CaseBody) {
+  skip(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
+  skip(name: string, body: object): object {
     return this.addCase('skip', name, body)
   }
-  todo(name: string) {
+  todo(name: string): Suite<F, C, R>
+  todo(name: string): object {
     return this.addCase('todo', name)
   }
-  each<Row>(
-    name: string | ((row: Row) => string),
+  each<const Row>(
+    name: string | ((row: NoInfer<Row>) => string),
     rows: readonly Row[],
-    body: (builder: CaseBuilder, row: Row) => CaseBuilder,
-  ) {
-    if (!Array.isArray(rows) || rows.length === 0) throw new TypeError('each requires nonempty rows')
+    body: (t: ItBuilder<F, C>, row: NoInfer<Row>) => ItDone,
+  ): Suite<F, C, R>
+  each(name: string | object, input: readonly Value[], body: object): object {
+    const rows = arrayValue(input)
+    if (!rows.length) throw new TypeError('each requires nonempty rows')
     const origin = location()
-    return rows.reduce<DefinitionBuilder>((test, row, index) => {
-      const display = typeof name === 'function' ? name(row) : `${name} [${index + 1}]`
-      return test.addCase('run', display, (t) => body(t, row), { index, value: row }, origin)
+    return rows.reduce<DefinitionBuilder<R, C, F>>((test, row, index) => {
+      const display =
+        typeof name === 'string' ? `${name} [${index + 1}]` : v.parse(v.string(), invoke(name, undefined, [row]))
+      return test.addCase(
+        'run',
+        display,
+        (builder: object) => invoke(body, undefined, [builder, row]),
+        { index, value: row },
+        origin,
+      )
     }, this)
   }
-  group(...args: unknown[]) {
+  group<S extends object>(
+    m: Middleware<R, S>,
+    children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<R, S>>,
+  ): GroupStage<C, R, 'group'>
+  group<S extends object>(
+    name: string,
+    m: Middleware<R, S>,
+    children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<R, S>>,
+  ): GroupStage<C, R, 'group'>
+  group<const D extends GroupChildren<C>>(children: D): GroupStage<C, R, FirstPhase<ChildrenPhase<D>>>
+  group<const D extends GroupChildren<C>>(name: string, children: D): GroupStage<C, R, FirstPhase<ChildrenPhase<D>>>
+  group(...input: Value[]): object {
     if (this.data.stage !== 'base' && this.data.stage !== 'group') throw new TypeError('group requires a group builder')
-    const origin = location()
-    let name = null
-    if (typeof args[0] === 'string') name = args.shift() as string
-    let step: RuntimeMiddleware | null = null
-    if (hasTag(args[0], middlewareTag)) step = args.shift() as RuntimeMiddleware
-    const [children] = args
-    if (
-      args.length !== 1 ||
-      !Array.isArray(children) ||
-      !children.length ||
-      children.some((child) => !isDefinition(child))
-    )
+    const origin = location(),
+      [first, ...rest] = input
+    const name = typeof first === 'string' ? first : null
+    const args = name === null ? input : rest
+    const head = args[0]
+    const step =
+      head !== null && typeof head === 'object' && property(head, middlewareTag) === true
+        ? checkedMiddleware(head)
+        : null
+    const childrenInput = step ? args.slice(1) : args
+    if (childrenInput.length !== 1) throw new TypeError('group requires completed children')
+    const children = v.parse(v.array(v.instance(DefinitionBuilder)), childrenInput[0])
+    if (!children.length || children.some((child) => !isDefinition(child)))
       throw new TypeError('group requires completed children')
     const group: RuntimeGroup = {
       version: 1,
@@ -306,23 +386,25 @@ class DefinitionBuilder {
       config: {},
       steps: [],
       mocks: [],
-      children: children.map((child) => ({ origin, blueprint: (child as DefinitionBuilder).blueprint() })),
+      children: children.map((child) => ({ origin, blueprint: child.blueprint() })),
     }
     return this.copy({ stage: 'group', groups: [...this.data.groups, group] })
   }
   blueprint(): RuntimeBlueprint {
     const d = this.data
-    if (d.stage === 'suite')
+    if (d.stage === 'suite') {
+      if (d.name === null || d.target === null) throw new TypeError('test definition is incomplete')
       return {
         version: 1,
         kind: 'test',
-        name: d.name!,
-        target: d.target!,
+        name: d.name,
+        target: d.target,
         cases: [...d.cases],
         config: { ...d.config },
         steps: [...d.steps],
         mocks: [...d.mocks],
       }
+    }
     if (d.stage === 'group')
       return {
         version: 1,
@@ -335,15 +417,72 @@ class DefinitionBuilder {
     throw new TypeError('test definition is incomplete')
   }
 }
-
-function hasTag(value: unknown, tag: symbol): boolean {
-  return typeof value === 'object' && value !== null && Reflect.get(value, tag) === true
+function checkedMiddleware(value: object): RuntimeMiddleware {
+  const timeout = v.parse(v.optional(v.number()), property(value, 'timeout'))
+  return { [middlewareTag]: true, kind: 'middleware', run: functionValue(property(value, 'run')), timeout }
 }
-export function isDefinition(value: unknown): value is import('./internal.js').RuntimeDefinitionHandle {
-  return hasTag(value, definitionTag)
+export function isDefinition<T>(value: T): boolean {
+  return value instanceof DefinitionBuilder && value[definitionTag] === true
 }
-export function validateAssertion(value: unknown): value is RuntimeAssertion {
-  return hasTag(value, assertionTag)
+export function validateAssertion<T>(value: T): boolean {
+  return typeof value === 'object' && value !== null && property(value, assertionTag) === true
 }
-// The implementation retains all stages; the public constructor exposes only the initial stage.
-export const Test = DefinitionBuilder as unknown as TestConstructor
+export function checkedAssertion(input: Value): RuntimeValueAssertion {
+  const value = objectValue(input)
+  if (!validateAssertion(value)) throw new TypeError('invalid assertion')
+  const subject = v.parse(v.picklist(['result', 'error']), property(value, 'subject'))
+  const check = objectValue(property(value, 'check'))
+  const matcher = property(check, 'matcher')
+  switch (matcher) {
+    case 'toBe':
+    case 'toEqual':
+    case 'toMatchObject':
+      return { [assertionTag]: true, subject, check: { matcher, expected: property(check, 'expected') } }
+    case 'toSatisfy':
+      return {
+        [assertionTag]: true,
+        subject,
+        check: { matcher, predicate: functionValue(property(check, 'predicate')) },
+      }
+    case 'toThrow':
+      return {
+        [assertionTag]: true,
+        subject,
+        check: { matcher, message: v.parse(v.union([v.string(), v.instance(RegExp)]), property(check, 'message')) },
+      }
+    case 'toBeInstanceOf': {
+      const ctor = objectValue(property(check, 'ctor'))
+      return { [assertionTag]: true, subject, check: { matcher, ctor } }
+    }
+    default:
+      throw new TypeError('invalid assertion matcher')
+  }
+}
+export function checkedCall(input: Value): RuntimeCallAssertion {
+  const value = objectValue(input)
+  if (!validateAssertion(value) || property(value, 'subject') !== 'call') throw new TypeError('invalid call assertion')
+  const object = objectValue(property(value, 'object')),
+    key = v.parse(v.string(), property(value, 'key'))
+  const check = objectValue(property(value, 'check')),
+    matcher = property(check, 'matcher')
+  let condition: CallCheck
+  switch (matcher) {
+    case 'notCalled':
+      condition = { matcher }
+      break
+    case 'calledTimes':
+      condition = { matcher, count: v.parse(v.number(), property(check, 'count')) }
+      break
+    case 'calledWith':
+    case 'calledOnceWith':
+      condition = { matcher, args: arrayValue(property(check, 'args')) }
+      break
+    case 'calledNthWith':
+      condition = { matcher, n: v.parse(v.number(), property(check, 'n')), args: arrayValue(property(check, 'args')) }
+      break
+    default:
+      throw new TypeError('invalid call matcher')
+  }
+  return { [assertionTag]: true, subject: 'call', object, key, check: condition }
+}
+export const Test: TestConstructor = DefinitionBuilder

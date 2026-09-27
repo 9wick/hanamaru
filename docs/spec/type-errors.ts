@@ -44,8 +44,9 @@ ready.it('ctx', t => t.args(1, 2).expect(e => [e.result.toBe(e.ctx.n)]))
 const mocked = ready.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
 // @ts-expect-error async behavior is unavailable for synchronous return types.
 ready.mock({ add }, 'add', m => m.resolves(3))
+const optionalFunction: { run?: () => number } = {}
 // @ts-expect-error a missing optional function is not callable.
-new Test().target({} as { run?: () => number }, 'run')
+new Test().target(optionalFunction, 'run')
 // @ts-expect-error a non-function property cannot be the target.
 new Test().target({ label: 'text' }, 'label')
 // @ts-expect-error case callbacks must return the terminal value.
@@ -163,3 +164,14 @@ const observed = ready.it('呼び出し条件の記述子を持つ', t => t.args
 run(observed)
 // @ts-expect-error the old plan API is no longer public.
 observed.plan()
+
+// Void-returning targets still expose undefined and typed synchronous predicates.
+new Test().target(() => {}).it('void', t => t.args().expect(e => [e.result.toBe(undefined)]))
+new Test().target(add).it('predicate descriptor', t => t.args(1, 2).expect(e => {
+  const assertion = e.result.toSatisfy(value => value === 3)
+  if (assertion.check.matcher === 'toSatisfy') {
+    const valid: boolean = assertion.check.predicate(3)
+    void valid
+  }
+  return [assertion]
+}))

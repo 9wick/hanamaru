@@ -75,7 +75,7 @@ for (const mutate of [
 const pattern = /boom/g
 pattern.lastIndex = 2
 const errors = new Test()
-  .target((value: unknown) => Promise.reject(value))
+  .target((value: Error | { message: string }) => Promise.reject(value))
   .it('Error', (t) => t.args(new Error('boom')).expect((e) => [e.error.toThrow(pattern)]))
   .it('non-Error', (t) => t.args({ message: 'boom' }).expect((e) => [e.error.toThrow('boom')]))
 const errorResult = await run(errors)
