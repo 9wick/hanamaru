@@ -90,8 +90,29 @@ new Test()
 
 ## 差し替えの範囲
 
-対象はメソッドを持つオブジェクトです。モジュールモックや、既に別変数へ保存された関数参照の置換は含みません。
-呼び出しがそのオブジェクトのプロパティを通る必要があります。
+通常オブジェクトでは、そのプロパティを通る呼び出しが対象です。
+既に別変数へ保存された通常オブジェクトのメソッド参照は置き換わりません。
+
+CLIで実行する場合は、module namespaceの関数exportも対象です。
+対象関数が依存を直接importしている場合も、同じモジュールからの呼び出しを差し替え・記録できます。
+
+```ts
+import { Test } from 'hanamaru'
+import * as data from './data.ts'
+import { calc } from './calc.ts'
+
+export const cases = new Test().target(calc)
+  .it('依存を差し替える', t => t
+    .mock(data, 'getData', m => m.returns(10))
+    .args()
+    .expect(e => [e.result.toBe(20)])
+    .expectCalls(call => [call(data, 'getData').calledOnce()]))
+```
+
+この例のcalcは `import { getData } from './data.ts'` した関数を呼び、2倍して返すものとします。
+定義の収集中は本物を使い、fakeは試行中だけ有効になります。試行終了後に復元し、retry時には記録を初期化します。
+同じファイル内のローカル変数への直接呼び出しや、Viteで外部化したモジュール内部のimportには介入しません。
+既に読み込んだ定義を受け取る `run(definition)` は読込をやり直さないため、module namespaceの差し替えはCLIで実行してください。
 
 適用前のプロパティdescriptorを保存し、試行終了時に復元します。
 差し替え不能なプロパティ、アクセサ、実行時に非関数だった値は失敗として扱います。
