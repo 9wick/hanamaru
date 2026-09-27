@@ -15,12 +15,14 @@ resultの期待値は、対象の `Awaited<ReturnType<F>>` から型推論しま
 | `toMatchObject(partial)` | 指定したプロパティが部分一致 |
 | `toSatisfy(predicate)` | predicateがtrueを返す |
 
+<!-- example: docs/examples/matchers.test.ts#result -->
 ```ts
 .expect(e => [
   e.result.toEqual({ id: 'u1' }),
   e.result.toSatisfy(user => user.id.startsWith('u')),
 ])
 ```
+出典: [docs/examples/matchers.test.ts](examples/matchers.test.ts)
 
 toMatchObjectの期待値型は `Partial<V>` です。ネストした値の型まで再帰的なPartialにはしません。
 predicateには実際の結果を渡し、真偽値を同期的に返すことを要求します。
@@ -37,6 +39,7 @@ errorを含む配列は、対象がthrowまたはrejectすることを期待し�
 | `toMatchObject(partial)` | 例外オブジェクトの指定プロパティが部分一致 |
 | `toSatisfy(predicate)` | unknownを受けるpredicateがtrueを返す |
 
+<!-- example: docs/examples/matchers.test.ts#error -->
 ```ts
 .expect(e => [
   e.error.toBeInstanceOf(Error),
@@ -46,6 +49,7 @@ errorを含む配列は、対象がthrowまたはrejectすることを期待し�
   call(mailService, 'send').notCalled(),
 ])
 ```
+出典: [docs/examples/matchers.test.ts](examples/matchers.test.ts)
 
 toThrowはErrorでない値には一致しません。文字列やundefinedをthrowする対象にはtoSatisfyを使えます。
 RegExpのlastIndexを検証結果へ影響させず、検証後も元の値を変更しません。
@@ -61,11 +65,13 @@ resultとerrorを同じ配列へ入れることは型で防ぎます。
 | `calledOnceWith(...args)` | 合計1回だけ呼ばれ、その引数が深く一致する |
 | `calledNthWith(n, ...args)` | そのメソッドのn回目の引数が深く一致する |
 
+<!-- example: docs/examples/matchers.test.ts#calls -->
 ```ts
 .expectCalls(call => [
   call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
 ])
 ```
+出典: [docs/examples/matchers.test.ts](examples/matchers.test.ts)
 
 expectCallsだけでも正常終了を期待します。途中で予期しない例外が起きれば失敗です。
 記録は実行器が自動設定し、mockがなければ本物のメソッドを呼びます。
@@ -78,14 +84,16 @@ calledNthWithは合計回数を制約しないため、必要ならcalledTimes�
 
 ## コンテキスト
 
+<!-- example: docs/examples/matchers.test.ts#context -->
 ```ts
-new Test()
+const withContext = new Test()
   .target(add)
   .use(middleware(async (_, next) => next({ input: [1, 2] as const, expected: 3 })))
   .it('ctxを使う', t => t
     .argsFrom(ctx => [...ctx.input])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/matchers.test.ts](examples/matchers.test.ts)
 
 コンテキストには親から子までのmiddlewareがnextへ渡したフィールドが入り、同名のものは内側を優先します。
 フィールド自体は読み取り専用ですが、参照先は同じ値なので、対象が変更したオブジェクトの状態も見えます。

@@ -6,14 +6,16 @@ blueprintは、テスト定義から得られる実行前の構造です。プ�
 
 ## 取得と実行
 
+<!-- example: docs/examples/metadata.ts -->
 ```ts
 import { run } from 'hanamaru'
-import type { TestBlueprint } from 'hanamaru'
 import { users } from './user.test.ts'
 
-const blueprint: TestBlueprint = users.blueprint()
 const result = await run(users)
+const blueprint = users.blueprint()
+console.log(result.status, blueprint.kind)
 ```
+出典: [docs/examples/metadata.ts](examples/metadata.ts)
 
 `.blueprint()` は `TestBlueprint` を返します。`run()` は完成したテストを受け取り、実行して `RunResult` を返します。blueprintを直接 `run()` に渡すことはできません。
 blueprintを取得してもmiddleware・テスト対象は呼ばず、メソッドの差し替えや記録も開始しません。
@@ -69,6 +71,7 @@ TestResultとGroupResultに集約状態の写しは持たず、各ケース・�
 各blueprintがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。
 名前のないグループも構造として残ります。
 
+<!-- example: docs/examples/blueprint-tree.ts -->
 ```ts
 import { registrations } from './groups.test.ts'
 
@@ -87,6 +90,7 @@ for (const group of blueprint.children) {
   }
 }
 ```
+出典: [docs/examples/blueprint-tree.ts](examples/blueprint-tree.ts)
 
 親のコンテキストを要求する子もblueprintを取得できますが、runに渡せるのは親のコンテキストを要求しない完成したルートのテストです。
 `TestDefinition<R>` と `TestBlueprint<R>` は供給元によらず要求Rを保持します。runではRを検査します。完成した定義の型は、配置から推論した入力の使用時点も保持し、groupへの合成時に検査します。階層内のchildrenでは要求型を隠します。
@@ -95,25 +99,28 @@ for (const group of blueprint.children) {
 
 ## 呼び出し条件は定義時に構造化する
 
+<!-- example: docs/examples/call-descriptor.test.ts#expect-calls -->
 ```ts
 .expectCalls(call => [
   call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
+出典: [docs/examples/call-descriptor.test.ts](examples/call-descriptor.test.ts)
 
 このコールバックは定義時に1回評価します。
 `call` とマッチャは検証内容を記述するだけで、send自体は呼びません。
-返した記述子がCase.callsに入ります。記述子の主要なフィールドは次のとおりです。
+返した記述子がCase.callsに入ります。blueprintから取り出した記述子は次の条件を満たします（この例は実行して確認しています）。
 
+<!-- example: docs/examples/call-descriptor.test.ts#descriptor -->
 ```ts
-// 型上のブランドを省略した、記述子の主要なフィールド。
-const assertion = {
+.expect(e => [e.result.toMatchObject({
   subject: 'call',
   object: mailService,
   key: 'send',
   check: { matcher: 'calledOnceWith', args: [{ id: 'u1' }] },
-}
+})])
 ```
+出典: [docs/examples/call-descriptor.test.ts](examples/call-descriptor.test.ts)
 
 blueprintを受け取った時点で、記録対象の参照とキー、回数や引数の条件が得られます。
 実行器はcallsから記録対象を得て、mocksと同じobject・keyなら1つのラッパーにまとめます。
@@ -124,14 +131,19 @@ middlewareで初めて得る参照や値を、呼び出し条件に使うAPIは�
 
 ## 結果・例外の期待はコンテキストから組み立てる
 
+<!-- example: docs/examples/context-flow.test.ts -->
 ```ts
-new Test()
+import { Test, middleware } from 'hanamaru'
+import { add } from './math.ts'
+
+export const contextFlow = new Test()
   .target(add)
   .use(middleware(async (_, next) => next({ a: 1, expected: 3 })))
   .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/context-flow.test.ts](examples/context-flow.test.ts)
 
 Case.expectは、このexpectコールバックへコンテキストと記述子ビルダーを渡す `build(ctx)` を保持します。
 標準実行器では各試行でテスト対象の呼び出しが終わった後に1回評価し、次の記述子を得ます。

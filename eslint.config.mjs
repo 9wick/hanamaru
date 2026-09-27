@@ -57,6 +57,11 @@ export default [
     rules: typeAwareRules,
   },
   {
+    files: ['scripts/**/*.ts'],
+    languageOptions: { parserOptions: { project: './scripts/tsconfig.json', tsconfigRootDir: import.meta.dirname } },
+    rules: typeAwareRules,
+  },
+  {
     files: ['docs/spec/*.ts'],
     rules: {
       '@typescript-eslint/ban-ts-comment': [

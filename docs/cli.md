@@ -68,6 +68,7 @@ filterは正規表現ではない。階層内のケース名に文字列を含�
 
 `hanamaru.config.ts`。
 
+<!-- example: docs/examples/hanamaru.config.ts -->
 ```ts
 import { defineConfig } from 'hanamaru'
 
@@ -79,6 +80,7 @@ export default defineConfig({
   shutdownGrace: 5_000,
 })
 ```
+出典: [docs/examples/hanamaru.config.ts](examples/hanamaru.config.ts)
 
 includeの既定値は `['**/*.{test,spec}.ts']`、excludeの既定値は `['**/node_modules/**', '**/dist/**']` とする。
 CLI引数は設定値を上書きする。明示ファイルはinclude/excludeによる探索を行わず、指定順ではなくパス順に正規化する。
@@ -89,22 +91,26 @@ CLI引数は設定値を上書きする。明示ファイルはinclude/exclude�
 JS/TSの変換とモジュールの読込はCLIが内部で行います。設定ファイル・事前ビルド・loaderの指定は不要です。
 aliasや変換プラグインが必要な場合は、`hanamaru.config.ts` の `vite` にViteの設定を渡します。
 
+<!-- example: docs/examples/hanamaru-vite.config.ts -->
 ```ts
+import { resolve } from 'node:path'
 import { defineConfig } from 'hanamaru'
 
 export default defineConfig({
   vite: {
     resolve: {
-      alias: { '@app': new URL('./src', import.meta.url).pathname },
+      alias: { '@app': resolve('src') },
     },
     plugins: [],
   },
 })
 ```
+出典: [docs/examples/hanamaru-vite.config.ts](examples/hanamaru-vite.config.ts)
 
+aliasに書いた相対パスは、実行ディレクトリ（`vite.root` の既定値）を基準に解決します。
 既存のVite設定を使う場合も、このファイルからimportして `vite` に渡せます。
 `vite.config.*` は自動では読みません。関数形式の既存設定は呼び出した結果のオブジェクトを渡します。
-`vite.root` の既定値は実行ディレクトリです。テスト探索のinclude/excludeはhanamaru側の設定です。
+テスト探索のinclude/excludeはhanamaru側の設定です。
 `vite.configFile`、watch、HMR、HTTPサーバーの起動はCLIが管理します。
 プラグインは収集側で実行し、同じ変換結果を実行workerへ渡します。
 設定やプラグインのエラーは収集エラー（コード2）として報告します。
@@ -209,12 +215,14 @@ Ctrl+Cを受けた終了は、既存の失敗やcleanup失敗によりRunResult.
 
 ## ライブラリから実行する
 
+<!-- example: docs/examples/metadata.ts#run -->
 ```ts
 import { run } from 'hanamaru'
 import { users } from './user.test.ts'
 
 const result = await run(users)
 ```
+出典: [docs/examples/metadata.ts](examples/metadata.ts)
 
 ライブラリAPIはprocessを終了せず、処理と後始末を待って結果を返す。
 任意コードの強制停止はできず、timeout後も対象が終了しなければ戻らない場合がある。

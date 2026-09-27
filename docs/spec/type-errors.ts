@@ -27,6 +27,7 @@ ready.it('引数なし', t => t.expect(e => [e.result.toBe(3)]))
 ready.it('引数型', t => t.args('1', 2).expect(e => [e.result.toBe(3)]))
 // @ts-expect-error arguments can only be chosen once.
 ready.it('二度', t => t.args(1, 2).args(3, 4).expect(e => [e.result.toBe(3)]))
+// #region outcome-mix
 // @ts-expect-error result and error assertions cannot coexist.
 ready.it('矛盾', t => t.args(1, 2).expect(e => [e.result.toBe(3), e.error.toThrow('bad')]))
 // @ts-expect-error reversed ordering cannot hide contradictory expectations.
@@ -35,6 +36,7 @@ ready.it('逆順の矛盾', t => t.args(1, 2).expect(e => [e.error.toThrow('bad'
 ready.it('空配列', t => t.args(1, 2).expect(() => []))
 // @ts-expect-error matcher must be called.
 ready.it('未完了', t => t.args(1, 2).expect(e => [e.result]))
+// #endregion outcome-mix
 // @ts-expect-error the expectation callback is required.
 ready.it('検証なし', t => t.args(1, 2).expect())
 // @ts-expect-error arguments stay fixed after expectations begin.
@@ -84,12 +86,14 @@ ready.it('順序を入れ替える', t => t.args(1, 2)
 mocked.it('同じメソッドに複数条件', t => t.args(1, 2).expectCalls(call => [
   call(userRepository, 'save').calledTimes(0), call(userRepository, 'save').notCalled(),
 ]))
+// #region call-keys
 // @ts-expect-error a non-function property is not observable.
 ready.it('非メソッド', t => t.args(1, 2).expectCalls(call => [call({ label: 'a' }, 'label').notCalled()]))
 // @ts-expect-error nonexistent keys are unavailable.
 ready.it('キー違い', t => t.args(1, 2).expectCalls(call => [call(mailService, 'save').notCalled()]))
 // @ts-expect-error call arguments follow the original method.
 ready.it('引数型', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').calledOnceWith({ id: 1 })]))
+// #endregion call-keys
 // @ts-expect-error observation cannot omit its matcher.
 ready.it('呼び忘れ', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send')]))
 // @ts-expect-error at least one call assertion is required.

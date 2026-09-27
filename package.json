@@ -17,17 +17,18 @@
     "README.md"
   ],
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json && tsc -p e2e/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json && tsc -p e2e/tsconfig.json && tsc -p scripts/tsconfig.json",
     "test": "npm run build && vp test run && npm run test:examples:run",
     "test:unit": "vp test run --project unit",
     "test:e2e": "npm run build && vp test run --project e2e-workspace --project e2e-package",
     "test:package": "npm run build && vp test run --project e2e-package",
     "test:examples": "npm run build && npm run test:examples:run",
     "test:examples:run": "node dist/cli.js --ci docs/examples/*.test.ts",
-    "check:docs": "python3 scripts/check-docs.py",
-    "lint": "vp lint --deny-warnings src e2e docs/examples eslint.config.test.ts && eslint . --max-warnings 0",
-    "format": "vp fmt src e2e vite.config.ts eslint.config.mjs eslint.config.test.ts",
-    "format:check": "vp fmt --check src e2e vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "check:docs": "node --disable-warning=ExperimentalWarning scripts/docs.ts",
+    "docs:sync": "node --disable-warning=ExperimentalWarning scripts/docs.ts --write",
+    "lint": "vp lint --deny-warnings src e2e docs/examples scripts/docs.ts scripts/docs eslint.config.test.ts && eslint . --max-warnings 0",
+    "format": "vp fmt src e2e scripts/docs.ts scripts/docs vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "format:check": "vp fmt --check src e2e scripts/docs.ts scripts/docs vite.config.ts eslint.config.mjs eslint.config.test.ts",
     "build": "vp pack && tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:docs"

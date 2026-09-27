@@ -3,9 +3,14 @@
 `new Test()` から対象・共通設定・ケースをつないで定義します。
 ここではテストを実行しません。
 
+<!-- example: docs/examples/user.test.ts -->
 ```ts
-const users = new Test()
+import { Test } from 'hanamaru'
+import { createUser, userRepository, mailService } from './user.ts'
+
+export const users = new Test()
   .target(createUser)
+  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
   .it('保存して通知する', t => t
     .args({ name: 'Alice' })
@@ -14,8 +19,21 @@ const users = new Test()
     ])
     .expectCalls(call => [
       call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ]))
+    ])
+  )
+  .it('保存に失敗したら通知しない', t => t
+    // このケースだけ、共通設定を上書きする。
+    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
+    .args({ name: 'Alice' })
+    .expect(e => [
+      e.error.toBeInstanceOf(Error),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').notCalled(),
+    ])
+  )
 ```
+出典: [docs/examples/user.test.ts](examples/user.test.ts)
 
 ## 定義の段階
 
@@ -32,22 +50,27 @@ const users = new Test()
 useは `.target()` の前後どちらにも書けます。
 各メソッドは新しいビルダーを返すため、元のビルダーから別の派生を作れます。
 
+<!-- example: docs/spec/middleware-types.ts#derive -->
 ```ts
 const base = new Test().target(add)
 const tests = base.it('足す', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
-
-// tests.use(...) は型エラー。既存ケースのctxを後から変えられない。
-// base.use(...) は可能。ケースを含まない別の派生になる。
+// @ts-expect-error cases already declared cannot have their context replaced.
+tests.use(middleware(async (_, next) => next({ n: 1 })))
+// Deriving from the builder before any case starts a separate suite.
+base.use(middleware(async (_, next) => next({ n: 1 })))
 ```
+出典: [docs/spec/middleware-types.ts](spec/middleware-types.ts)
 
 ## テスト対象を指定する: target
 
+<!-- example: docs/examples/test-builder.test.ts#targets -->
 ```ts
-new Test().target(createUser)
-new Test().target(userService, 'create')
-new Test().target('ユーザー作成', createUser)
-new Test().target('保存', userService, 'create')
+const byFunction = new Test().target(createUser)
+const byMethod = new Test().target(userRepository, 'save')
+const namedFunction = new Test().target('ユーザー作成', createUser)
+const namedMethod = new Test().target('保存', userRepository, 'save')
 ```
+出典: [docs/examples/test-builder.test.ts](examples/test-builder.test.ts)
 
 関数、またはオブジェクトとメソッド名を渡します。先頭に名前を付けることもできます。
 後者は `this` をそのオブジェクトに束縛します。非関数のキーや省略可能なメソッドは型エラーです。
@@ -57,11 +80,13 @@ new Test().target('保存', userService, 'create')
 
 ## group
 
+<!-- example: docs/examples/group-scopes.test.ts#group -->
 ```ts
-const tests = new Test()
+const userGroup = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group('ユーザー', [userTests, deletionTests])
+  .group('ユーザー', [createTests, saveTests])
 ```
+出典: [docs/examples/group-scopes.test.ts](examples/group-scopes.test.ts)
 
 関連するテストを一つのグループにまとめ、共通設定の範囲を作ります。完成済みの対象ケース群またはグループを、空でない配列で渡します。子が一つでも配列にします。
 名前は任意で、一意性も要求しません。
@@ -85,8 +110,12 @@ group前処理で使う値も、要求は同じ `new Test<Ctx>()` に書きま�
 
 ## use
 
+<!-- example: docs/examples/middleware.test.ts -->
 ```ts
-new Test()
+import { Test, middleware } from 'hanamaru'
+import { createDatabase, countUsers } from './database.ts'
+
+export const userCount = new Test()
   .use(middleware(async (_, next) => {
     const db = await createDatabase()
     try {
@@ -100,6 +129,7 @@ new Test()
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/middleware.test.ts](examples/middleware.test.ts)
 
 ケースの各試行を囲むmiddlewareを登録します。定義時には実行しません。
 `middleware(fn, options?)` が返す値だけを受け取り、関数をそのまま渡すと型エラーです。
@@ -107,8 +137,9 @@ nextに渡したフィールドの型が、middlewareから返す完了値を通
 追加がなければ `return await next()` と書けます。値を渡すだけなら `next(fields)` だけを呼びます。
 DB等の資源は `{ db }` のようにフィールドへ入れます。
 
+<!-- example: docs/examples/test-builder.test.ts#stacked -->
 ```ts
-new Test()
+const stacked = new Test()
   .use(middleware(async (_, next) => next({ a: 1 })))
   .use(middleware(async (ctx, next) => next({ expected: ctx.a + 2 })))
   .target(add)
@@ -116,6 +147,7 @@ new Test()
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/test-builder.test.ts](examples/test-builder.test.ts)
 
 各ケースの各試行は新しい `{}` から始め、親から子の順にmiddlewareを実行します。
 最終的なコンテキストがargsFromと`e.ctx`に渡ります。同名のフィールドは後の値・型を優先します。
@@ -131,9 +163,11 @@ optionsの `timeout` は前処理・後処理のそれぞれへ適用する期�
 
 ## mock
 
+<!-- example: docs/examples/mock.test.ts#mock -->
 ```ts
 .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
 ```
+出典: [docs/examples/mock.test.ts](examples/mock.test.ts)
 
 配下のケースに共通するモックを定義します。対象と振る舞いを一緒に指定します。
 同じオブジェクトの同じキーへの登録は、同一スコープ内では後勝ち、階層間では内側を優先します。
@@ -142,12 +176,14 @@ optionsの `timeout` は前処理・後処理のそれぞれへ適用する期�
 
 ## it / only / skip / todo
 
+<!-- example: docs/examples/case-modes.ts#modes -->
 ```ts
 .it('保存する', t => t.args({ name: 'Alice' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
 .only('集中して確認する', t => t.args({ name: 'Bob' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
 .skip('修正待ち', t => t.args({ name: 'Carol' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
 .todo('送信失敗時の扱い')
 ```
+出典: [docs/examples/case-modes.ts](examples/case-modes.ts)
 
 it / only / skipは、ケース名と、expectまたはexpectCallsを1つ以上設定したケースを返すコールバックを受け取ります。
 expectとexpectCallsはそれぞれ1回ずつ、どちらの順でも書けます。
@@ -166,9 +202,11 @@ bodyは `(t, row) => ...` の形で、tの操作はitと同じです。eachの�
 
 ## blueprint（プラグイン向け）
 
+<!-- example: docs/examples/metadata.ts#blueprint -->
 ```ts
 const blueprint = users.blueprint()
 ```
+出典: [docs/examples/metadata.ts](examples/metadata.ts)
 
 1ケース以上あるテスト、または完成済みの子を1つ以上持つグループから、読み取り専用のblueprintを取得します。
 todoだけの定義も含みます。

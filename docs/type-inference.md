@@ -15,19 +15,28 @@
 `next(fields)` へ渡したフィールドの型SをCへ追加し、同名のフィールドは置き換えます。
 Promise自体をコンテキストにはしません。各コールバックに渡るコンテキストのフィールドはreadonlyです。
 
+<!-- example: docs/examples/context-flow.test.ts -->
 ```ts
-new Test()
+import { Test, middleware } from 'hanamaru'
+import { add } from './math.ts'
+
+export const contextFlow = new Test()
   .target(add)
   .use(middleware(async (_, next) => next({ a: 1, expected: 3 })))
-  .it('型が伝わる', t => t
+  .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/context-flow.test.ts](examples/context-flow.test.ts)
 
 ## middlewareから型を伝える
 
+<!-- example: docs/examples/middleware.test.ts -->
 ```ts
-new Test()
+import { Test, middleware } from 'hanamaru'
+import { createDatabase, countUsers } from './database.ts'
+
+export const userCount = new Test()
   .use(middleware(async (_, next) => {
     const db = await createDatabase()
     try {
@@ -37,9 +46,11 @@ new Test()
     }
   }))
   .target(countUsers)
-  .it('型が伝わる', t => t.argsFrom(ctx => [ctx.db])
+  .it('ユーザー数を取得する', t => t
+    .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/middleware.test.ts](examples/middleware.test.ts)
 
 nextは渡されたフィールド型Sを保持する `Promise<MiddlewareResult<S>>` を返します。
 useは `middleware()` が返す値からSを推論し、後続のCへ追加します。
@@ -83,18 +94,21 @@ TestBuilderはuse・mockとケース追加を持ち、Suiteはケース追加と
 
 ## グループ内のコンテキスト
 
+<!-- example: docs/examples/group-context.test.ts -->
 ```ts
+import { Test, middleware } from 'hanamaru'
+import { add } from './math.ts'
+
 const child = new Test<{ a: number }>()
   .target(add)
   .it('親の値を使う', t => t.argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(3)]))
 
-const parent = new Test()
+export const parentContext = new Test()
   .use(middleware(async (_, next) => next({ a: 1, extra: true })))
   .group([child])
-
-run(parent)
 ```
+出典: [docs/examples/group-context.test.ts](examples/group-context.test.ts)
 
 childは親に `{ a: number }` を要求します。親に余分なフィールドがあっても合成できます。
 `group([first, second])` では配列内の全子について、要求Rを満たせるか検査します。
@@ -124,22 +138,30 @@ group middlewareを持つ定義では、入力Rをgroup開始時から利用可�
 mockの振る舞いは、その場で渡されたメソッドのReturnTypeに従います。
 callの条件も、その場で渡されたメソッドから推論します。
 
-```ts
-export interface CallBuilder {
-  <O extends object, K extends FnKeys<O>>(
-    obj: O, key: K
-  ): CallMatchers<MethodOf<O, K>>
-}
-```
-
 callはexpectCallsコールバックの引数であり、グローバルにexportする関数ではありません。
-キーは存在する関数型プロパティに限り、calledWith / calledOnceWithの引数はそのメソッドのParametersです。
+`call(obj, key)` のkeyはobjに存在する関数型プロパティに限られ、マッチャの引数はそのメソッドのParametersから推論します。
+関数でないプロパティ、存在しないキー、引数の型違いは次のように型エラーになります（`ready` は `new Test().target(add)`、`mailService.send` は `User` を1つ取るメソッドです）。
 
+<!-- example: docs/spec/type-errors.ts#call-keys -->
+```ts
+// @ts-expect-error a non-function property is not observable.
+ready.it('非メソッド', t => t.args(1, 2).expectCalls(call => [call({ label: 'a' }, 'label').notCalled()]))
+// @ts-expect-error nonexistent keys are unavailable.
+ready.it('キー違い', t => t.args(1, 2).expectCalls(call => [call(mailService, 'save').notCalled()]))
+// @ts-expect-error call arguments follow the original method.
+ready.it('引数型', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').calledOnceWith({ id: 1 })]))
+```
+出典: [docs/spec/type-errors.ts](spec/type-errors.ts)
+
+使い方は次のとおりです。
+
+<!-- example: docs/examples/call-descriptor.test.ts#expect-calls -->
 ```ts
 .expectCalls(call => [
   call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
+出典: [docs/examples/call-descriptor.test.ts](examples/call-descriptor.test.ts)
 
 この検証にはmock登録が不要です。登録済みのモック一覧を型パラメータへ積む必要もありません。
 モックの有無は実行時の振る舞いを決めますが、呼び出しを検証できるかどうかの条件にはなりません。
@@ -147,14 +169,21 @@ callはexpectCallsコールバックの引数であり、グローバルにexpor
 ## 結果と呼び出しを混同しない
 
 expectが返せるのは、resultだけ、またはerrorだけの空でない配列です。
+混在（順序を入れ替えても同じ）、空配列、マッチャの呼び忘れは次のように型エラーになります。
 
+<!-- example: docs/spec/type-errors.ts#outcome-mix -->
 ```ts
-export type Assertions =
-  | readonly [ResultAssertion, ...ResultAssertion[]]
-  | readonly [ErrorAssertion, ...ErrorAssertion[]]
+// @ts-expect-error result and error assertions cannot coexist.
+ready.it('矛盾', t => t.args(1, 2).expect(e => [e.result.toBe(3), e.error.toThrow('bad')]))
+// @ts-expect-error reversed ordering cannot hide contradictory expectations.
+ready.it('逆順の矛盾', t => t.args(1, 2).expect(e => [e.error.toThrow('bad'), e.result.toBe(3)]))
+// @ts-expect-error at least one assertion is required.
+ready.it('空配列', t => t.args(1, 2).expect(() => []))
+// @ts-expect-error matcher must be called.
+ready.it('未完了', t => t.args(1, 2).expect(e => [e.result]))
 ```
+出典: [docs/spec/type-errors.ts](spec/type-errors.ts)
 
-resultとerrorの混在は、どちらの型にも一致しません。
 expectCallsが返せるのは、CallAssertionの空でない配列です。
 通常のコールバックから配列を返す書き方で検査でき、`as const` は不要です。
 各記述子のブランドによって、素のbooleanやマッチャの呼び忘れを防ぎます。

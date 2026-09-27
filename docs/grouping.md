@@ -9,6 +9,7 @@
 ユーザーに関するテストをまとめ、作成のテストだけで保存処理をモックする例です。
 [groups.test.ts](./examples/groups.test.ts)と[対象のコード](./examples/user.ts)を掲載しています。
 
+<!-- example: docs/examples/groups.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -39,6 +40,7 @@ export const registrations = new Test()
   .group('作成', [creation])
   .group([saving])
 ```
+出典: [docs/examples/groups.test.ts](examples/groups.test.ts)
 
 外側のsendのモックは、グループ内の全ケースに適用します。
 「作成」のsaveのモックは、その中の2ケースだけに適用します。
@@ -49,8 +51,9 @@ export const registrations = new Test()
 
 `group(middleware, [children])` は、渡した子のまとまり全体を一度だけmiddlewareで囲みます。
 
+<!-- example: docs/examples/group-middleware.test.ts#group-middleware -->
 ```ts
-export const tests = new Test()
+export const serverTests = new Test()
   .group(middleware(async (_, next) => {
     const server = await startServer()
     try {
@@ -58,15 +61,16 @@ export const tests = new Test()
     } finally {
       await server.stop()
     }
-  }), [createUserTests, deleteUserTests])
+  }), [listUsers, missingPage])
 ```
+出典: [docs/examples/group-middleware.test.ts](examples/group-middleware.test.ts)
 
 実行順は次の形です。
 
 ```text
 startServer
-  createUserTests の各case/attempt
-  deleteUserTests の各case/attempt
+  listUsers の各case/attempt
+  missingPage の各case/attempt
 stopServer
 ```
 
@@ -90,6 +94,7 @@ group middlewareの前処理が失敗した場合、渡した全子の実行は�
 子が宣言するのは `new Test<Ctx>()` の依存だけです。値をgroupで作るか、各attemptのmiddlewareで作るかは供給する側が決めます。
 同じ子を、次のどちらの構成でも使えます。
 
+<!-- example: docs/examples/group-supply.test.ts#supply -->
 ```ts
 const child = new Test<{ seed: number }>()
   .target((value: number) => value)
@@ -97,13 +102,16 @@ const child = new Test<{ seed: number }>()
     .expect(e => [e.result.toBe(e.ctx.seed)]))
 
 const provideSeed = middleware(async (_, next) => next({ seed: 2 }))
-run(new Test().use(provideSeed).group([child]))
-run(new Test().group(provideSeed, [child]))
+export const suppliedPerAttempt = new Test().use(provideSeed).group([child])
+export const suppliedPerGroup = new Test().group(provideSeed, [child])
 ```
+出典: [docs/examples/group-supply.test.ts](examples/group-supply.test.ts)
 
+どちらも供給を含む完成したルートなので、テストファイルからexportすればCLIがそのまま実行します。
 middlewareも `Ctx<…>` に必要な値だけを宣言し、`.use()` と `.group()` で使い回せます。
 配置先によって実行回数と実行時点が決まります。供給は、その値を使う処理の開始に間に合う必要があります。
 
+<!-- example: docs/examples/group-supply.test.ts#group-phase -->
 ```ts
 const expectedChild = new Test<{ expected: number }>()
   .target((value: number) => value)
@@ -114,8 +122,9 @@ const seededGroup = new Test<{ seed: number }>()
   .group(middleware(async (ctx, next) =>
     next({ expected: ctx.seed + 1 })), [expectedChild])
 
-run(new Test().group(provideSeed, [seededGroup]))
+export const seededTests = new Test().group(provideSeed, [seededGroup])
 ```
+出典: [docs/examples/group-supply.test.ts](examples/group-supply.test.ts)
 
 seededGroupも要求は `{ seed: number }` だけです。group前処理で入力を使うことは、定義の構造から自動で追跡します。
 親を `.use(provideSeed).group([seededGroup])` に変えると、seedの供給が子のgroup開始に間に合わないため、合成箇所で型エラーになります。
@@ -130,32 +139,38 @@ group middlewareが渡す値は、そのgroup内で使えます。同じチェ�
 名前の有無で設定の範囲は変わらず、一意性も要求しません。
 子の対象ケース群の名前もそのまま保持します。`new Test()` はグループを作らず、各 `group()` 呼び出しが名前付きまたは無名のグループを作ります。
 
+<!-- example: docs/examples/group-scopes.test.ts#names -->
 ```ts
-const tests = new Test()
+const grouped = new Test()
   .group('基本', [addition, subtraction])
   .group('再確認', [addition])
 ```
+出典: [docs/examples/group-scopes.test.ts](examples/group-scopes.test.ts)
 
 「基本」はadditionとsubtractionを包む一つのグループです。「再確認」は別のグループで、同じadditionをもう一度含みます。additionの定義は変わらず、二つの実行箇所はそれぞれの経路の設定で実行します。
 
 ## 入れ子にして設定の範囲を分ける
 
+<!-- example: docs/examples/group-scopes.test.ts#nesting -->
 ```ts
 const inner = new Test().group('内側', [addition])
 const outer = new Test().group('外側', [inner])
 ```
+出典: [docs/examples/group-scopes.test.ts](examples/group-scopes.test.ts)
 
 この実行階層は「外側 → 内側 → additionの対象ケース群」です。二つの `new Test()` は定義の起点であり、階層を増やしません。
 
+<!-- example: docs/examples/group-scopes.test.ts#scoped-mock -->
 ```ts
 const userGroup = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
-  .group([createTests, saveTests])
+  .group('ユーザー', [createTests, saveTests])
 
-const tests = new Test()
-  .group('ユーザー', [userGroup])
+const scoped = new Test()
+  .group([userGroup])
   .group('メール', [mailTests])
 ```
+出典: [docs/examples/group-scopes.test.ts](examples/group-scopes.test.ts)
 
 このsendのモックは「ユーザー」の配下だけに適用し、「メール」には適用しません。
 mockは外側→内側→ケースの順に重ね、同じオブジェクト・キーでは内側を優先します。
@@ -175,6 +190,7 @@ middlewareはグループ全体で1回ではなく、実行する各ケースの
 
 次は[user-cases.ts](./examples/user-cases.ts)の例です。
 
+<!-- example: docs/examples/user-cases.ts -->
 ```ts
 import { Test, middleware } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -197,18 +213,23 @@ export const userCases = new Test<UserContext>()
     .expect(e => [e.error.toThrow('save failed')])
     .expectCalls(call => [call(mailService, 'send').notCalled()]))
 ```
+出典: [docs/examples/user-cases.ts](examples/user-cases.ts)
 
 親で必要な値を用意してから子を追加します。
 
+<!-- example: docs/examples/user-cases.test.ts -->
 ```ts
-const tests = new Test()
+import { Test, middleware } from 'hanamaru'
+import { userRepository, mailService } from './user.ts'
+import { userCases } from './user-cases.ts'
+
+export const userCaseTests = new Test()
   .use(middleware(async (_, next) => next({ input: { name: 'Alice' }, expectedId: 'u1' })))
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group([userCases])
-
-run(tests)
 ```
+出典: [docs/examples/user-cases.test.ts](examples/user-cases.test.ts)
 
 不足するフィールドや型違いがあればgroupで型エラーになります。
 子の定義時に、後から追加する親の型へ遡って推論されることはありません。
@@ -219,14 +240,7 @@ run(tests)
 
 groupには、その場で書いた定義も、importした定義も渡せます。
 テストが増えたら、子を別ファイルへ分けて同じグループにまとめられます。
-
-```ts
-import { userCases } from './user-cases.ts'
-
-const tests = new Test()
-  .use(middleware(async (_, next) => next({ input: { name: 'Alice' }, expectedId: 'u1' })))
-  .group([userCases])
-```
+前節の[user-cases.test.ts](./examples/user-cases.test.ts)は、[user-cases.ts](./examples/user-cases.ts)からimportした子を親のグループへまとめています。
 
 ビルダーはイミュータブルです。同じ子を複数のグループへ追加しても、元の定義は変わりません。
 それぞれの場所で、親の設定を引き継いで実行します。

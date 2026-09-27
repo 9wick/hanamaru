@@ -6,14 +6,17 @@
 
 対象の `math.ts`。
 
+<!-- example: docs/examples/math.ts -->
 ```ts
 export function add(a: number, b: number): number {
   return a + b
 }
 ```
+出典: [docs/examples/math.ts](examples/math.ts)
 
 同じディレクトリの `math.test.ts`。
 
+<!-- example: docs/examples/math.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { add } from './math.ts'
@@ -24,6 +27,7 @@ export const addition = new Test()
     e.result.toBe(3),
   ]))
 ```
+出典: [docs/examples/math.test.ts](examples/math.test.ts)
 
 1. `.target(add)` で対象を渡すと、引数と期待値の型が決まります。
 2. `.it()` にケース名を書き、`.args()` に対象の引数を渡します。
@@ -37,6 +41,7 @@ export const addition = new Test()
 
 `user.ts`。依存の実装は、例を自己完結させるための小さなスタブです。
 
+<!-- example: docs/examples/user.ts -->
 ```ts
 export interface User { id: string }
 export interface CreateUserInput { name: string }
@@ -55,9 +60,11 @@ export async function createUser(input: CreateUserInput): Promise<User> {
   return user
 }
 ```
+出典: [docs/examples/user.ts](examples/user.ts)
 
 `user.test.ts`。
 
+<!-- example: docs/examples/user.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -87,6 +94,7 @@ export const users = new Test()
     ])
   )
 ```
+出典: [docs/examples/user.test.ts](examples/user.test.ts)
 
 saveの `.mock()` は全ケース共通です。2つ目のケースではrejectする振る舞いに置き換わります。
 sendにはモックを設定していません。expectCallsに指定するだけで、本物のsendを呼びながら記録・検証します。
@@ -97,6 +105,7 @@ sendにはモックを設定していません。expectCallsに指定するだ�
 
 ## モックもspyも登録せずに検証する
 
+<!-- example: docs/examples/calls.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
@@ -111,23 +120,26 @@ export const calls = new Test()
       call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ]))
 ```
+出典: [docs/examples/calls.test.ts](examples/calls.test.ts)
 
 `call` はexpectCallsのコールバック引数です。追加の関数をimportする必要はありません。
 コールバックが返す配列から、実行前にどのメソッドを記録するかを決められます。
 
 ## middlewareから値を渡す
 
+<!-- example: docs/examples/context.test.ts -->
 ```ts
 import { Test, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
-export const addition = new Test()
+export const contextAddition = new Test()
   .target(add)
   .use(middleware(async (_, next) => next({ a: 1, b: 2, expected: 3 })))
   .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, ctx.b])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/context.test.ts](examples/context.test.ts)
 
 middlewareは各ケースの各試行で実行します。`next(fields)` に渡した型が `argsFrom` と `e.ctx` に伝わります。
 資源の取得と解放を同じ場所に書く場合は、nextをtry / finallyで囲みます。詳しくは[middleware](./middleware.md)を参照してください。

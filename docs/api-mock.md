@@ -3,9 +3,11 @@
 オブジェクトのメソッドを、そのケースで使う振る舞いに置き換えます。
 振る舞いを変えたい依存に対して、オブジェクトとメソッド名を指定します。
 
+<!-- example: docs/examples/mock.test.ts#mock -->
 ```ts
 .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
 ```
+出典: [docs/examples/mock.test.ts](examples/mock.test.ts)
 
 モック用の別名は不要です。第3引数は完成した振る舞いを返します。
 このコールバックは定義時に評価し、プロパティの差し替えは実行時に行います。
@@ -20,9 +22,11 @@
 | `m.rejects(error)` | rejectするPromiseを返す | 非同期メソッドのみ、理由はunknown |
 | `m.callsFake(fn)` | fnを代わりに呼ぶ | 元のメソッドの関数型 |
 
+<!-- example: docs/examples/mock.test.ts#calls-fake -->
 ```ts
 .mock(userRepository, 'save', m => m.callsFake(async input => ({ id: input.name })))
 ```
+出典: [docs/examples/mock.test.ts](examples/mock.test.ts)
 
 fakeの `this` は呼び出し時のreceiverを引き継ぎます。
 resolves/rejectsは同期関数には使えません。returnsに渡したPromiseはそのまま共有されるので、
@@ -30,11 +34,13 @@ resolves/rejectsは同期関数には使えません。returnsに渡したPromis
 
 ## 呼び出しごとに動作を変える
 
+<!-- example: docs/examples/mock.test.ts#sequence -->
 ```ts
 .mock(api, 'fetch', m => m
   .rejectsOnce(new Error('temporary failure'))
   .resolves({ id: 'u1' }))
 ```
+出典: [docs/examples/mock.test.ts](examples/mock.test.ts)
 
 1回目はreject、2回目以降はresolveします。returnsOnce / resolvesOnce / throwsOnce / rejectsOnce / callsFakeOnceを順に並べられます。
 各値とfakeの型は通常動作と同じです。最後にreturns等の通常動作を指定して完成させます。
@@ -49,18 +55,37 @@ blueprintにはkind: sequence、onceの非空配列、fallbackの通常動作を
 
 ## 共通設定とケースの上書き
 
+<!-- example: docs/examples/user.test.ts -->
 ```ts
-new Test()
+import { Test } from 'hanamaru'
+import { createUser, userRepository, mailService } from './user.ts'
+
+export const users = new Test()
   .target(createUser)
+  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
+  .it('保存して通知する', t => t
+    .args({ name: 'Alice' })
+    .expect(e => [
+      e.result.toEqual({ id: 'u1' }),
+    ])
+    .expectCalls(call => [
+      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
+    ])
+  )
   .it('保存に失敗したら通知しない', t => t
+    // このケースだけ、共通設定を上書きする。
     .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
     .args({ name: 'Alice' })
     .expect(e => [
       e.error.toBeInstanceOf(Error),
     ])
-    .expectCalls(call => [call(mailService, 'send').notCalled()]))
+    .expectCalls(call => [
+      call(mailService, 'send').notCalled(),
+    ])
+  )
 ```
+出典: [docs/examples/user.test.ts](examples/user.test.ts)
 
 同じオブジェクト参照・同じキーへの登録は、外側の親→内側の親→子→ケースの順で上書きします。
 同じスコープ内では最後に書いたものが有効です。兄弟のスコープへは漏れません。
@@ -73,6 +98,7 @@ new Test()
 
 ## 検証
 
+<!-- example: docs/examples/mock.test.ts#verify -->
 ```ts
 .expect(e => [
   e.result.toEqual({ id: 'u1' }),
@@ -82,6 +108,7 @@ new Test()
   call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
+出典: [docs/examples/mock.test.ts](examples/mock.test.ts)
 
 呼び出しを検証するためのmock登録は不要です。expectCallsは任意のメソッドを指定でき、引数は元のメソッドの型に従います。
 モックを設定したメソッドならその振る舞いを使い、設定していなければ本物を呼びます。
@@ -96,20 +123,22 @@ new Test()
 CLIで実行する場合は、module namespaceの関数exportも対象です。
 対象関数が依存を直接importしている場合も、同じモジュールからの呼び出しを差し替え・記録できます。
 
+<!-- example: docs/examples/namespace-mock.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import * as data from './data.ts'
 import { calc } from './calc.ts'
 
-export const cases = new Test().target(calc)
+export const namespaceMock = new Test().target(calc)
   .it('依存を差し替える', t => t
     .mock(data, 'getData', m => m.returns(10))
     .args()
     .expect(e => [e.result.toBe(20)])
-    .expectCalls(call => [call(data, 'getData').calledOnce()]))
+    .expectCalls(call => [call(data, 'getData').calledTimes(1)]))
 ```
+出典: [docs/examples/namespace-mock.test.ts](examples/namespace-mock.test.ts)
 
-この例のcalcは `import { getData } from './data.ts'` した関数を呼び、2倍して返すものとします。
+[calc.ts](./examples/calc.ts)は[data.ts](./examples/data.ts)のgetDataを直接importし、2倍して返します。
 定義の収集中は本物を使い、fakeは試行中だけ有効になります。試行終了後に復元し、retry時には記録を初期化します。
 同じファイル内のローカル変数への直接呼び出しや、Viteで外部化したモジュール内部のimportには介入しません。
 既に読み込んだ定義を受け取る `run(definition)` は読込をやり直さないため、module namespaceの差し替えはCLIで実行してください。

@@ -2,6 +2,7 @@
 
 `each(name, rows, body)` はitと並ぶ入口です。一行ごとに独立したケースを作ります。
 
+<!-- example: docs/examples/each.test.ts -->
 ```ts
 import { Test } from 'hanamaru'
 import { add } from './math.ts'
@@ -15,6 +16,7 @@ export const addition = new Test()
     .args(row.a, row.b)
     .expect(e => [e.result.toBe(row.expected)]))
 ```
+出典: [docs/examples/each.test.ts](examples/each.test.ts)
 
 rowは行データから、argsとresultはテスト対象から型推論します。
 行はオブジェクトでもタプルでも渡せます。IDや行名の追加登録は不要です。
@@ -23,13 +25,18 @@ tはitと同じビルダーで、mock・timeout・retry・args / argsFrom・expe
 
 名前に関数を渡すこともできます。
 
+<!-- example: docs/examples/each-name.test.ts -->
 ```ts
-new Test().target(add).each(
+import { Test } from 'hanamaru'
+import { add } from './math.ts'
+
+export const namedRows = new Test().target(add).each(
   row => `${row.a} + ${row.b}`,
   [{ a: 1, b: 2, expected: 3 }],
   (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(row.expected)]),
 )
 ```
+出典: [docs/examples/each-name.test.ts](examples/each-name.test.ts)
 
 固定名には1始まりのデータ行番号を付けて `2つの数を足す [1]` と表示します。
 名前の関数を使った場合はその戻り値を表示し、一意性は要求しません。

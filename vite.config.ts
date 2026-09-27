@@ -15,7 +15,7 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['src/**/*.test.ts', 'eslint.config.test.ts'],
+          include: ['src/**/*.test.ts', 'scripts/**/*.test.ts', 'eslint.config.test.ts'],
         },
       },
       {

@@ -3,6 +3,7 @@
 ケースでは、必要ならモックを上書きし、引数を決め、期待を返します。
 戻り値・例外と、呼び出しの条件を、それぞれ配列に並べます。
 
+<!-- example: docs/examples/it-builder.test.ts#failure-case -->
 ```ts
 .it('保存に失敗したら通知しない', t => t
   .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
@@ -15,16 +16,23 @@
   ])
 )
 ```
+出典: [docs/examples/it-builder.test.ts](examples/it-builder.test.ts)
 
 ## args / argsFrom
 
 `.args(...args)` は対象の引数をそのまま受け取ります。
 `.argsFrom(ctx => [...args])` はそのケースの親から子までのmiddlewareで用意したコンテキストから引数タプルを作ります。
 
+<!-- example: docs/examples/it-builder.test.ts#args -->
 ```ts
-.args(1, 2)
-.argsFrom(ctx => [ctx.a, ctx.b])
+.it('引数をそのまま渡す', t => t
+  .args(1, 2)
+  .expect(e => [e.result.toBe(3)]))
+.it('コンテキストから引数を作る', t => t
+  .argsFrom(ctx => [ctx.a, ctx.b])
+  .expect(e => [e.result.toBe(3)]))
 ```
+出典: [docs/examples/it-builder.test.ts](examples/it-builder.test.ts)
 
 上記は二者択一です。引数は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
 引数のない関数にも `.args()` を書きます。
@@ -46,6 +54,7 @@ argsの前でも後でも書けます。expect / expectCallsを始めた後は�
 
 ## expect / expectCalls
 
+<!-- example: docs/examples/it-builder.test.ts#expectations -->
 ```ts
 .expect(e => [
   e.result.toEqual({ id: 'u1' }),
@@ -54,6 +63,7 @@ argsの前でも後でも書けます。expect / expectCallsを始めた後は�
   call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
+出典: [docs/examples/it-builder.test.ts](examples/it-builder.test.ts)
 
 expectは結果・例外、expectCallsは呼び出しを検証します。
 どちらもコールバックから1つ以上のアサーションを配列で返します。

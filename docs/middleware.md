@@ -3,6 +3,7 @@
 `.use(m)` は、各ケースの実行を囲むmiddlewareを登録します。
 資源の取得と解放を同じスコープに書き、`next({ db })` で後続へ値を渡せます。
 
+<!-- example: docs/examples/middleware.test.ts -->
 ```ts
 import { Test, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
@@ -21,6 +22,7 @@ export const userCount = new Test()
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/middleware.test.ts](examples/middleware.test.ts)
 
 [この例](./examples/middleware.test.ts)の[サンプルDB](./examples/database.ts)は、3件のユーザーを持つメモリ上の実装です。
 各試行で開き、期待の検証とモックの復元が終わってからcloseします。
@@ -38,12 +40,24 @@ fnは `(ctx, next) => ...`、optionsは `{ timeout }` です。
 変数へ入れて使い回すmiddlewareが上流のコンテキストを読む場合だけ、引数を `Ctx<…>` で包んで要求を書きます。
 `Ctx<C>` は、利用者が要求するフィールドと、hanamaruがコンテキストへ足すフィールドを合わせた公開型です。
 
+<!-- example: docs/examples/reusable-middleware.test.ts -->
 ```ts
 import { Test, middleware, type Ctx } from 'hanamaru'
+import { add } from './math.ts'
 
+// 変数へ入れて使い回すmiddlewareには文脈がないので、読む値をCtx<…>で要求する。
 const withExpected = middleware(async (ctx: Ctx<{ seed: number }>, next) =>
   next({ expected: ctx.seed + 1 }))
+
+export const reusedMiddleware = new Test()
+  .use(middleware(async (_, next) => next({ seed: 2 })))
+  .use(withExpected)
+  .target(add)
+  .it('要求したseedから期待値を作る', t => t
+    .argsFrom(ctx => [ctx.seed, 1])
+    .expect(e => [e.result.toBe(e.ctx.expected)]))
 ```
+出典: [docs/examples/reusable-middleware.test.ts](examples/reusable-middleware.test.ts)
 
 nextへ渡す値は書きません。要求から読んだ値と同じく型は推論されます。
 要求を満たさないチェーンで使うと、その `.use()` / `.group()` が型エラーになります。
@@ -63,9 +77,11 @@ middlewareの引数コンテキストは呼び出し時点の値のままです�
 
 値を渡すだけなら、nextの前後に処理を書きません。
 
+<!-- example: docs/examples/context-flow.test.ts#values -->
 ```ts
 .use(middleware(async (_, next) => next({ a: 1, expected: 3 })))
 ```
+出典: [docs/examples/context-flow.test.ts](examples/context-flow.test.ts)
 
 ケースへ値を渡す手段はmiddlewareだけです。
 複数のmiddlewareは書いた順に実行します。グループでは親から子へ進み、後処理は逆順です。
@@ -77,6 +93,7 @@ middlewareの引数コンテキストは呼び出し時点の値のままです�
 nextは、呼び出した非同期コンテキスト内で後続を実行します。
 AsyncLocalStorageやコールバック型トランザクションも、同じ形でケースを囲めます。
 
+<!-- example: docs/examples/middleware-patterns.test.ts#wrap -->
 ```ts
 .use(middleware(async (_, next) => {
   return await storage.run({ requestId: 'test' }, async () => {
@@ -84,6 +101,7 @@ AsyncLocalStorageやコールバック型トランザクションも、同じ形
   })
 }))
 ```
+出典: [docs/examples/middleware-patterns.test.ts](examples/middleware-patterns.test.ts)
 
 finallyで片付ける場合は `return await next(...)` と書きます。
 `return next(...)` だけでは下流の完了を待つ前にfinallyが動きます。
@@ -99,6 +117,7 @@ nextは1回呼び、その完了値を返します。未呼び出し・複数回
 前処理はmiddlewareが呼ばれてからnextを呼ぶまで、後処理はnextが完了してからmiddlewareが完了するまでです。
 nextの中で配下（`.use()` ではケース、`.group()` では渡した子全体）を実行している時間は、どちらにも含めません。
 
+<!-- example: docs/examples/middleware-patterns.test.ts#timeout -->
 ```ts
 .use(middleware(async (_, next) => {
   const db = await createDatabase()
@@ -109,6 +128,7 @@ nextの中で配下（`.use()` ではケース、`.group()` では渡した子�
   }
 }, { timeout: 30_000 }))
 ```
+出典: [docs/examples/middleware-patterns.test.ts](examples/middleware-patterns.test.ts)
 
 `timeout` の一つの値を、前処理と後処理のそれぞれへ独立に適用します。
 既定値は10,000msで、`.use()` と `.group()` のどちらで使っても同じです。
