@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { request, startServer, type Server } from './server.ts'
 
 const listUsers = new Test<{ server: Server }>()
@@ -24,3 +24,5 @@ export const serverTests = new Test()
     }
   }), [listUsers, missingPage])
 // #endregion group-middleware
+
+registerTest(serverTests)

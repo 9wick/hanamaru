@@ -5,7 +5,7 @@
 
 <!-- example: docs/examples/middleware.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
@@ -21,6 +21,8 @@ export const userCount = new Test()
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(userCount)
 ```
 出典: [docs/examples/middleware.test.ts](examples/middleware.test.ts)
 
@@ -42,7 +44,7 @@ fnは `(ctx, next) => ...`、optionsは `{ timeout }` です。
 
 <!-- example: docs/examples/reusable-middleware.test.ts -->
 ```ts
-import { Test, middleware, type Ctx } from 'hanamaru'
+import { Test, registerTest, middleware, type Ctx } from 'hanamaru'
 import { add } from './math.ts'
 
 // 変数へ入れて使い回すmiddlewareには文脈がないので、読む値をCtx<…>で要求する。
@@ -56,6 +58,8 @@ export const reusedMiddleware = new Test()
   .it('要求したseedから期待値を作る', t => t
     .argsFrom(ctx => [ctx.seed, 1])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(reusedMiddleware)
 ```
 出典: [docs/examples/reusable-middleware.test.ts](examples/reusable-middleware.test.ts)
 

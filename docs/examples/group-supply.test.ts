@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 
 // #region supply
 const child = new Test<{ seed: number }>()
@@ -23,3 +23,7 @@ const seededGroup = new Test<{ seed: number }>()
 
 export const seededTests = new Test().group(provideSeed, [seededGroup])
 // #endregion group-phase
+
+registerTest(suppliedPerAttempt)
+registerTest(suppliedPerGroup)
+registerTest(seededTests)

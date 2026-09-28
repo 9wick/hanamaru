@@ -132,6 +132,7 @@ export interface Frame {
   fields: Fields
 }
 export interface NodeBase {
+  rootIndex: number
   config: ResolvedExecutionConfig
   mocks: RuntimeMock[]
   frames: Frame[]
@@ -176,6 +177,7 @@ export interface MutableTestResult {
   kind: 'test'
   name: string
   path: number[]
+  source?: { file: string; projects: string[] }
   cases: MutableCaseResult[]
 }
 export interface MutableGroupMiddleware {
@@ -191,6 +193,7 @@ export interface MutableGroupResult {
   origin: SourceLocation
   middleware: MutableGroupMiddleware | null
   path: number[]
+  source?: { file: string; projects: string[] }
   children: { origin: SourceLocation; result: MutableNodeResult }[]
 }
 export type MutableNodeResult = MutableTestResult | MutableGroupResult
@@ -258,12 +261,14 @@ export interface ModulePreparation {
 }
 export interface RootReference {
   file: string
-  name: string
+  index: number
+  origin: SourceLocation
 }
 export interface CliOptions {
   filter?: string
   reporter?: string
   config?: string
+  projects?: string[]
   collectionTimeout?: number
   shutdownGrace?: number
   ci?: boolean

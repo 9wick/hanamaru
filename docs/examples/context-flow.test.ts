@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
 export const contextFlow = new Test()
@@ -9,3 +9,5 @@ export const contextFlow = new Test()
   .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(contextFlow)

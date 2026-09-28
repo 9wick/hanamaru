@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 import { createUser, userRepository, mailService } from './user.ts'
 
@@ -42,3 +42,5 @@ const addition = new Test()
   // #endregion args
 
 export const itBuilder = new Test().group([creation, addition])
+
+registerTest(itBuilder)

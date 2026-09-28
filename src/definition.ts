@@ -25,6 +25,7 @@ import type {
   GroupStage,
   ChildrenPhase,
   FirstPhase,
+  SourceLocation,
 } from './api.js'
 import type {
   RuntimeValueAssertion,
@@ -223,6 +224,25 @@ class CaseBuilder<F extends AnyFn, C> {
   }
 }
 
+interface TrackedDefinition {
+  readonly origin: SourceLocation
+  used: boolean
+}
+
+let trackedDefinitions: Map<object, TrackedDefinition> | null = null
+
+export function startDefinitionTracking(): void {
+  trackedDefinitions = new Map()
+}
+
+export function unregisteredDefinitions(files: ReadonlySet<string>, registered: ReadonlySet<object>): SourceLocation[] {
+  return [...(trackedDefinitions ?? [])].flatMap(([definition, record]) =>
+    files.has(record.origin.file) && isDefinition(definition) && !record.used && !registered.has(definition)
+      ? [record.origin]
+      : [],
+  )
+}
+
 export class DefinitionBuilder<R extends object = {}, C extends object = R, F extends AnyFn = AnyFn> {
   readonly data: DefinitionData
   readonly [definitionTag]?: true
@@ -238,9 +258,13 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
       name: null,
     }
     if (data?.stage === 'group' || data?.stage === 'suite') this[definitionTag] = true
+    if (trackedDefinitions && this[definitionTag]) trackedDefinitions.set(this, { origin: location(), used: false })
   }
   copy(patch: Partial<DefinitionData>): DefinitionBuilder<R, C, F> {
-    return new DefinitionBuilder({ ...this.data, ...patch })
+    const next = new DefinitionBuilder<R, C, F>({ ...this.data, ...patch })
+    const previous = trackedDefinitions?.get(this)
+    if (previous) previous.used = true
+    return next
   }
   settingAllowed() {
     if (this.data.stage === 'group' || this.data.stage === 'suite')
@@ -377,6 +401,10 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
     const children = v.parse(v.array(v.instance(DefinitionBuilder)), childrenInput[0])
     if (!children.length || children.some((child) => !isDefinition(child)))
       throw new TypeError('group requires completed children')
+    for (const child of children) {
+      const record = trackedDefinitions?.get(child)
+      if (record) record.used = true
+    }
     const group: RuntimeGroup = {
       version: 1,
       kind: 'group',

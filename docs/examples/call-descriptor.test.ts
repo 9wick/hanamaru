@@ -1,16 +1,6 @@
-import { Test, type CallAssertion } from 'hanamaru'
-import { createUser, mailService } from './user.ts'
-
-const notification = new Test()
-  .target(createUser)
-  .it('登録を通知する', t => t
-    .args({ name: 'Alice' })
-    // #region expect-calls
-    .expectCalls(call => [
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ])
-    // #endregion expect-calls
-  )
+import { Test, registerTest, type CallAssertion } from 'hanamaru'
+import { mailService } from './user.ts'
+import { notification } from './call-descriptor-source.ts'
 
 // todoケースは実行本体を持たないため、記述子を取り出せるのは他のケースだけ。
 function firstCallAssertion(): CallAssertion | undefined {
@@ -32,3 +22,5 @@ export const callDescriptor = new Test()
     })])
     // #endregion descriptor
   )
+
+registerTest(callDescriptor)

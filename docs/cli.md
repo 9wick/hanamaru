@@ -3,6 +3,24 @@
 CLIは、テストファイルの読込・完成したテストの収集・実行・結果表示を行う入口である。
 インストールしたパッケージのCLIを、利用するランタイムで起動します。
 
+読むファイルを名前付きで選ぶ[project](./projects.md)と、実行するルートを宣言する[登録](./registration.md)を組み合わせます。unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)を参照してください。
+
+## 実行方法の選び方
+
+通常のテスト実行にはCLIを使います。テストファイルは実行するルートを `registerTest` で登録し、CLIが収集・実行・結果表示・終了コードを担当します。
+
+| やりたいこと | 使うもの |
+|---|---|
+| テストファイルを探索する、ファイルを指定する、ケースを絞って実行する | CLI。ファイル引数・project・`--filter` を使う |
+| 読むファイルの集合に名前を付け、必要な集合だけを選ぶ | CLIのproject設定。`hanamaru.config.ts` に各projectの `include` / `exclude` を書き、CLIで選ぶ |
+| 自分のプログラムから完成した定義を実行し、結果を処理する | ライブラリAPIの `run(test)` / `run([testA, testB])` |
+
+projectはCLIが読むファイルを選ぶ設定です。複数projectを選んだらファイルをマージし、同じファイルは一度だけ実行します。`--project` と明示ファイルを同時に指定すると引数エラーです。project設定や、CLIが収集するテストファイルの中では `run()` を呼びません。登録の収集後にCLIが実行を管理します。
+`run` は渡された完成定義を同一プロセスで実行して `RunResult` を返し、設定ファイルの読込・ファイル探索・project選択・表示・processの終了は行いません。
+module namespaceの差し替えや、終了猶予を超えた処理の強制停止が必要な場合はCLIを使います。[モックの範囲](./api-mock.md#差し替えの範囲)と[時間制限](#時間制限)を参照してください。
+
+## コマンド形式
+
 ```text
 hanamaru [files...] [options]
 ```
@@ -25,29 +43,22 @@ deno run --allow-all --node-modules-dir=manual node_modules/hanamaru/dist/cli.js
 DenoのCLIはファイル読込・環境変数・workerを利用し、実行するテストも資源へアクセスするため、上の例では権限を許可しています。
 ライブラリの `run(test)` はDenoでも同じAPIで呼び出せます。
 
-引数なしなら設定のincludeに一致するファイルを読む。include未指定時は `**/*.{test,spec}.ts` を使う。
-ファイルを指定した場合は、そのファイルを対象とする。
+引数なしなら、project設定があれば全projectのファイルを選びます。project設定がなければ `**/*.{test,spec}.ts` を探索し、`node_modules` と `dist` を除外します。明示ファイルを指定した場合はprojectを選ばず、そのファイルを対象とします。`--project` と明示ファイルの同時指定は引数エラーです。
 
-CLIは次の手順を取る。
+CLIは次の手順を取ります。
 
-1. パスを正規化して重複ファイルを除き、パス順でimportする。
-2. export名順で完成した値を収集し、blueprintを得て内部の実行計画を組み立てる。filter前の実行階層でpathを確定する。
-3. filterを適用した実行計画を標準実行器へ渡す。期限を監視し、猶予内に停止しない実行環境は終了させる。
-4. `RunResult` を整形して表示し、終了コードを返す。
+1. projectごとに `include` から `exclude` を引き、選んだファイルをマージして重複を除き、パス順でimportします。
+2. 各ファイルの `registerTest` で登録された完成定義を収集し、blueprintから実行計画を組み立てます。登録のない選択ファイル、未完成・重複したルートは収集エラーです。exportは収集条件に使いません。
+3. filterを適用した実行計画を標準実行器へ渡します。期限を監視し、猶予内に停止しない実行環境は終了させます。
+4. `RunResult` を整形して表示し、終了コードを返します。
 
-関数等の通常のexportは無視する。設定途中のTestビルダーがexportされていたら読込エラーにする。
-同じ定義を複数のexport名や再exportからルートとして収集した場合、重複定義エラーにする。
-groupの内部で同じ子を複数箇所に合成することは許可し、それぞれを独立した実行箇所として扱う。
-子をルートとしてもexportすると、合成先とは別に収集される。子の定義は探索対象外のファイルに置き、実行するルートだけをテストファイルからexportする。
-
-親のコンテキストを要求する子は単独では実行しない。例えば `user-cases.ts` の子を、コンテキストを用意した親へ追加し、その親をテストファイルからexportする。
-CLIは型引数を実行時に検査できないため、このexportの条件は利用者が守る。
-`group` とライブラリの `run` ではコンテキストの供給を型検査する。[型の限界](./type-inference.md#型の限界)を参照。
+親のコンテキストを要求する子は、供給する親のgroupに追加してからルートを登録します。`registerTest` の型は親なしで実行できる完成定義だけを受け付けます。CLI自身はTypeScriptの型検査を行いません。型チェックを含むコマンドを用意してください。詳しくは[登録](./registration.md)と[型の限界](./type-inference.md#型の限界)を参照してください。
 
 ## オプション
 
 | オプション | 短縮 | 内容 |
 |---|---|---|
+| `--project <name>` | | 実行するproject。複数回指定可 |
 | `--filter <text>` | `-t` | 表示されるケース名の部分一致（eachの行番号・名前を含む） |
 | `--reporter <name>` | `-r` | `pretty` / `json` |
 | `--config <path>` | `-c` | 設定ファイル |
@@ -73,8 +84,12 @@ filterは正規表現ではない。階層内のケース名に文字列を含�
 import { defineConfig } from 'hanamaru'
 
 export default defineConfig({
-  include: ['**/*.{test,spec}.ts'],
-  exclude: ['**/node_modules/**', '**/dist/**'],
+  projects: {
+    default: {
+      include: ['**/*.{test,spec}.ts'],
+      exclude: ['**/node_modules/**', '**/dist/**'],
+    },
+  },
   reporter: 'pretty',
   collectionTimeout: 120_000,
   shutdownGrace: 5_000,
@@ -82,8 +97,7 @@ export default defineConfig({
 ```
 出典: [docs/examples/hanamaru.config.ts](examples/hanamaru.config.ts)
 
-includeの既定値は `['**/*.{test,spec}.ts']`、excludeの既定値は `['**/node_modules/**', '**/dist/**']` とする。
-CLI引数は設定値を上書きする。明示ファイルはinclude/excludeによる探索を行わず、指定順ではなくパス順に正規化する。
+設定がないときの探索パターンは `**/*.{test,spec}.ts` で、`node_modules` と `dist` は除外します。各projectの `include` / `exclude` には既定値を加えません。明示ファイルはprojectの探索を行わず、指定順ではなくパス順に正規化します。
 設定ファイルも通常のTypeScriptモジュールとして読む。
 
 ### Viteの設定
@@ -110,7 +124,7 @@ export default defineConfig({
 aliasに書いた相対パスは、実行ディレクトリ（`vite.root` の既定値）を基準に解決します。
 既存のVite設定を使う場合も、このファイルからimportして `vite` に渡せます。
 `vite.config.*` は自動では読みません。関数形式の既存設定は呼び出した結果のオブジェクトを渡します。
-テスト探索のinclude/excludeはhanamaru側の設定です。
+テスト探索の `include` / `exclude` はprojectごとのhanamaru側の設定です。
 `vite.configFile`、watch、HMR、HTTPサーバーの起動はCLIが管理します。
 プラグインは収集側で実行し、同じ変換結果を実行workerへ渡します。
 設定やプラグインのエラーは収集エラー（コード2）として報告します。
@@ -126,7 +140,7 @@ CLIは型チェックを行いません。
 
 | 設定 | CLI引数 | 既定値 | 範囲 |
 |---|---|---|---|
-| collectionTimeout | --collection-timeout | 30,000ms | 一ファイルのimport開始から、そのexportの収集・blueprint取得まで。依存モジュールの読込やトップレベルのawaitも含む |
+| collectionTimeout | --collection-timeout | 30,000ms | 一ファイルのimport開始から、その登録の収集・blueprint取得まで。依存モジュールの読込やトップレベルのawaitも含む |
 | shutdownGrace | --shutdown-grace | 1,000ms | runの中断開始から、進行中の処理・復元・後始末を待つ時間 |
 
 値はミリ秒単位の正の有限値とし、0・負数・非有限値・数値でない指定は設定エラー（コード2）にする。
@@ -191,6 +205,7 @@ group(name, [children])で作ったグループの名前を見出しとして使
 TTYでない出力、または `NO_COLOR` が設定された環境では色を無効にする。
 
 `--reporter json` は [RunResult](./spec/hanamaru.d.ts) を1つのJSON値としてstdoutへ出す。
+CLI結果の各トップレベルノードには `source: { file, projects }` を含めます。重複して選ばれたファイルは一つの結果に複数のproject名を持ちます。
 これは実行結果の形式であり、TestBlueprintをJSON化したものではない。
 origin・path・config・各試行と失敗を保持し、任意値はDiagnosticValueの構造で出す。
 収集・受付エラーでRunResultがまだなければstdoutへ架空の結果を出さず、ファイル・段階・原因をstderrへ報告する。
@@ -214,6 +229,8 @@ Ctrl+Cでは完了済みの結果を保ち、失敗のない実行中の試行�
 Ctrl+Cを受けた終了は、既存の失敗やcleanup失敗によりRunResult.statusがfailedでもコード130にする。読込・収集中のCtrl+Cも130とし、run開始前ならRunResultを作らない。
 
 ## ライブラリから実行する
+
+次は、自分のプログラムで結果を処理する場合の例です。CLIで実行するテストファイルに追加するコードではありません。
 
 <!-- example: docs/examples/metadata.ts#run -->
 ```ts

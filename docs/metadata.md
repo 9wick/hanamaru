@@ -2,9 +2,11 @@
 
 blueprintは、テスト定義から得られる実行前の構造です。プラグイン作者が `test.blueprint()` で取得できます。
 グループの階層・テスト対象・middleware・モック・引数・期待の組み立て方などを保持します。ケース名や宣言位置などのmetadataもここから読めます。
-通常のテスト実行ではblueprintを取得せず、完成したテストを `run(test)` に渡します。実行計画は実行器の内部で決めます。
+CLIでは、実行ルートを `registerTest` で登録します。利用者がblueprintを取得する必要はなく、実行計画は実行器の内部で決めます。
 
 ## 取得と実行
+
+次はライブラリAPIから実行結果とblueprintを取得する例です。CLIが収集するテストファイルに追加するコードではありません。実行入口の使い分けは[実行方法の選び方](./cli.md#実行方法の選び方)を参照してください。
 
 <!-- example: docs/examples/metadata.ts -->
 ```ts
@@ -19,7 +21,7 @@ console.log(result.status, blueprint.kind)
 
 `.blueprint()` は `TestBlueprint` を返します。`run()` は完成したテストを受け取り、実行して `RunResult` を返します。blueprintを直接 `run()` に渡すことはできません。
 blueprintを取得してもmiddleware・テスト対象は呼ばず、メソッドの差し替えや記録も開始しません。
-対象のファイル・export名・手書きIDの追加登録は不要です。
+blueprintの取得に対象ファイル・export名・手書きIDの指定は不要です。CLIで実行するルートを `registerTest` で登録する操作とも別です。
 
 ## blueprintの構造
 
@@ -99,13 +101,13 @@ for (const group of blueprint.children) {
 
 ## 呼び出し条件は定義時に構造化する
 
-<!-- example: docs/examples/call-descriptor.test.ts#expect-calls -->
+<!-- example: docs/examples/call-descriptor-source.ts#expect-calls -->
 ```ts
 .expectCalls(call => [
   call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
-出典: [docs/examples/call-descriptor.test.ts](examples/call-descriptor.test.ts)
+出典: [docs/examples/call-descriptor-source.ts](examples/call-descriptor-source.ts)
 
 このコールバックは定義時に1回評価します。
 `call` とマッチャは検証内容を記述するだけで、send自体は呼びません。
@@ -133,7 +135,7 @@ middlewareで初めて得る参照や値を、呼び出し条件に使うAPIは�
 
 <!-- example: docs/examples/context-flow.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
 export const contextFlow = new Test()
@@ -142,6 +144,8 @@ export const contextFlow = new Test()
   .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(contextFlow)
 ```
 出典: [docs/examples/context-flow.test.ts](examples/context-flow.test.ts)
 

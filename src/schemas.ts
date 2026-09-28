@@ -190,7 +190,7 @@ export const executionIncomingSchema = v.variant('type', [
   v.object({ type: v.literal('compiled'), id: v.number(), result: v.optional(jsValue), error: v.optional(v.string()) }),
 ])
 export const executionWorkerDataSchema = v.object({
-  roots: v.array(v.object({ file: v.string(), name: v.string() })),
+  roots: v.array(v.object({ file: v.string(), index: v.number(), origin: location })),
   preparation: v.array(v.object({ id: v.string(), keys: v.array(v.string()) })),
   shape: v.string(),
 })
@@ -200,6 +200,7 @@ export const cliWorkerDataSchema = v.object({
     filter: v.optional(v.string()),
     reporter: v.optional(v.string()),
     config: v.optional(v.string()),
+    projects: v.optional(v.array(v.string())),
     collectionTimeout: v.optional(v.number()),
     shutdownGrace: v.optional(v.number()),
     ci: v.optional(v.boolean()),
@@ -211,8 +212,15 @@ export const cliWorkerDataSchema = v.object({
 })
 export const configSchema = v.object({
   vite: v.optional(v.looseObject({})),
-  include: v.optional(v.array(v.string())),
-  exclude: v.optional(v.array(v.string())),
+  projects: v.optional(
+    v.record(
+      v.string(),
+      v.object({
+        include: v.array(v.string()),
+        exclude: v.optional(v.array(v.string())),
+      }),
+    ),
+  ),
   reporter: v.optional(v.picklist(['pretty', 'json'])),
   collectionTimeout: v.optional(v.number()),
   shutdownGrace: v.optional(v.number()),
@@ -235,6 +243,7 @@ const nodeResultSchema: v.GenericSchema<Value, import('./internal.js').MutableNo
       kind: v.literal('test'),
       name: v.string(),
       path: v.array(v.number()),
+      source: v.optional(v.object({ file: v.string(), projects: v.array(v.string()) })),
       cases: v.array(caseResultSchema),
     }),
     v.object({
@@ -243,6 +252,7 @@ const nodeResultSchema: v.GenericSchema<Value, import('./internal.js').MutableNo
       origin: location,
       middleware: v.nullable(groupMiddlewareSchema),
       path: v.array(v.number()),
+      source: v.optional(v.object({ file: v.string(), projects: v.array(v.string()) })),
       children: v.array(v.object({ origin: location, result: nodeResultSchema })),
     }),
   ]),

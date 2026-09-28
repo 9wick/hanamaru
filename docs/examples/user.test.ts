@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
@@ -25,3 +25,5 @@ export const users = new Test()
       call(mailService, 'send').notCalled(),
     ])
   )
+
+registerTest(users)

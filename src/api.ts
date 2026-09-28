@@ -506,6 +506,7 @@ export interface TestResult {
   readonly kind: 'test'
   readonly name: string
   readonly path: readonly number[]
+  readonly source?: { readonly file: string; readonly projects: readonly string[] }
   readonly cases: readonly CaseResult[]
 }
 export type GroupMiddlewareFailure = {
@@ -547,6 +548,7 @@ export interface GroupResult {
   readonly origin: SourceLocation
   readonly middleware: GroupMiddlewareResult | null
   readonly path: readonly number[]
+  readonly source?: { readonly file: string; readonly projects: readonly string[] }
   readonly children: readonly {
     readonly origin: SourceLocation
     readonly result: TestResult | GroupResult
@@ -568,8 +570,9 @@ export interface RunOptions {
 }
 export interface Config {
   readonly vite?: import('@hanamaru/vite').UserConfig
-  readonly include?: readonly string[]
-  readonly exclude?: readonly string[]
+  readonly projects?: Readonly<
+    Record<string, { readonly include: readonly string[]; readonly exclude?: readonly string[] }>
+  >
   readonly reporter?: 'pretty' | 'json'
   readonly collectionTimeout?: number
   readonly shutdownGrace?: number

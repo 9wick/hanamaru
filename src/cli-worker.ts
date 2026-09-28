@@ -4,13 +4,15 @@ import { cliWorkerDataSchema, configSchema } from './schemas.js'
 import type { Value } from './value.js'
 import type { Config } from './api.js'
 import type { CliMessage, RootReference, InternalRunOptions } from './internal.js'
+import type { MutableRunResult, Plan } from './internal.js'
 import { errorStack } from './shared.js'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import { globSync } from 'node:fs'
 import { resolve, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfigFromFile } from '@hanamaru/vite'
-import { Test, DefinitionBuilder, isDefinition } from './definition.js'
+import { startDefinitionTracking, unregisteredDefinitions } from './definition.js'
+import { registrationsIn, resetRegistrations } from './registration.js'
 import { collectBlueprints, createPlan, runPlan } from './runner.js'
 import { describeExecutionPlan } from './execution-plan.js'
 import { collectModulePreparation } from './module-reference.js'
@@ -38,15 +40,46 @@ function importFile(file: string, timeout: number) {
   send({ type: 'loading', file, timeout })
   return required(runtime).import(pathToFileURL(file).href)
 }
-function selectFiles(config: Config) {
-  if (workerData.files.length) return [...new Set(workerData.files.map((file) => resolve(file)))].sort()
-  const include = config.include ?? ['**/*.{test,spec}.ts']
-  const exclude = config.exclude ?? ['**/node_modules/**', '**/dist/**']
+interface SelectedFile {
+  file: string
+  projects: string[]
+}
+function selectFiles(config: Config): SelectedFile[] {
+  if (workerData.files.length)
+    return [...new Set(workerData.files.map((file) => resolve(file)))].sort().map((file) => ({ file, projects: [] }))
+  if (config.projects) {
+    const selected = new Map<string, SelectedFile>()
+    const names = [...new Set(workerData.options.projects ?? Object.keys(config.projects))]
+    for (const name of names) {
+      if (!Object.hasOwn(config.projects, name)) throw new TypeError(`unknown project: ${name}`)
+      const { include, exclude = [] } = config.projects[name]
+      const excluded = new Set(
+        exclude.flatMap((pattern) => [...globSync(pattern, { cwd: process.cwd() })].map((file) => resolve(file))),
+      )
+      for (const pattern of include) {
+        for (const match of globSync(pattern, { cwd: process.cwd() })) {
+          const file = resolve(match)
+          if (excluded.has(file)) continue
+          const entry = selected.get(file) ?? { file, projects: [] }
+          if (!entry.projects.includes(name)) entry.projects.push(name)
+          selected.set(file, entry)
+        }
+      }
+    }
+    return [...selected.values()].sort((a, b) => a.file.localeCompare(b.file))
+  }
+  if (workerData.options.projects?.length) throw new TypeError(`unknown project: ${workerData.options.projects[0]}`)
+  const include = ['**/*.{test,spec}.ts']
+  const exclude = ['**/node_modules/**', '**/dist/**']
   const files = new Set(include.flatMap((pattern) => [...globSync(pattern, { cwd: process.cwd() })]))
   for (const pattern of exclude) for (const file of globSync(pattern, { cwd: process.cwd() })) files.delete(file)
-  return [...files].map((file) => resolve(file)).sort()
+  return [...files]
+    .map((file) => resolve(file))
+    .sort()
+    .map((file) => ({ file, projects: [] }))
 }
 async function collectAndRun() {
+  let collectingFile: SelectedFile | undefined
   try {
     const initialTimeout = workerData.options.collectionTimeout ?? 30_000
     positive(initialTimeout, 'collectionTimeout')
@@ -57,6 +90,8 @@ async function collectAndRun() {
       send({ type: 'loading', file: configPath, timeout: initialTimeout })
       const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, configPath, process.cwd(), 'silent')
       if (!loaded) throw new Error(`cannot load config: ${configPath}`)
+      if (Object.hasOwn(loaded.config, 'include') || Object.hasOwn(loaded.config, 'exclude'))
+        throw new TypeError('include and exclude must be configured in projects')
       const viteConfig = property(loaded.config, 'vite')
       if (
         viteConfig !== undefined &&
@@ -76,36 +111,61 @@ async function collectAndRun() {
     send({ type: 'loading', file: 'test runtime setup', timeout })
     compiler = await createModuleCompiler(config.vite)
     runtime = createModuleRuntime(compiler.invoke)
+    resetRegistrations()
+    startDefinitionTracking()
     const definitions: Value[] = [],
       roots: RootReference[] = [],
+      sources: { file: string; projects: string[] }[] = [],
       collected = new Set<object>()
-    for (const file of files) {
-      const module = await importFile(file, timeout)
-      for (const name of Object.keys(module).sort()) {
-        const value = module[name]
-        if (value instanceof Test && !isDefinition(value))
-          throw new TypeError(`${relative(process.cwd(), file)}:${name} is an incomplete test builder`)
-        if (!isDefinition(value)) continue
-        const definition = v.parse(v.instance(DefinitionBuilder), value)
+    for (const { file, projects } of files) {
+      collectingFile = { file, projects }
+      await importFile(file, timeout)
+      const registered = registrationsIn(file)
+      if (!registered.length)
+        throw new TypeError(
+          `no tests registered in ${relative(process.cwd(), file)}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
+        )
+      for (const [index, entry] of registered.entries()) {
+        const definition = entry.definition
         if (collected.has(definition))
-          throw new TypeError(`duplicate root definition: ${relative(process.cwd(), file)}:${name}`)
+          throw new TypeError(
+            `duplicate root definition: ${relative(process.cwd(), file)}:${entry.origin.line}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
+          )
         collected.add(definition)
         definitions.push(definition)
-        roots.push({ file, name })
+        roots.push({ file, index, origin: entry.origin })
+        sources.push({ file: relative(process.cwd(), file), projects })
       }
     }
-    if (!definitions.length) throw new TypeError('no completed test definitions found')
+    collectingFile = undefined
+    for (const origin of unregisteredDefinitions(new Set(files.map(({ file }) => file)), collected))
+      process.stderr.write(
+        `hanamaru: unregistered test definition: ${relative(process.cwd(), origin.file)}:${origin.line}:${origin.column}\n`,
+      )
+    let plan: Plan
+    const withSources = (result: MutableRunResult): MutableRunResult => ({
+      ...result,
+      tests: result.tests.map((node) => ({
+        ...node,
+        source: sources[plan.allNodes[node.path[0]].rootIndex],
+      })),
+    })
     const options: InternalRunOptions = {
       forbidOnly: workerData.options.ci,
       failOnFlaky: workerData.options.failOnFlaky,
       filter: workerData.options.filter,
       signal: controller.signal,
-      onProgress: (result) => send({ type: 'progress', result }),
-      onTimeout: (result) => send({ type: 'timeout', result }),
-      onDeadline: (deadline) => send({ type: 'deadline', ...deadline }),
+      onProgress: (result) => send({ type: 'progress', result: withSources(result) }),
+      onTimeout: (result) => send({ type: 'timeout', result: withSources(result) }),
+      onDeadline: (deadline) =>
+        send({
+          type: 'deadline',
+          ...deadline,
+          ...(deadline.kind === 'start' ? { result: withSources(deadline.result) } : {}),
+        }),
     }
     const blueprints = collectBlueprints(definitions)
-    const plan = createPlan(blueprints, options)
+    plan = createPlan(blueprints, options)
     const execution = await openExecution({
       roots,
       preparation: collectModulePreparation(blueprints),
@@ -121,9 +181,12 @@ async function collectAndRun() {
     } finally {
       await execution.close()
     }
-    send({ type: 'result', result, reporter })
+    send({ type: 'result', result: withSources(result), reporter })
   } catch (error) {
-    send({ type: 'error', message: errorStack(error) })
+    const context = collectingFile
+      ? `while collecting ${relative(process.cwd(), collectingFile.file)}${collectingFile.projects.length ? ` (projects: ${collectingFile.projects.join(', ')})` : ''}: `
+      : ''
+    send({ type: 'error', message: context + errorStack(error) })
   } finally {
     await runtime?.close()
     await compiler?.close()

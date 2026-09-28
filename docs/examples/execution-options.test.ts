@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 const addition = new Test()
@@ -17,3 +17,5 @@ export const tests = new Test()
   .timeout(5_000)
   .retry(2)
   .group([addition])
+
+registerTest(tests)

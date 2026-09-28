@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 const storage = new AsyncLocalStorage<{ requestId: string }>()
@@ -39,3 +39,5 @@ const databaseScope = new Test()
     .expect(e => [e.result.toBe(3)]))
 
 export const middlewarePatterns = new Test().group([requestScope, databaseScope])
+
+registerTest(middlewarePatterns)

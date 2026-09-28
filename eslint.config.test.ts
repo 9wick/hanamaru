@@ -99,6 +99,14 @@ test('lint cannot be bypassed with suppression comments in implementation files'
   }
 })
 
+test('lint rejects ts-expect-error in documentation examples outside type tests', async () => {
+  const diagnostics = await messages(
+    '// @ts-expect-error a string cannot be assigned to a number.\nexport const value: number = "bad"',
+    'docs/examples/math.ts',
+  )
+  expect(diagnostics.some((m) => m.ruleId === '@typescript-eslint/ban-ts-comment' && m.severity === 2)).toBe(true)
+})
+
 test('lint accepts checked inputs and described negative type tests', async () => {
   expect(
     await messages(

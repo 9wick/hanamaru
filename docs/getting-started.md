@@ -2,6 +2,8 @@
 
 このページはhanamaruのAPIを使った入門例です。配布物をNode.js 22.18・24、Bun 1.3.5、Deno 2.9.2で実行し、TypeScript 5.8.3で型検証しています。
 
+hanamaruパッケージとTypeScriptを開発依存に追加した環境で、テストを定義してCLIで実行します。設定ファイルは不要です。依存の配布状況とランタイムの制約は[実装状況](./limitations.md)を参照してください。
+
 ## 最初のテスト
 
 対象の `math.ts`。
@@ -18,7 +20,7 @@ export function add(a: number, b: number): number {
 
 <!-- example: docs/examples/math.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -26,6 +28,8 @@ export const addition = new Test()
   .it('2つの数を足す', t => t.args(1, 2).expect(e => [
     e.result.toBe(3),
   ]))
+
+registerTest(addition)
 ```
 出典: [docs/examples/math.test.ts](examples/math.test.ts)
 
@@ -36,6 +40,16 @@ export const addition = new Test()
 
 `.args('1', 2)` や `e.result.toBe('3')` は型エラーです。
 ケースの識別子や対象ファイルの情報を書く必要はありません。
+
+この例のファイルを `src` 以下に置いた場合、次のコマンドで実行できます。
+
+例の定義は他のサンプルからimportするためにexportしています。CLIでの実行対象は、ファイル末尾の `registerTest(addition)` で指定します。
+
+```console
+npx hanamaru src/math.test.ts
+```
+
+CLIは `registerTest` で登録されたルートを収集して実行するので、テストファイル内で `run()` を呼ぶ必要はありません。CLI自体は型チェックをしないため、日常の実行では後述の[型チェックを含むtest script](#実行環境とコマンド)を使います。
 
 ## モックを使う
 
@@ -66,7 +80,7 @@ export async function createUser(input: CreateUserInput): Promise<User> {
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
@@ -93,6 +107,8 @@ export const users = new Test()
       call(mailService, 'send').notCalled(),
     ])
   )
+
+registerTest(users)
 ```
 出典: [docs/examples/user.test.ts](examples/user.test.ts)
 
@@ -107,7 +123,7 @@ sendにはモックを設定していません。expectCallsに指定するだ�
 
 <!-- example: docs/examples/calls.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 // モックを設定せず、本物の処理がどう呼ばれるかを検証する。
@@ -119,6 +135,8 @@ export const calls = new Test()
       call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
       call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ]))
+
+registerTest(calls)
 ```
 出典: [docs/examples/calls.test.ts](examples/calls.test.ts)
 
@@ -129,7 +147,7 @@ export const calls = new Test()
 
 <!-- example: docs/examples/context.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
 export const contextAddition = new Test()
@@ -138,6 +156,8 @@ export const contextAddition = new Test()
   .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, ctx.b])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(contextAddition)
 ```
 出典: [docs/examples/context.test.ts](examples/context.test.ts)
 
@@ -147,10 +167,12 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 
 ## 実行環境とコマンド
 
-実装後の利用では、JavaScriptと型定義を含むhanamaruパッケージとTypeScriptを開発依存に追加します。
-初版の対応目標はNode.js 22.18以上・Bun 1.3以上・Deno 2.9.2以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
+対応環境はNode.js 22.18以上・Bun 1.3以上・Deno 2.9.2以上・TypeScript 5.8以上です。[制約](./limitations.md)も参照してください。
 
 設定ファイルがなくても、CLIは `**/*.{test,spec}.ts` を既定の探索対象にします。
+
+読むファイルを名前付きで選ぶ機能は[project](./projects.md)、unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)で説明します。登録とprojectを含むファイル指定・設定は[CLI](./cli.md)を参照してください。
+projectはCLIのファイル選択設定です。自分のプログラムから完成定義を実行して結果を処理する `run(test)` との使い分けは、[実行方法の選び方](./cli.md#実行方法の選び方)に記載しています。
 
 `package.json` の設定例。
 
@@ -186,7 +208,7 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 ランナー単独では型チェックしないため、通常のtest scriptで両方を実行します。
 公開npmレジストリへの配布は未検証です。このページのサンプルは `docs/examples/` にあり、リポジトリでは `npm run test:examples` が全て実行します。`npm run check` はビルドを含めた全体を検証します。
 
-次は[テストをグループにまとめる](./grouping.md)と[プラグイン向けblueprint](./metadata.md)を参照してください。
+複数の定義を合成し、共通設定や環境を用意する場合は[テストをグループにまとめる](./grouping.md)を参照してください。
 
 ## 入力を並べる・実行設定を変える
 

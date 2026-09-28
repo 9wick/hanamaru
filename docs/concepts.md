@@ -7,7 +7,7 @@ hanamaruは、Honoのように小さなAPIをつないで、書いた内容か�
 
 <!-- example: docs/examples/math.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -15,6 +15,8 @@ export const addition = new Test()
   .it('2つの数を足す', t => t.args(1, 2).expect(e => [
     e.result.toBe(3),
   ]))
+
+registerTest(addition)
 ```
 出典: [docs/examples/math.test.ts](examples/math.test.ts)
 
@@ -74,8 +76,10 @@ expectCallsのコールバックで、対象のオブジェクト・キー・回
 ## 定義と実行を分ける
 
 実行時の構造は、一回のrun全体 → group → 対象ケース群 → ケース → 試行です。groupは省略でき、入れ子にもできます。対象ケース群は一つのテスト対象と、その対象を検証するケースを持ちます。
-別の軸では、テストコードを評価してケースや設定を定義し、完成したテストを `run(test)` で実行します。実行器はテストからblueprintを取得し、内部で実行計画を決めます。
+別の軸では、テストコードを評価してケースや設定を定義し、CLIは登録された完成定義を収集して実行します。自分のプログラムからはライブラリAPIの `run(test)` で完成定義を実行できます。どちらも実行器がblueprintをもとに実行計画を決めます。収集条件は[登録](./registration.md)を参照してください。
 この流れと実行時の階層は、別の見方です。
+
+[project](./projects.md)はCLIが読むファイルの集合を名前で選ぶ設定です。groupの階層を追加せず、コンテキストや環境はテストのmiddlewareで供給します。CLIと `run(test)` の使い分けは[実行方法の選び方](./cli.md#実行方法の選び方)を参照してください。
 
 プラグイン作者は `.blueprint()` から、テスト定義を構造化した値を取得できます。
 「何を対象に、どう準備し、どの振る舞いに置き換え、何を渡し、何を検証するか」を保持します。

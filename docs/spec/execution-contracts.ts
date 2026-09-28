@@ -3,8 +3,12 @@ import type { AssertionResult, AttemptResult, CaseResult, DiagnosticValue, Faile
 import { add } from '../examples/math.ts'
 
 defineConfig({
-  include: ['**/*.{test,spec}.ts'],
-  exclude: ['**/node_modules/**', '**/dist/**'],
+  projects: {
+    default: {
+      include: ['**/*.{test,spec}.ts'],
+      exclude: ['**/node_modules/**', '**/dist/**'],
+    },
+  },
   reporter: 'pretty',
   collectionTimeout: 120_000,
   shutdownGrace: 5_000,
@@ -13,6 +17,10 @@ defineConfig({
     plugins: [{ name: 'example', resolveId(id) { return id === 'virtual:test' ? '\0virtual:test' : null } }],
   },
 })
+// @ts-expect-error project values must name their include patterns.
+defineConfig({ projects: { unit: 'src/**/*.test.ts' } })
+// @ts-expect-error file selection cannot be configured at the top level.
+defineConfig({ include: ['src/**/*.test.ts'] })
 // @ts-expect-error vite config must be an object.
 defineConfig({ vite: 'vite.config.ts' })
 // @ts-expect-error Vite alias replacements must be strings.

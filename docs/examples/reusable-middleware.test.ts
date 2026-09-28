@@ -1,4 +1,4 @@
-import { Test, middleware, type Ctx } from 'hanamaru'
+import { Test, registerTest, middleware, type Ctx } from 'hanamaru'
 import { add } from './math.ts'
 
 // 変数へ入れて使い回すmiddlewareには文脈がないので、読む値をCtx<…>で要求する。
@@ -12,3 +12,5 @@ export const reusedMiddleware = new Test()
   .it('要求したseedから期待値を作る', t => t
     .argsFrom(ctx => [ctx.seed, 1])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(reusedMiddleware)

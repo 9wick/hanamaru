@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
 const child = new Test<{ a: number }>()
@@ -9,3 +9,5 @@ const child = new Test<{ a: number }>()
 export const parentContext = new Test()
   .use(middleware(async (_, next) => next({ a: 1, extra: true })))
   .group([child])
+
+registerTest(parentContext)

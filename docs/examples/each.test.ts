@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -9,3 +9,5 @@ export const addition = new Test()
   ], (t, row) => t
     .args(row.a, row.b)
     .expect(e => [e.result.toBe(row.expected)]))
+
+registerTest(addition)

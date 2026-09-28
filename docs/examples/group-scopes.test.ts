@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 import { createUser, userRepository, mailService } from './user.ts'
 
@@ -56,3 +56,5 @@ const scoped = new Test()
 // #endregion scoped-mock
 
 export const groupScopes = new Test().group([grouped, outer, scoped])
+
+registerTest(groupScopes)

@@ -1,11 +1,11 @@
 # hanamaru
 
 Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
-対象・モック・引数・期待を書き、完成したテストを `run(test)` で実行します。
+対象・モック・引数・期待を書き、CLIで実行するルートを `registerTest` で登録します。
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
@@ -32,8 +32,12 @@ export const users = new Test()
       call(mailService, 'send').notCalled(),
     ])
   )
+
+registerTest(users)
 ```
 出典: [docs/examples/user.test.ts](docs/examples/user.test.ts)
+
+この例の `export` は別のサンプルから `users` をimportするためです。CLIが実行するかどうかは、末尾の `registerTest(users)` で決まります。
 
 `.target()` から引数と戻り値の型が決まります。
 戻り値・例外は `.expect()`、呼ばれ方は `.expectCalls()` に条件を並べます。
@@ -46,7 +50,7 @@ export const users = new Test()
 
 <!-- example: docs/examples/math.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -54,14 +58,24 @@ export const addition = new Test()
   .it('2つの数を足す', t => t.args(1, 2).expect(e => [
     e.result.toBe(3),
   ]))
+
+registerTest(addition)
 ```
 出典: [docs/examples/math.test.ts](docs/examples/math.test.ts)
+
+パッケージをインストールした環境で、テストファイルを指定して実行できます。
+
+```console
+npx hanamaru src/math.test.ts
+```
+
+このコマンドは、例のファイルを `src/math.test.ts` に置いた場合です。引数なしの `npx hanamaru` は `**/*.{test,spec}.ts` を探索します。型チェックを含むtest scriptは[はじめる](./docs/getting-started.md#実行環境とコマンド)を参照してください。
 
 ## 行データからケースを書く
 
 <!-- example: docs/examples/each.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -72,6 +86,8 @@ export const addition = new Test()
   ], (t, row) => t
     .args(row.a, row.b)
     .expect(e => [e.result.toBe(row.expected)]))
+
+registerTest(addition)
 ```
 出典: [docs/examples/each.test.ts](docs/examples/each.test.ts)
 
@@ -82,7 +98,7 @@ eachはitと並ぶ入口です。行ごとに名前やIDを追加せず、引数
 
 <!-- example: docs/examples/calls.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 // モックを設定せず、本物の処理がどう呼ばれるかを検証する。
@@ -94,6 +110,8 @@ export const calls = new Test()
       call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
       call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ]))
+
+registerTest(calls)
 ```
 出典: [docs/examples/calls.test.ts](docs/examples/calls.test.ts)
 
@@ -152,7 +170,7 @@ retryは失敗したケースだけを再試行し、各試行を結果に残し
 
 <!-- example: docs/examples/middleware.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
@@ -168,6 +186,8 @@ export const userCount = new Test()
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(userCount)
 ```
 出典: [docs/examples/middleware.test.ts](docs/examples/middleware.test.ts)
 
@@ -176,6 +196,14 @@ middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型�
 詳しくは[middleware](./docs/middleware.md)を参照してください。
 
 ## 定義したテストを実行する
+
+日常のテスト実行にはCLIを使います。テストファイルは実行するルートを `registerTest` で登録し、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
+
+[テストの登録](./docs/registration.md)はCLIの実行対象の宣言です。exportしただけのテストは実行対象になりません。読むファイルの集合を名前で選ぶ設定は[project](./docs/projects.md)です。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
+
+### プログラムから結果を受け取る
+
+自分のスクリプトから読み込み済みの定義を実行し、`RunResult` を処理したい場合は、ライブラリAPIの `run(test)` または `run([testA, testB])` を使います。
 
 <!-- example: docs/examples/metadata.ts#run -->
 ```ts
@@ -186,9 +214,9 @@ const result = await run(users)
 ```
 出典: [docs/examples/metadata.ts](docs/examples/metadata.ts)
 
-プラグイン作者は `users.blueprint()` で、グループの階層、テスト対象、middleware、実行設定・モック、ケース、宣言位置などを実行前に参照できます。通常の実行ではblueprintを取得する必要はありません。
-実行器はテストからblueprintを得て、内部で実行計画を決めます。[blueprint](./docs/metadata.md)に取得できる内容と評価時点を記載しています。
-テストを書くために、識別子やソース位置を別途登録する必要はありません。
+`run` は設定ファイルを読まず、ファイル探索やprojectの選択を行いません。CLIとライブラリAPIの保証の違いは[実行方法の選び方](./docs/cli.md#実行方法の選び方)を参照してください。
+
+### 失敗を確認する
 
 失敗には宣言位置を自動で添え、条件・期待・観測・原因を構造として返します。
 
@@ -200,21 +228,39 @@ createUser
       actual:   合計2回
 ```
 
-expectは現在の書き方と実行時のコンテキストを保つため、blueprintでは遅延処理として保持します。
-全ての条件を実行前に展開する保証はありません。[宣言位置と実行結果](./docs/results.md)も参照してください。
+結果用の識別子やソース位置を手書きする必要はありません。詳しくは[宣言位置と実行結果](./docs/results.md)を参照してください。
 
 ## ドキュメント
 
-- [はじめる](./docs/getting-started.md)
-- [設計思想](./docs/concepts.md)
+最初のテストを書いて実行する手順は、[はじめる](./docs/getting-started.md)を参照してください。
+
+### テストを書く
+
 - [Test ビルダー](./docs/api-test.md) / [it ビルダー](./docs/api-it.md)
-- [モック](./docs/api-mock.md) / [マッチャ](./docs/api-expect.md)
-- [テストをグループにまとめる](./docs/grouping.md) / [middleware](./docs/middleware.md)
-- [each](./docs/each.md) / [timeoutとretry](./docs/execution-options.md)
-- [プラグイン向けblueprint](./docs/metadata.md) / [宣言位置と実行結果](./docs/results.md)
-- [実行セマンティクス](./docs/semantics.md) / [CLI](./docs/cli.md)
-- [型推論](./docs/type-inference.md) / [制約と実装状況](./docs/limitations.md)
+- [マッチャ](./docs/api-expect.md) / [モック](./docs/api-mock.md)
+- [行データからケースを書く（each）](./docs/each.md)
+- [middleware](./docs/middleware.md) / [テストをグループにまとめる](./docs/grouping.md)
+
+### 実行して結果を確認する
+
+- [CLIと設定ファイル](./docs/cli.md)
+- [テストの登録](./docs/registration.md)
+- [projectで読むファイルを選ぶ](./docs/projects.md)
+- [projectの利用例：unitとintegration/e2eを分ける](./docs/project-use-cases.md)
+- [timeoutとretry](./docs/execution-options.md)
+- [宣言位置と実行結果](./docs/results.md)
+
+### 仕様を詳しく知る
+
+- [設計思想](./docs/concepts.md)
+- [型推論](./docs/type-inference.md)
+- [実行セマンティクス](./docs/semantics.md)
+- [制約と実装状況](./docs/limitations.md)
 - [用語集](./docs/glossary.md)
+
+### プラグインを作る
+
+- [プラグイン向けblueprint](./docs/metadata.md)
 
 ## 対応環境
 
