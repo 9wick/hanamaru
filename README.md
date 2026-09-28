@@ -187,7 +187,7 @@ middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型�
 
 日常のテスト実行にはCLIを使います。テストファイルは完成した定義をexportし、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
 
-将来のCLIでは[テストの登録](./docs/registration.md)を実行対象の宣言に使い、exportを不要にする契約です。読むファイルの集合を名前で選ぶ設定は[project](./docs/projects.md)です（いずれも未実装）。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
+将来のCLIは[テストの登録](./docs/registration.md)を実行対象の宣言に使い、現在のexport収集を置き換える契約です。exportしただけのテストは実行対象になりません。読むファイルの集合を名前で選ぶ設定は[project](./docs/projects.md)です（いずれも未実装）。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
 
 ### プログラムから結果を受け取る
 

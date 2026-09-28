@@ -88,5 +88,5 @@ Dockerやgroupはe2eという名前に必須ではありません。各ファイ
 ```
 
 `test:unit` はunitだけ、`test:e2e` はe2eだけを選びます。
-`test` は設定された両方のprojectを選びます。
+`test` は設定された両方のprojectのファイルをマージして選びます。同じファイルが両方に一致しても一度だけ実行します。
 unit/e2e以外の分け方もでき、同じ仕組みでintegrationや機能ごとの入口を追加できます。

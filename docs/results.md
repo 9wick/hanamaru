@@ -2,7 +2,7 @@
 
 テストを書く人に位置やIDの入力を要求せず、blueprintと結果から宣言位置・各試行・失敗内容を取得できます。
 完全な公開型は[hanamaru.d.ts](./spec/hanamaru.d.ts)にあります。
-このページは現在のCLIとライブラリAPIが返す `RunResult` の契約です。未実装のproject機能における所属projectの表現・複数projectの結果形式は、[実装前に残るAPIの詳細](./projects.md#実装前に残るapiの詳細)に記載しています。現在のpathだけで別projectのケースを区別できると約束するものではありません。
+このページは現在のCLIとライブラリAPIが返す `RunResult` の契約です。未実装のproject機能では複数projectのファイルをマージし、同じファイルの実行結果を複製しません。所属projectの具体的な表現は[実装前に残るAPIの詳細](./projects.md#実装前に残るapiの詳細)に記載しています。現在のpathだけで別projectのケースを区別できると約束するものではありません。
 
 ## 宣言位置
 
