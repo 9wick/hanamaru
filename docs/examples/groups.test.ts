@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 const creation = new Test()
@@ -26,3 +26,5 @@ export const registrations = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group('作成', [creation])
   .group([saving])
+
+registerTest(registrations)

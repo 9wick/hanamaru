@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 // モックを設定せず、本物の処理がどう呼ばれるかを検証する。
@@ -10,3 +10,5 @@ export const calls = new Test()
       call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
       call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ]))
+
+registerTest(calls)

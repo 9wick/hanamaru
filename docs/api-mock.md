@@ -57,7 +57,7 @@ blueprintにはkind: sequence、onceの非空配列、fallbackの通常動作を
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
@@ -84,6 +84,8 @@ export const users = new Test()
       call(mailService, 'send').notCalled(),
     ])
   )
+
+registerTest(users)
 ```
 出典: [docs/examples/user.test.ts](examples/user.test.ts)
 
@@ -125,7 +127,7 @@ CLIで実行する場合は、module namespaceの関数exportも対象です。
 
 <!-- example: docs/examples/namespace-mock.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import * as data from './data.ts'
 import { calc } from './calc.ts'
 
@@ -135,6 +137,8 @@ export const namespaceMock = new Test().target(calc)
     .args()
     .expect(e => [e.result.toBe(20)])
     .expectCalls(call => [call(data, 'getData').calledTimes(1)]))
+
+registerTest(namespaceMock)
 ```
 出典: [docs/examples/namespace-mock.test.ts](examples/namespace-mock.test.ts)
 

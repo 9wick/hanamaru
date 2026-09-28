@@ -1,11 +1,11 @@
 # hanamaru
 
 Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
-対象・モック・引数・期待を書き、現行のCLIでは完成したテストをexportして実行します。
+対象・モック・引数・期待を書き、CLIで実行するルートを `registerTest` で登録します。
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
@@ -32,8 +32,12 @@ export const users = new Test()
       call(mailService, 'send').notCalled(),
     ])
   )
+
+registerTest(users)
 ```
 出典: [docs/examples/user.test.ts](docs/examples/user.test.ts)
+
+この例の `export` は別のサンプルから `users` をimportするためです。CLIが実行するかどうかは、末尾の `registerTest(users)` で決まります。
 
 `.target()` から引数と戻り値の型が決まります。
 戻り値・例外は `.expect()`、呼ばれ方は `.expectCalls()` に条件を並べます。
@@ -46,7 +50,7 @@ export const users = new Test()
 
 <!-- example: docs/examples/math.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -54,6 +58,8 @@ export const addition = new Test()
   .it('2つの数を足す', t => t.args(1, 2).expect(e => [
     e.result.toBe(3),
   ]))
+
+registerTest(addition)
 ```
 出典: [docs/examples/math.test.ts](docs/examples/math.test.ts)
 
@@ -69,7 +75,7 @@ npx hanamaru src/math.test.ts
 
 <!-- example: docs/examples/each.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -80,6 +86,8 @@ export const addition = new Test()
   ], (t, row) => t
     .args(row.a, row.b)
     .expect(e => [e.result.toBe(row.expected)]))
+
+registerTest(addition)
 ```
 出典: [docs/examples/each.test.ts](docs/examples/each.test.ts)
 
@@ -90,7 +98,7 @@ eachはitと並ぶ入口です。行ごとに名前やIDを追加せず、引数
 
 <!-- example: docs/examples/calls.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 // モックを設定せず、本物の処理がどう呼ばれるかを検証する。
@@ -102,6 +110,8 @@ export const calls = new Test()
       call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
       call(mailService, 'send').calledOnceWith({ id: 'u1' }),
     ]))
+
+registerTest(calls)
 ```
 出典: [docs/examples/calls.test.ts](docs/examples/calls.test.ts)
 
@@ -160,7 +170,7 @@ retryは失敗したケースだけを再試行し、各試行を結果に残し
 
 <!-- example: docs/examples/middleware.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
@@ -176,6 +186,8 @@ export const userCount = new Test()
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(userCount)
 ```
 出典: [docs/examples/middleware.test.ts](docs/examples/middleware.test.ts)
 
@@ -185,9 +197,9 @@ middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型�
 
 ## 定義したテストを実行する
 
-日常のテスト実行にはCLIを使います。テストファイルは完成した定義をexportし、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
+日常のテスト実行にはCLIを使います。テストファイルは実行するルートを `registerTest` で登録し、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
 
-将来のCLIは[テストの登録](./docs/registration.md)を実行対象の宣言に使い、現在のexport収集を置き換える契約です。exportしただけのテストは実行対象になりません。読むファイルの集合を名前で選ぶ設定は[project](./docs/projects.md)です（いずれも未実装）。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
+[テストの登録](./docs/registration.md)はCLIの実行対象の宣言です。exportしただけのテストは実行対象になりません。読むファイルの集合を名前で選ぶ設定は[project](./docs/projects.md)です。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
 
 ### プログラムから結果を受け取る
 
@@ -232,6 +244,9 @@ createUser
 ### 実行して結果を確認する
 
 - [CLIと設定ファイル](./docs/cli.md)
+- [テストの登録](./docs/registration.md)
+- [projectで読むファイルを選ぶ](./docs/projects.md)
+- [projectの利用例：unitとintegration/e2eを分ける](./docs/project-use-cases.md)
 - [timeoutとretry](./docs/execution-options.md)
 - [宣言位置と実行結果](./docs/results.md)
 
@@ -246,14 +261,6 @@ createUser
 ### プラグインを作る
 
 - [プラグイン向けblueprint](./docs/metadata.md)
-
-### 実装前の契約
-
-以下の登録とproject機能は未実装です。提供する機能の契約と、その機能を使った構成例を分けて記載しています。
-
-- [テストの登録](./docs/registration.md)
-- [projectで読むファイルを選ぶ](./docs/projects.md)
-- [projectの利用例：unitとintegration/e2eを分ける](./docs/project-use-cases.md)
 
 ## 対応環境
 

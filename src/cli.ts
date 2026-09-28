@@ -127,7 +127,7 @@ async function main(): Promise<number> {
   }
   if (options.help) {
     process.stdout.write(
-      'hanamaru [files...] [--filter text] [--reporter pretty|json] [--config file] [--ci] [--fail-on-flaky] [--collection-timeout ms] [--shutdown-grace ms]\n',
+      'hanamaru [files...] [--project name] [--filter text] [--reporter pretty|json] [--config file] [--ci] [--fail-on-flaky] [--collection-timeout ms] [--shutdown-grace ms]\n',
     )
     return 0
   }
@@ -143,7 +143,17 @@ async function main(): Promise<number> {
   const done = new Promise<number>((resolve, reject) => {
     const printResult = (result: MutableRunResult) => {
       if (reporter === 'json') process.stdout.write(`${JSON.stringify(result)}\n`)
-      else process.stdout.write(result.tests.flatMap((node) => formatNode(node)).join('\n') + '\n')
+      else
+        process.stdout.write(
+          result.tests
+            .flatMap((node) => [
+              ...(node.source
+                ? [`${node.source.file}${node.source.projects.length ? ` [${node.source.projects.join(', ')}]` : ''}`]
+                : []),
+              ...formatNode(node),
+            ])
+            .join('\n') + '\n',
+        )
     }
     const finish = (code: number) => {
       if (complete) return

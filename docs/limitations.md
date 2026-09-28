@@ -10,8 +10,8 @@
 | 公開APIの型 | `src/api.ts` に定義し、`dist/` に型定義を生成。`docs/spec/hanamaru.d.ts` は公開APIを再export |
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
 | ビルダー・ランナー・CLIの実装 | `src/` のTypeScript実装を `strict` で型検査。`npm test` がunit・e2e・文書サンプルの3層で実行を検証 |
-| 名前付きで読むファイルを選ぶproject | [機能の契約](./projects.md)と[利用例](./project-use-cases.md)を文書化。`projects`・`--project` はAPI案で未実装、型・実行は未検証 |
-| 登録ベースのCLI収集 | [登録の契約](./registration.md)を文書化。`registerTest` はAPI案で未実装、型・実行は未検証 |
+| 名前付きで読むファイルを選ぶproject | [機能の契約](./projects.md)と[利用例](./project-use-cases.md)を文書化。`projects`・`--project` を実装し、型とe2eで検証 |
+| 登録ベースのCLI収集 | [登録の契約](./registration.md)を文書化。`registerTest` と登録収集を実装し、型とe2eで検証 |
 | npmパッケージのインストールと実行 | ローカルtarballのインストール・型解決・CLI起動を確認。公開npmレジストリへの配布は未検証 |
 | モックの復元、middleware、失敗集約等の実行時保証 | 実行テストで主な経路を検証。全ての入力・環境は未検証 |
 
@@ -30,7 +30,7 @@ Deno 2.9.2では、配布tarballのCLIで設定なし・alias/plugin設定あり
 
 ## TypeScriptの実行
 
-通常のテスト実行はCLIから行い、ライブラリAPIの `run` は自分のプログラムから完成した定義を実行するときに使います。[実行方法の選び方](./cli.md#実行方法の選び方)を参照してください。未実装のprojectはCLIが読むファイルを選ぶ設定であり、`run` の入力形式を変更するものではありません。
+通常のテスト実行はCLIから行い、ライブラリAPIの `run` は自分のプログラムから完成した定義を実行するときに使います。[実行方法の選び方](./cli.md#実行方法の選び方)を参照してください。projectはCLIが読むファイルを選ぶ設定であり、`run` の入力形式を変更するものではありません。
 
 CLIは内蔵のViteでTypeScriptを変換して実行します。必要な変換設定・プラグインは
 [hanamaru configのvite](./cli.md#viteの設定)で指定できます。型チェックは行いません。
@@ -70,10 +70,10 @@ blueprintはreadonlyだが、利用者から渡されたオブジェクト内部
 
 親のコンテキストの要求はTypeScript上の契約であり、実行時のスキーマではない。
 要求は `new Test<R>()` のRだけで、供給元は指定しない。middlewareの配置から必要な時点を追跡し、その時点までに供給できるか合成時に検査する。時点の情報を広い型注釈で隠した場合は、group開始時から必要な可能性も含めて検査する。
-`group` と `run` の型検査では不足を防ぐが、現在のCLIは型チェックをせず、exportされた定義の型引数を検査できない。
-収集するテストファイルには親のコンテキストを要求しないルートをexportし、親のコンテキストが必要な子は探索対象外に置く。
+`group` と `run` の型検査では不足を防ぐが、CLIは型チェックをせず、登録された定義の型引数を検査できない。
+収集するテストファイルには親のコンテキストを要求しないルートを登録します。親のコンテキストが必要な子は、供給する親のgroupに追加してから登録します。
 
-未実装の[登録ベースのCLI収集](./registration.md)では、親のctx供給を要求しない完成定義だけを `registerTest` の型で受け付けます。CLIは型検査を実行せず、projectは登録を収集するファイルを選びます。登録を経ない完成定義の追跡方法は実装前に検証します。
+[登録ベースのCLI収集](./registration.md)では、親のctx供給を要求しない完成定義だけを `registerTest` の型で受け付けます。CLIは型検査を実行せず、projectは登録を収集するファイルを選びます。登録を経ない完成定義は警告します。
 
 middlewareの戻り値から後続コンテキストを推論するため、nextの完了値を返す必要がある。
 `return await next(...)` のreturn忘れは型で防ぐが、nextの呼び出し回数や待機の正しさは実行時にも検査する。

@@ -4,7 +4,7 @@
 
 <!-- example: docs/examples/each.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const addition = new Test()
@@ -15,6 +15,8 @@ export const addition = new Test()
   ], (t, row) => t
     .args(row.a, row.b)
     .expect(e => [e.result.toBe(row.expected)]))
+
+registerTest(addition)
 ```
 出典: [docs/examples/each.test.ts](examples/each.test.ts)
 
@@ -27,7 +29,7 @@ tはitと同じビルダーで、mock・timeout・retry・args / argsFrom・expe
 
 <!-- example: docs/examples/each-name.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { add } from './math.ts'
 
 export const namedRows = new Test().target(add).each(
@@ -35,6 +37,8 @@ export const namedRows = new Test().target(add).each(
   [{ a: 1, b: 2, expected: 3 }],
   (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(row.expected)]),
 )
+
+registerTest(namedRows)
 ```
 出典: [docs/examples/each-name.test.ts](examples/each-name.test.ts)
 

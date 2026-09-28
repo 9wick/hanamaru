@@ -21,7 +21,7 @@ export default defineConfig({
       {
         test: {
           name: 'e2e-workspace',
-          include: ['e2e/workspace-cli.test.ts'],
+          include: ['e2e/workspace-cli.test.ts', 'e2e/project-registration.test.ts'],
           testTimeout: 60_000,
           hookTimeout: 180_000,
         },

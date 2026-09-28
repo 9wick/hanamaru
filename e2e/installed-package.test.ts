@@ -230,7 +230,7 @@ test('CLI reads TypeScript config, discovers files and lets flags override the r
   writeFileSync(
     config,
     `import { defineConfig } from 'hanamaru'
-export default defineConfig({ include: ['discovered.test.ts'], reporter: 'json' })`,
+export default defineConfig({ projects: { discovered: { include: ['discovered.test.ts'] } }, reporter: 'json' })`,
   )
   expect(jsonResult(invoke(installed.env, '--config', config), 0).status).toBe('passed')
   const pretty = invoke(installed.env, '--config', config, '--reporter', 'pretty')

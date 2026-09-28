@@ -1,4 +1,4 @@
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 interface Account { id: string }
@@ -58,3 +58,5 @@ const retried = new Test()
     .expectCalls(call => [call(api, 'fetch').calledTimes(2)]))
 
 export const mockBehaviors = new Test().group([resolved, faked, retried])
+
+registerTest(mockBehaviors)

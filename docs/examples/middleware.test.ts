@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
@@ -14,3 +14,5 @@ export const userCount = new Test()
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(userCount)

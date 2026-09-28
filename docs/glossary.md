@@ -6,21 +6,21 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 ## 定義から実行まで
 
-### project（実装前の契約）
+### project
 
-- 識別子: `hanamaru.config.ts` の `projects`、CLIの `--project`（API案）。
+- 識別子: `hanamaru.config.ts` の `projects`、CLIの `--project`。
 - 定義: CLIが読むファイルの集合に名前を付ける設定。
 - 文脈: CLIで読み込むファイルを分け、必要な集合を名前で選ぶときに使います。project設定で `run()` は呼びません。
-- ルール: 各projectにはファイルパスやパターンを文字列で指定し、複数なら文字列の配列にします。複数projectのファイルはマージし、重複ファイルの登録を一度だけ実行します。`--project` と明示ファイルの同時指定はエラーです。`unit`・`integration`・`e2e` は利用者が付ける名前で、組み込みのテスト種別ではありません。projectはgroupの階層を追加せず、コンテキストも供給しません。共通の設定や環境はテストのgroup・middlewareで構成します。一回分の実行であるRunとも区別します。
-- 状態: 未実装。機能の保証は[projectの契約](./projects.md)、unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)、現在使える入口は[CLI](./cli.md)に記載します。
+- ルール: 各projectの `{ include, exclude? }` にファイルパスやパターンの配列を指定します。トップレベルの `include` / `exclude` は使いません。複数projectのファイルはマージし、重複ファイルの登録を一度だけ実行します。`--project` と明示ファイルの同時指定はエラーです。`unit`・`integration`・`e2e` は利用者が付ける名前で、組み込みのテスト種別ではありません。projectはgroupの階層を追加せず、コンテキストも供給しません。共通の設定や環境はテストのgroup・middlewareで構成します。一回分の実行であるRunとも区別します。
+- 参照: 機能の保証は[projectの契約](./projects.md)、unitとintegration/e2eを分ける構成は[利用例](./project-use-cases.md)、実行入口は[CLI](./cli.md)に記載します。
 
-### 登録（実装前の契約）
+### 登録
 
-- 識別子: `registerTest(root)`（API案）。
+- 識別子: `registerTest(root)`。
 - 定義: CLIが実行するルートを、テストファイルの評価時に明示する操作。
 - 文脈: CLIの既定探索、ファイル指定、projectで選んだファイルから実行対象を収集するときに使います。
 - ルール: 親のctx供給を要求しない完成したルートを登録します。ルートのexportは不要です。子をimportするためのexportは登録ではなく、単独実行の指定にもなりません。登録時にmiddlewareやテスト対象を実行しません。
-- 状態: 未実装。現在のCLIは完成した定義のexportを収集します。登録方式への切り替え時にexport収集は廃止します。新方式の条件は[テストの登録](./registration.md)に記載します。
+- 参照: 登録と収集の条件は[テストの登録](./registration.md)に記載します。
 
 ### テスト定義
 
@@ -31,16 +31,16 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 ### 完成した値
 
-- 識別子: ケースまたは子を追加し終えたチェーンの戻り値。現行の型名は `TestDefinition<R>`。
+- 識別子: ケースまたは子を追加し終えたチェーンの戻り値。型名は `TestDefinition<R>`。
 - 定義: 対象ケース群または一つ以上のグループを保持した、CLIの収集またはライブラリAPIの `run(test)` の入力となる完成値。
-- 文脈: 現在のCLIではこの値をexportして収集対象にします。登録ベースのCLIでは単独実行できるルートを登録し、子はグループに追加します。自分のプログラムからはライブラリAPIのrunに渡せます。
+- 文脈: CLIでは単独実行できるルートを登録し、子はグループに追加します。自分のプログラムからはライブラリAPIのrunに渡せます。
 - ルール: チェーンの途中の値は実行できません。親から必要なコンテキストの型も保持するため、親なしで実行できない完成値もあります。`TestDefinition` はこの完成値の共通型で、`Suite` は対象ケース群、`GroupSuite` は一つ以上のグループを持つ完成値です。いずれもblueprintそのものではありません。
 
 ### blueprint
 
 - 識別子: `test.blueprint()`、`TestBlueprint`、`SuiteBlueprint`、`GroupBlueprint`、`DefinitionBlueprint`
 - 定義: テスト定義から得られる、ケースやグループ、設定、関数参照などの実行前の構造。
-- 文脈: プラグイン作者が定義内容を読むための準公開APIです。現在のCLIでは完成した定義をexportして実行し、利用者がblueprintを取得する必要はありません。登録ベースのCLIでもblueprintを直接扱いません。
+- 文脈: プラグイン作者が定義内容を読むための準公開APIです。CLIでは完成した定義を登録し、利用者がblueprintを直接扱う必要はありません。
 - ルール: blueprintを取得してもmiddlewareやテスト対象は実行しません。`DefinitionBlueprint` はチェーンの共通設定と複数のgroup呼び出しを保持しますが、実行階層のグループではありません。関数やオブジェクト参照を含むため、JSONで往復できることは保証しません。blueprint自体は `run()` の入力ではありません。
 
 ### 実行計画
@@ -94,9 +94,9 @@ hanamaruのドキュメントとAPIで使う語の意味を定めます。
 
 ### 対象ケース群
 
-- 識別子: `.target()` に続けて `.it()` / `.each()` / `.only()` / `.skip()` / `.todo()` でケースを追加した完成値。現行の型名は `Suite`、blueprintの型名は `SuiteBlueprint`。
+- 識別子: `.target()` に続けて `.it()` / `.each()` / `.only()` / `.skip()` / `.todo()` でケースを追加した完成値。型名は `Suite`、blueprintの型名は `SuiteBlueprint`。
 - 定義: 一つのテスト対象と、それを検証する一件以上のケースを持つ単位。
-- 文脈: 現在のCLIでは対象ケース群をexportして収集対象にするか、`.group()` で作るグループへ追加します。登録ベースのCLIでは単独実行できる対象ケース群を `registerTest` に渡します。ライブラリAPIからは直接 `run()` に渡せます。
+- 文脈: CLIでは単独実行できる対象ケース群を `registerTest` に渡すか、`.group()` で作るグループへ追加します。ライブラリAPIからは直接 `run()` に渡せます。
 - ルール: `.group()` で包まない限りグループではありません。実行時の階層は、Run → 任意のグループ（入れ子可）→ 対象ケース群 → ケース → 試行です。
 
 ### グループ

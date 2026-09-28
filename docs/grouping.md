@@ -4,7 +4,7 @@
 グループに書いたmock・useは、その配下のケースに共通して適用します。
 名前は必要なときだけ付けられます。
 
-読むファイルを名前で選ぶ機能は[project](./projects.md)を参照してください（未実装の契約）。groupはテストを合成し、共通設定や環境の適用範囲を作ります。[環境を共有する利用例](./project-use-cases.md#環境を複数のテストで共有する)では、groupで合成したルートを登録し、そのファイルをprojectで選びます。
+読むファイルを名前で選ぶ機能は[project](./projects.md)を参照してください。groupはテストを合成し、共通設定や環境の適用範囲を作ります。[環境を共有する利用例](./project-use-cases.md#環境を複数のテストで共有する)では、groupで合成したルートを登録し、そのファイルをprojectで選びます。
 
 ## 関連するテストと共通設定
 
@@ -13,7 +13,7 @@
 
 <!-- example: docs/examples/groups.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 const creation = new Test()
@@ -41,6 +41,8 @@ export const registrations = new Test()
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group('作成', [creation])
   .group([saving])
+
+registerTest(registrations)
 ```
 出典: [docs/examples/groups.test.ts](examples/groups.test.ts)
 
@@ -221,7 +223,7 @@ export const userCases = new Test<UserContext>()
 
 <!-- example: docs/examples/user-cases.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { userRepository, mailService } from './user.ts'
 import { userCases } from './user-cases.ts'
 
@@ -230,6 +232,8 @@ export const userCaseTests = new Test()
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group([userCases])
+
+registerTest(userCaseTests)
 ```
 出典: [docs/examples/user-cases.test.ts](examples/user-cases.test.ts)
 
@@ -257,8 +261,8 @@ groupには、その場で書いた定義も、importした定義も渡せます
 プラグイン向けの `.blueprint()` は無名のグループも含む階層と、それぞれの設定を保持します。
 子の要求コンテキストを満たさないテストは単独でrunへ渡せません。
 CLIには必要なコンテキストを用意したルートだけをexportします。
-未実装の[登録ベースのCLI収集](./registration.md)では、供給を含む完成したルートを `registerTest` に渡します。projectは登録を収集するファイルを選ぶだけで、ctxの供給元を補いません。
-現在のCLIでは、子を探索対象外のファイルに置いて二重の収集を避けます。登録ベースのCLIでは、子のexportだけで別のルートにはなりません。
+[登録ベースのCLI収集](./registration.md)では、供給を含む完成したルートを `registerTest` に渡します。projectは登録を収集するファイルを選ぶだけで、ctxの供給元を補いません。
+子のexportだけで別のルートにはなりません。CLIで実行するルートは `registerTest` で明示します。
 詳細は[型推論](./type-inference.md)、[プラグイン向けblueprint](./metadata.md)、[CLI](./cli.md)を参照してください。
 
 ## timeoutとretryも継承する

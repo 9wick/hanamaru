@@ -197,6 +197,7 @@ function overlayMocks(base: RuntimeMock[], own: RuntimeMock[]) {
 }
 function expand(
   bp: RuntimeBlueprint,
+  rootIndex: number,
   config: import('./api.js').ResolvedExecutionConfig,
   mocks: RuntimeMock[],
   frames: Frame[],
@@ -206,11 +207,12 @@ function expand(
   const currentMocks = overlayMocks(mocks, bp.mocks)
   const currentFrames = [...frames, { steps: bp.steps, fields: {} }]
   if (bp.kind === 'definition')
-    return bp.children.flatMap((child) => expand(child, settings, currentMocks, currentFrames, entryOrigin))
+    return bp.children.flatMap((child) => expand(child, rootIndex, settings, currentMocks, currentFrames, entryOrigin))
   if (bp.kind === 'test')
     return [
       {
         kind: 'test',
+        rootIndex,
         bp,
         config: settings,
         mocks: currentMocks,
@@ -220,11 +222,12 @@ function expand(
       },
     ]
   const children = bp.children.flatMap((entry) =>
-    expand(entry.blueprint, settings, currentMocks, currentFrames, entry.origin),
+    expand(entry.blueprint, rootIndex, settings, currentMocks, currentFrames, entry.origin),
   )
   return [
     {
       kind: 'group',
+      rootIndex,
       bp,
       children,
       config: settings,
@@ -1099,7 +1102,7 @@ export function collectBlueprints(input: Value): RuntimeBlueprint[] {
   return blueprints
 }
 export function createPlan(blueprints: RuntimeBlueprint[], options: InternalRunOptions = {}): Plan {
-  const allNodes = blueprints.flatMap((bp) => expand(bp, { timeout: 5_000, retry: 0 }, [], [], null))
+  const allNodes = blueprints.flatMap((bp, index) => expand(bp, index, { timeout: 5_000, retry: 0 }, [], [], null))
   const unfilteredOnly = allCases(allNodes).some((item) => item.mode === 'only')
   if (unfilteredOnly && options.forbidOnly) throw new TypeError('only is forbidden')
   const nodes = options.filter === undefined ? allNodes : filterNodes(allNodes, options.filter)

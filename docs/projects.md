@@ -4,18 +4,16 @@ projectは、CLIが読むファイルの集合に名前を付ける設定です�
 このページでは、hanamaruが提供する機能と、その利用条件・保証を説明します。
 テストの配置やunit・integration・e2eの分類は利用者が決めます。[unitとintegration/e2eを分ける利用例](./project-use-cases.md)は別ページで説明します。
 
-**実装状況:** projectと[テストの登録](./registration.md)は未実装です。このページは実装に先立つ利用者との契約です。以下の `projects`・`--project` はAPI案であり、現在のパッケージでは使えません。現在使える入口は[CLI](./cli.md)と `run(test)` です。
-
 ## どの場面でprojectを使うか
 
 日常のテスト実行はCLIから行います。設定なしの探索やファイル指定で足りる場合は、projectを定義する必要はありません。ファイルの集合を複数用意し、名前で選びたい場合にprojectを設定します。
 
-projectを設定しても、実行するルートは `registerTest` で登録し、CLIが実行します。登録方式への切り替え時に、従来のexportによるCLI収集は廃止します。設定内で `run()` を呼ぶ必要もありません。
+projectを設定しても、実行するルートは `registerTest` で登録し、CLIが実行します。完成定義のexportだけではCLIの実行対象になりません。設定内で `run()` を呼ぶ必要もありません。
 自分のプログラムで定義を実行して結果を処理したい場合には、既存のライブラリAPI `run(test)` を使います。`run` はconfigを読まず、projectの選択や収集も行いません。[実行方法の選び方](./cli.md#実行方法の選び方)を参照してください。
 
 ## projectが提供する機能
 
-`projects` の各値には、ファイルパスまたはglobパターンを文字列で書きます。複数指定するときは文字列の配列にします。単一ファイルの指定もglobパターンの指定も、同じファイル選択です。パスはCLIの実行ディレクトリを基準に解決します。
+`projects` の各値は `{ include, exclude? }` です。`include` と `exclude` にはファイルパスまたはglobパターンの配列を書きます。単一ファイルもglobも同じ指定方法で選び、`exclude` はそのprojectの候補から除外します。パスはCLIの実行ディレクトリを基準に解決します。トップレベルの `include` / `exclude` は使いません。
 
 CLIは選択したprojectのパターンに一致するファイルを一つの集合にマージし、重複を除いてから読み込みます。同じファイルが複数projectに一致しても、そのファイルの登録は一度だけ収集・実行します。パターンの照合だけではテストファイルを読み込まず、`registerTest` やmiddlewareも実行しません。importした別ファイルの登録は、そのファイルも選ばれていなければ実行対象に加えません。登録と子の合成の条件は[テストの登録](./registration.md)で説明します。
 
@@ -23,16 +21,16 @@ CLIは選択したprojectのパターンに一致するファイルを一つの�
 
 ## 設定と選択
 
-`hanamaru.config.ts` にproject名と読むファイルを指定します。次はAPI案です。`checks` と `scenarios` は説明のための名前です。
+`hanamaru.config.ts` にproject名と読むファイルを指定します。次のように設定します。`checks` と `scenarios` は説明のための名前です。
 
-<!-- example: none — projectの実装前に利用方法を示すAPI案。公開APIの型検証・実行例にはまだ含めない -->
+<!-- example: none — projectの設定例 -->
 ```ts
 import { defineConfig } from 'hanamaru'
 
 export default defineConfig({
   projects: {
-    checks: 'tests/checks/**/*.test.ts',
-    scenarios: 'tests/scenarios/root.ts',
+    checks: { include: ['tests/checks/**/*.test.ts'] },
+    scenarios: { include: ['tests/scenarios/root.ts'] },
   },
 })
 ```
@@ -66,7 +64,7 @@ groupで合成するときは、子が要求するコンテキストを型検査
 
 ## ファイルを選ぶときの契約
 
-以下をproject機能の利用者向けの保証とします。実装・検証は今後この契約に合わせて行います。
+以下をproject機能の利用者向けの保証とします。
 
 ### 選択と収集
 
@@ -92,7 +90,7 @@ groupで合成するときは、子が要求するコンテキストを型検査
 
 ### 環境を起動する時点
 
-- projectの文字列は収集するファイルの指定です。設定を読み込むだけではテストファイルをimportせず、middlewareも実行しません。
+- projectの `include` / `exclude` は収集するファイルの指定です。設定を読み込むだけではテストファイルをimportせず、middlewareも実行しません。
 - Docker・DB・サーバーの取得はmiddlewareの実行内に置き、設定やテストファイルのトップレベルでは起動しません。
 - 選択した全projectの収集と実行計画の検査を終え、filterを適用してから、実行する枝のmiddlewareを開始します。
 - filterで残したケースには、その祖先のmiddleware・mock・実行設定を保持します。実行対象を持たない枝のmiddlewareは起動しません。
@@ -101,26 +99,17 @@ groupで合成するときは、子が要求するコンテキストを型検査
 
 ### 結果と終了
 
-- 結果を読むときに所属projectを識別でき、同じケース名を持つ別projectを区別できることを保証します。同じファイルが複数projectに一致した場合は一つの実行結果に複数の所属を持たせ、結果をprojectごとに複製しません。所属の具体的なJSON形式は実装前に確定します。
+- 結果を読むときに所属projectを識別でき、同じケース名を持つ別projectを区別できることを保証します。同じファイルが複数projectに一致した場合は一つの実行結果に複数の所属を持たせ、結果をprojectごとに複製しません。CLI結果の各トップレベルノードには `source: { file, projects }` を付けます。`file` は実行ディレクトリからの相対パス、`projects` は選択したproject名の配列です。明示ファイルと設定なしの探索では `projects` は空配列です。
 - 複数projectを選んでも、どれかの失敗を成功として報告しません。終了コードは[CLIの規則](./cli.md#終了コード)に従います。
 - projectの選択によって、caseの独立性、retry・timeout、middlewareの後始末、CLIの停止保証を弱めません。
 
 ## 設定なしで始める
 
 projectを使うために、最初のテストから設定ファイルを用意する必要はありません。
-`projects` を設定していない場合も、現在のCLIのファイル指定と `include` / `exclude` によるファイル選択を維持します。登録ベースのCLIでは、選んだファイルの登録を収集します。project設定があっても、明示ファイルだけを指定した実行ではそのファイルを選びます。
+`projects` を設定していない場合も、CLIのファイル指定と既定探索を使えます。選んだファイルの登録を収集します。project設定があっても、明示ファイルだけを指定した実行ではそのファイルを選びます。
 設定もファイル指定もなければ、`**/*.{test,spec}.ts` を探索し、`node_modules` と `dist` を除外します。
 
 この既定探索はunit/e2eを区別しません。名前付きprojectで読むファイルを分ける構成は、[利用例](./project-use-cases.md)を参照してください。
-
-## 実装前に残るAPIの詳細
-
-名称はproject、設定ファイルは `hanamaru.config.ts` とします。
-このページの利用場面と保証を先に契約とし、次の詳細は実装に着手する前にAPI・型仕様へ反映します。
-
-- project内でパターンを除外する指定と、既存のトップレベル `include` / `exclude` との併用規則。
-- 登録忘れの完成定義を、登録ルートの子やチェーン途中の値と区別して追跡する実装方式。警告と登録のない選択ファイルのエラーは[登録の契約](./registration.md#収集時の診断)に定めます。
-- projectごとの設定項目と上書き規則、所属projectのJSON形式、実行順と中断時の扱い。
 
 project単位のglobalSetupやin-sourceの収集口は、この契約に含めません。ファイルの指定はproject設定で行い、実行するルートの指定は `registerTest` で行います。
 既存のライブラリAPI `run(test)` と `run([testA, testB])` は完成した定義を受け取る入口として維持します。

@@ -180,12 +180,13 @@ export const later = n => extra(n)
   writeFileSync(
     later,
     `
-import { Test } from ${JSON.stringify(workspaceRuntime)}
+import { Test, registerTest } from ${JSON.stringify(workspaceRuntime)}
 import * as source from './extra.mjs'
 import { later } from './targets.mjs'
 const slot = source
 export const root = new Test().mock(slot, 'extra', m => m.returns(42))
   .group([new Test().target(later).it('late-mock', t => t.args(3).expect(e => [e.result.toBe(42)]))])
+registerTest(root)
 `,
   )
   const output = jsonResult(invoke(workspace, data.file, later, '-r', 'json'), 1)

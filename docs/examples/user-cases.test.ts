@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { userRepository, mailService } from './user.ts'
 import { userCases } from './user-cases.ts'
 
@@ -7,3 +7,5 @@ export const userCaseTests = new Test()
   .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group([userCases])
+
+registerTest(userCaseTests)

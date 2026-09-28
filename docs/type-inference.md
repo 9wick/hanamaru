@@ -17,7 +17,7 @@ Promise自体をコンテキストにはしません。各コールバックに�
 
 <!-- example: docs/examples/context-flow.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
 export const contextFlow = new Test()
@@ -26,6 +26,8 @@ export const contextFlow = new Test()
   .it('渡された値を使う', t => t
     .argsFrom(ctx => [ctx.a, 2])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(contextFlow)
 ```
 出典: [docs/examples/context-flow.test.ts](examples/context-flow.test.ts)
 
@@ -33,7 +35,7 @@ export const contextFlow = new Test()
 
 <!-- example: docs/examples/middleware.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
@@ -49,6 +51,8 @@ export const userCount = new Test()
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(userCount)
 ```
 出典: [docs/examples/middleware.test.ts](examples/middleware.test.ts)
 
@@ -96,7 +100,7 @@ TestBuilderはuse・mockとケース追加を持ち、Suiteはケース追加と
 
 <!-- example: docs/examples/group-context.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 
 const child = new Test<{ a: number }>()
@@ -107,6 +111,8 @@ const child = new Test<{ a: number }>()
 export const parentContext = new Test()
   .use(middleware(async (_, next) => next({ a: 1, extra: true })))
   .group([child])
+
+registerTest(parentContext)
 ```
 出典: [docs/examples/group-context.test.ts](examples/group-context.test.ts)
 
@@ -155,13 +161,13 @@ ready.it('引数型', t => t.args(1, 2).expectCalls(call => [call(mailService, '
 
 使い方は次のとおりです。
 
-<!-- example: docs/examples/call-descriptor.test.ts#expect-calls -->
+<!-- example: docs/examples/call-descriptor-source.ts#expect-calls -->
 ```ts
 .expectCalls(call => [
   call(mailService, 'send').calledOnceWith({ id: 'u1' }),
 ])
 ```
-出典: [docs/examples/call-descriptor.test.ts](examples/call-descriptor.test.ts)
+出典: [docs/examples/call-descriptor-source.ts](examples/call-descriptor-source.ts)
 
 この検証にはmock登録が不要です。登録済みのモック一覧を型パラメータへ積む必要もありません。
 モックの有無は実行時の振る舞いを決めますが、呼び出しを検証できるかどうかの条件にはなりません。
@@ -204,11 +210,11 @@ TypeScriptの型だけで対象のthrowを推論することはしません。
 
 ## 型の限界
 
-親のコンテキストの要求型はJavaScriptでは消えるため、現在のCLIはexportされた子が親のコンテキストを要求するか検査できません。
+親のコンテキストの要求型はJavaScriptでは消えるため、CLIは登録された定義が親のコンテキストを要求するか、実行時に検査できません。
 型が防ぐのはgroup・runを呼ぶ際の要求Rの不足と、合成した実行順に間に合わない供給です。CLIへ公開するルートには必要なコンテキストを全て用意し、子は探索対象外のファイルに置きます。
 型引数を宣言するだけで値が生成されることはありません。
 
-未実装の[登録ベースのCLI収集](./registration.md)では、`registerTest` の型が単独実行できるルートだけを受け付けます。型検査は利用者のtest scriptで実行し、CLI収集時には行いません。型を偽装した値やJavaScriptからの呼び出しで、未供給ctxをCLIが検出する保証はありません。
+[登録ベースのCLI収集](./registration.md)では、`registerTest` の型が単独実行できるルートだけを受け付けます。型検査は利用者のtest scriptで実行し、CLI収集時には行いません。型を偽装した値やJavaScriptからの呼び出しで、未供給ctxをCLIが検出する保証はありません。
 
 同じ構造の別オブジェクトはTypeScriptの型だけでは区別できません。
 呼び出しの記録は、実際に指定した参照に付けます。別オブジェクトの指定を、未登録のエラーとしては扱いません。

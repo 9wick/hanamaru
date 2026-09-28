@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url'
 import { collectBlueprints, createPlan, executeAttempt, executeGroupMiddleware, failChildren } from './runner.js'
 import { describeExecutionPlan, indexExecutionNodes } from './execution-plan.js'
 import { createModuleRuntime } from './module-runtime.js'
+import { registrationsIn, resetRegistrations } from './registration.js'
 
 if (!parentPort) throw new Error('execution requires a worker thread')
 const port = parentPort
@@ -83,15 +84,24 @@ function reportError<T>(error: T) {
 }
 async function startExecution() {
   try {
-    const files = new Map<string, Record<string, Value>>()
+    resetRegistrations()
+    const files = new Set<string>()
     const definitions: Value[] = []
     for (const root of workerData.roots) {
       if (!files.has(root.file)) {
         send({ type: 'loading', file: root.file })
-        files.set(root.file, await runtime.import(pathToFileURL(root.file).href))
+        await runtime.import(pathToFileURL(root.file).href)
+        files.add(root.file)
       }
-      definitions.push(required(files.get(root.file))[root.name])
+      const registered = registrationsIn(root.file)[root.index]
+      if (!registered) throw new TypeError('test registrations changed between collection and execution')
+      if (JSON.stringify(registered.origin) !== JSON.stringify(root.origin))
+        throw new TypeError('test registrations changed between collection and execution')
+      definitions.push(registered.definition)
     }
+    for (const file of files)
+      if (registrationsIn(file).length !== workerData.roots.filter((root) => root.file === file).length)
+        throw new TypeError('test registrations changed between collection and execution')
     const plan = createPlan(collectBlueprints(definitions))
     if (JSON.stringify(describeExecutionPlan(plan.allNodes)) !== workerData.shape)
       throw new TypeError('test definitions changed between collection and execution')

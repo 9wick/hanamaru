@@ -2,8 +2,6 @@
 
 このページは[projectのファイル選択](./projects.md)と[テストの登録](./registration.md)を組み合わせる例です。unit・e2eという名前や配置は、この例の選択であり、hanamaruのテスト種別ではありません。
 
-**実装状況:** projectと[テストの登録](./registration.md)は未実装です。以下の設定・コード・コマンドはAPI案であり、現在のパッケージでは使えません。機能の利用条件・保証は[projectの契約](./projects.md)、現在使える入口は[CLI](./cli.md)を参照してください。
-
 ## unitだけを実行し、e2eの環境は起動しない
 
 関数のunit testだけを確認するときに、e2eのDockerを起動しない構成を考えます。この例ではunitのテストファイルを `src` 配下に置き、e2eで実行するルートを `e2e/root.ts` に登録します。
@@ -22,16 +20,16 @@ e2e/
 
 この配置は利用例です。`math.test.ts` をソースの隣に置くことも、子を別ファイルに置くことも必須ではありません。`users.ts` と `orders.ts` の子は `root.ts` からimportするためにexportしますが、そのexportはCLIへの登録ではありません。
 
-`hanamaru.config.ts` で、それぞれ読むファイルを指定します。どちらも文字列による同じ指定方法です。`unit` と `e2e` はCLIで選ぶために付けた名前です。
+`hanamaru.config.ts` で、それぞれ読むファイルを指定します。どちらも `include` による同じ指定方法です。`unit` と `e2e` はCLIで選ぶために付けた名前です。
 
-<!-- example: none — projectの実装前の利用例。公開APIの型検証・実行例にはまだ含めない -->
+<!-- example: none — projectの利用例 -->
 ```ts
 import { defineConfig } from 'hanamaru'
 
 export default defineConfig({
   projects: {
-    unit: 'src/**/*.test.ts',
-    e2e: 'e2e/root.ts',
+    unit: { include: ['src/**/*.test.ts'] },
+    e2e: { include: ['e2e/root.ts'] },
   },
 })
 ```
@@ -51,7 +49,7 @@ e2eでは複数のケースが同じ環境を使うことがあります。こ�
 `e2e/root.ts` の構成例です。
 `withDocker` は利用者が[middleware](./middleware.md)で定義する値で、Dockerの起動・停止をその実行内に置きます。
 
-<!-- example: none — registerTestの実装前に、利用者が定義する環境と子を組み合わせる構成例。Dockerを起動する実行例ではない -->
+<!-- example: none — 利用者が定義する環境と子を組み合わせる構成例。Dockerを起動する実行例ではない -->
 ```ts
 import { Test, registerTest } from 'hanamaru'
 import { withDocker } from './environment.ts'

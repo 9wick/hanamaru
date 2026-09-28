@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 import { createUser, userRepository } from './user.ts'
 
@@ -29,3 +29,5 @@ const stacked = new Test()
 // #endregion stacked
 
 export const testBuilder = new Test().group([creating, saving, namedCreating, namedSaving, stacked])
+
+registerTest(testBuilder)

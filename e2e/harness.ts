@@ -107,7 +107,10 @@ export function fixture(source: string): Fixture {
     rmSync(dir, { recursive: true, force: true })
   })
   const file = join(dir, 'sample.test.mjs')
-  writeFileSync(file, `import { Test, middleware } from ${JSON.stringify(workspaceRuntime)}\n${source}`)
+  writeFileSync(
+    file,
+    `import { Test, middleware, registerTest } from ${JSON.stringify(workspaceRuntime)}\n${registeredFixture(source)}`,
+  )
   return { dir, file }
 }
 
@@ -155,8 +158,15 @@ export function removePackage(installed: InstalledPackage) {
 // 後続のテストからも見えるため、テストの実行順序に依存する。
 export function consumerFixture(installed: InstalledPackage, name: string, source: string): string {
   const file = join(installed.consumer, `${name}.ts`)
-  writeFileSync(file, `import { Test, middleware } from 'hanamaru'\n${source}\n`)
+  writeFileSync(file, `import { Test, middleware, registerTest } from 'hanamaru'\n${registeredFixture(source)}\n`)
   return file
+}
+
+/** 既存シナリオのルート宣言を、実際にCLIが読む登録へ変換する。 */
+function registeredFixture(source: string): string {
+  const roots = [...source.matchAll(/^\s*export const (\w+) = new Test/gm)].map((match) => match[1])
+  const declarations = source.replace(/^(\s*)export const (\w+) = new Test/gm, '$1const $2 = new Test')
+  return `${declarations}\n${roots.map((name) => `registerTest(${name})`).join('\n')}`
 }
 
 export type ParsedRunResult = v.InferOutput<typeof runResultSchema>

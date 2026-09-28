@@ -1,4 +1,4 @@
-import { Test, middleware, run } from 'hanamaru'
+import { Test, middleware, registerTest, run } from 'hanamaru'
 import type { Ctx, GroupEntry, GroupMiddlewareResult, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
 import { add } from '../examples/math.ts'
 import { mailService } from '../examples/user.ts'
@@ -21,6 +21,7 @@ const parent = new Test()
   .group([child])
   .group('同じ子をもう一度使う', [child])
 run(parent)
+registerTest(parent)
 run([parent, registrations])
 
 const nested = new Test<{ seed: number }>().group([child])
@@ -68,6 +69,10 @@ new Test().group([nested])
 const erasedDefinition: TestDefinition = child
 // @ts-expect-error the child cannot run without its parent.
 run(child)
+// @ts-expect-error a registered root must not require parent context.
+registerTest(child)
+// @ts-expect-error an incomplete builder cannot be registered.
+registerTest(new Test().target(add))
 // @ts-expect-error arrays cannot hide a missing context provider.
 run([independent, child])
 // @ts-expect-error a group's declared input is still required at the root.

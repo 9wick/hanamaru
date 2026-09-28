@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { add } from './math.ts'
 import { createUser, userRepository, mailService } from './user.ts'
 
@@ -46,3 +46,5 @@ const withContext = new Test()
 // #endregion context
 
 export const matchers = new Test().group([created, withContext])
+
+registerTest(matchers)

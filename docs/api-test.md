@@ -5,7 +5,7 @@
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, registerTest } from 'hanamaru'
 import { createUser, userRepository, mailService } from './user.ts'
 
 export const users = new Test()
@@ -32,6 +32,8 @@ export const users = new Test()
       call(mailService, 'send').notCalled(),
     ])
   )
+
+registerTest(users)
 ```
 出典: [docs/examples/user.test.ts](examples/user.test.ts)
 
@@ -112,7 +114,7 @@ group前処理で使う値も、要求は同じ `new Test<Ctx>()` に書きま�
 
 <!-- example: docs/examples/middleware.test.ts -->
 ```ts
-import { Test, middleware } from 'hanamaru'
+import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
@@ -128,6 +130,8 @@ export const userCount = new Test()
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
+
+registerTest(userCount)
 ```
 出典: [docs/examples/middleware.test.ts](examples/middleware.test.ts)
 
@@ -212,4 +216,4 @@ const blueprint = users.blueprint()
 todoだけの定義も含みます。
 middleware・テスト対象は実行しません。戻り値の構造は[プラグイン向けblueprint](./metadata.md)を参照してください。
 親のコンテキストを要求する定義でもblueprintは取得できますが、`run()` へ渡せるのは親のコンテキストを要求しない完成したテストです。blueprintは `run()` の入力ではありません。
-現在のCLIに収集させるファイルでは、必要なコンテキストを用意したルートをexportします。未実装の[登録ベースのCLI](./registration.md)では、供給を含むルートを `registerTest` に渡します。
+CLIに収集させるファイルでは、必要なコンテキストを用意したルートを `registerTest` に渡します。詳しくは[テストの登録](./registration.md)を参照してください。

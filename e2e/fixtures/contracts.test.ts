@@ -1,4 +1,4 @@
-import { Test, middleware } from 'hanamaru'
+import { Test, middleware, registerTest } from 'hanamaru'
 
 export const lifecycle: string[] = []
 export const service = {
@@ -58,3 +58,4 @@ const provider = middleware(async (_, next) => {
 })
 
 export const contracts = new Test().group('contracts', [new Test().group(provider, [operations, rows])])
+registerTest(contracts)
