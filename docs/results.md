@@ -132,7 +132,7 @@ pretty reporterはこの構造から普段の値の表記へ整形します。
 Date・RegExp・Map・Setの内容もそれぞれのkindで保持します。DateのvalueはISO文字列、不正なDateはnullです。Errorはobjectのtypeとname/message/cause/stackのプロパティで表します。
 オブジェクトの文字列キーとSymbolキーを区別し、アクセサはgetter/setterの有無として記録します。
 getterや利用者のtoJSONを診断のために実行しません。
-取得できない内部状態や省略した部分にはomittedと理由を残し、空の値として偽装しません。
+取得できない内部状態や省略した部分にはomittedと理由を残し、空の値として偽装しません。Proxyのtrap等が診断中に例外を投げた場合も、その取得不能を理由付きで残します。診断の失敗で対象のreturn/throwを変更しません。
 診断は比較に使う値そのものの代わりではなく、元の実体へ復元できることも要求しません。
 
 ## group middlewareの結果

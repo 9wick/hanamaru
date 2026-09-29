@@ -179,3 +179,20 @@ new Test().target(add).it('predicate descriptor', t => t.args(1, 2).expect(e => 
   }
   return [assertion]
 }))
+
+// Dynamic call references and arguments retain the middleware context and method signature.
+const dynamicCalls = new Test()
+  .use(middleware(async (_, next) => next({ client: mailService, id: 'u1' })))
+  .target(add)
+dynamicCalls.it('dynamic calls', t => t.args(1, 2).expectCalls(call => [
+  call.from(ctx => ctx.client, 'send').calledOnceWithFrom(ctx => [{ id: ctx.id }]),
+  call(mailService, 'send').calledWithFrom(ctx => [{ id: ctx.id }]),
+]))
+// @ts-expect-error dynamic method key must exist on the resolved object.
+dynamicCalls.it('bad key', t => t.args(1, 2).expectCalls(call => [call.from(ctx => ctx.client, 'missing').notCalled()]))
+// @ts-expect-error dynamic expected arguments must match the method signature.
+dynamicCalls.it('bad args', t => t.args(1, 2).expectCalls(call => [call.from(ctx => ctx.client, 'send').calledOnceWithFrom(() => [{ id: 1 }])]))
+// @ts-expect-error context does not contain missing.
+dynamicCalls.it('bad ctx', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').calledWithFrom(ctx => [{ id: ctx.missing }])]))
+// @ts-expect-error dynamic argument resolvers must be synchronous.
+dynamicCalls.it('async args', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').calledWithFrom(async () => [{ id: 'u1' }])]))

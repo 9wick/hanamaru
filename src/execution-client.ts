@@ -3,7 +3,7 @@ import { required } from './value.js'
 import { executionMessageSchema } from './schemas.js'
 import type { Value } from './value.js'
 import type { ExecutionOptions, CommandInput, ReplyValue } from './protocol.js'
-import type { RunState, Reason, MutableRunResult, Executor } from './internal.js'
+import type { RunState, Reason, Progress, Executor } from './internal.js'
 import { errorStack } from './shared.js'
 import { Worker } from 'node:worker_threads'
 
@@ -22,7 +22,7 @@ export async function openExecution({
   const pending = new Map<number, { resolve: (value: ReplyValue) => void; reject: (error: Value) => void }>()
   let nextId = 0
   let state: RunState | null = null
-  let snapshot: ((reason: Reason) => MutableRunResult) | null = null
+  let snapshot: ((reason: Reason) => Progress) | null = null
   let closing = false
   let fatal: Value
   let readyResolve: (() => void) | undefined
@@ -86,7 +86,7 @@ export async function openExecution({
           started: performance.now(),
           timeoutMs: message.timeoutMs,
         }
-        state.onDeadline?.({ kind: 'start', timeoutMs: message.timeoutMs, result: snapshot('timeout') })
+        state.onDeadline?.({ kind: 'start', timeoutMs: message.timeoutMs, progress: snapshot('timeout') })
       }
     } else fail(new Error('unknown execution message'))
   })

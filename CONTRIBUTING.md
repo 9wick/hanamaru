@@ -9,10 +9,12 @@ npm run check
 lintはVite+のOxlintと型情報を使うESLint、整形はOxfmt、ビルドはtsdownをVite+経由で実行します。
 実装・型契約・文書サンプルはTypeScript 5.8.3で検証します。
 
-TypeScriptファイルでは `unknown`、`any`、型アサーション（`as const` を除く）、非nullアサーション、
+TypeScriptファイルでは `any`、型アサーション（`as const` を除く）、非nullアサーション、
 手書きの型述語（`is` / `asserts`）、`Function` 型を禁止します。実装には依存やネイティブAPI由来の
 `any` の未検証利用とPromiseの未処理も検出します。入力はValibotまたは実際の値の種類を確認して扱い、
-公開APIの型推論をキャストで補いません。値からリテラル型・readonlyを導く `as const` は許可します。
+公開APIの型推論をキャストで補いません。`unknown` は外部入力・例外・型を消去する境界で許可し、
+利用する前にスキーマまたは値の種類を検証します。既知の内部データを安易にunknownへ広げず、
+検証後は具体的な型で扱います。値からリテラル型・readonlyを導く `as const` は許可します。
 任意の型を指定する `as Type` と `as const as Type` は禁止します。
 ESLintの無効化コメントとTypeScriptのエラー抑制も使えません。
 例外は `docs/spec/*.ts` の型エラーテストだけで、説明付きの `@ts-expect-error` を許可します。

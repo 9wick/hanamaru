@@ -1,4 +1,4 @@
-import { expect, test } from 'vite-plus/test'
+import { beforeAll, expect, test } from 'vite-plus/test'
 import { ESLint } from 'eslint'
 
 // lintText replaces a virtual file repeatedly; CI single-run programs read the disk version.
@@ -16,9 +16,13 @@ const implementationFile = 'src/value.ts'
 const messages = async (code: string, filePath: string = syntaxFile) =>
   (await eslint.lintText(code, { filePath }))[0].messages
 
+// 型情報付きlintの初回はTypeScriptプロジェクト全体を読み込むため、初期化をテスト本体から分離する。
+beforeAll(async () => {
+  expect(await messages('export const value = 1', implementationFile)).toStrictEqual([])
+}, 30_000)
+
 test('lint rejects type escapes in every TypeScript file', async () => {
   const forbidden = [
-    ['export let input: unknown', 'no-restricted-syntax'],
     ['export let input: any', '@typescript-eslint/no-explicit-any'],
     ['export const value = 1 as number', 'no-restricted-syntax'],
     ['export const value = { x: 1 } as const as { x: number }', 'no-restricted-syntax'],
@@ -38,8 +42,9 @@ test('lint rejects type escapes in every TypeScript file', async () => {
   }
 })
 
-test('lint accepts const assertions that preserve literal types', async () => {
+test('lint accepts narrowed unknown inputs and const assertions that preserve literal types', async () => {
   const allowed = [
+    'export function accepts(input: unknown) { return typeof input === "string" ? input.length : 0 }',
     'export const value = "ready" as const',
     'export const value = { x: 1 } as const',
     'export const value = ["ready", 1] as const',
@@ -85,10 +90,10 @@ test('lint rejects promises without error handling', async () => {
 
 test('lint cannot be bypassed with suppression comments in implementation files', async () => {
   const ignored = await messages(
-    '// eslint-disable-next-line no-restricted-syntax\nexport let input: unknown',
+    '// eslint-disable-next-line @typescript-eslint/no-explicit-any\nexport let input: any',
     implementationFile,
   )
-  expect(ignored.some((m) => m.ruleId === 'no-restricted-syntax')).toBe(true)
+  expect(ignored.some((m) => m.ruleId === '@typescript-eslint/no-explicit-any')).toBe(true)
   for (const comment of ['ts-ignore', 'ts-nocheck', 'ts-expect-error']) {
     expect(
       (await messages(`// @${comment}\nexport const value: number = 1`, implementationFile)).some(

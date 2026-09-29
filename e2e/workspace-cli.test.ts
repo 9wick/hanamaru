@@ -30,7 +30,7 @@ test('CLI reads config file and lets arguments override reporter', () => {
 
 test('CLI partial result preserves completed cases before a forced stop', () => {
   const data = fixture(
-    `export const cases = new Test().timeout(10).target(async n => n === 1 ? 1 : new Promise(() => {})).it('done', t => t.args(1).expect(e => [e.result.toBe(1)])).it('hang', t => t.args(2).expect(e => [e.result.toBe(2)]))`,
+    `export const cases = new Test().target(async n => n === 1 ? 1 : new Promise(() => {})).it('done', t => t.args(1).expect(e => [e.result.toBe(1)])).it('hang', t => t.timeout(10).args(2).expect(e => [e.result.toBe(2)]))`,
   )
   const items = testNode(
     jsonResult(invoke(workspace, data.file, '--shutdown-grace', '20', '--reporter', 'json'), 1),

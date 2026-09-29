@@ -1,7 +1,7 @@
 import { function as functionSchema, parse } from 'valibot'
 /** テスト対象が受け取る・返すJavaScriptの値。プロパティは検証してから読む。 */
 export type Value = undefined | null | boolean | number | bigint | string | symbol | object
-export function valueOf<T>(input: T): Value {
+export function valueOf(input: unknown): Value {
   if (input === null) return null
   if (input === undefined) return undefined
   if (

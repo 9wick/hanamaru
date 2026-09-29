@@ -3,6 +3,7 @@
 import type { DiagnosticValue, SourceLocation, TargetOutcome } from './api.js'
 import type { MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
 import { errorMessage } from './shared.js'
+import { ProgressStore } from './progress.js'
 import { parseArgs } from './cli-args.js'
 import * as v from 'valibot'
 import { cliMessageSchema } from './schemas.js'
@@ -90,6 +91,8 @@ function formatNode(node: MutableNodeResult, depth = 0, groupOrigins: SourceLoca
         lines.push(
           `${pad}  ✗ group middleware: ${issue.message}  ${relative(process.cwd(), node.origin.file)}:${node.origin.line}:${node.origin.column}`,
         )
+        if ('cause' in issue) lines.push(`${pad}    cause: ${formatValue(issue.cause)}`)
+        if ('timeoutMs' in issue) lines.push(`${pad}    timeout: ${issue.timeoutMs}ms (${issue.phase})`)
       }
     for (const entry of node.children)
       lines.push(...formatNode(entry.result, depth + (node.name === null ? 0 : 1), [...groupOrigins, entry.origin]))
@@ -139,7 +142,7 @@ async function main(): Promise<number> {
     complete = false,
     interrupted = false,
     reporter = options.reporter
-  let partial: MutableRunResult | null = null
+  const progress = new ProgressStore()
   const done = new Promise<number>((resolve, reject) => {
     const printResult = (result: MutableRunResult) => {
       if (reporter === 'json') process.stdout.write(`${JSON.stringify(result)}\n`)
@@ -170,10 +173,10 @@ async function main(): Promise<number> {
       worker.postMessage({ type: 'interrupt' })
       if (!graceTimer)
         graceTimer = setTimeout(() => {
-          if (partial)
+          if (progress.result)
             printResult({
-              ...partial,
-              status: partial.status === 'failed' ? 'failed' : 'cancelled',
+              ...progress.result,
+              status: progress.result.status === 'failed' ? 'failed' : 'cancelled',
               reason: 'interrupted',
             })
           finish(130)
@@ -200,26 +203,30 @@ async function main(): Promise<number> {
         grace = message.shutdownGrace
         reporter = message.reporter
       } else if (message.type === 'progress') {
-        partial = message.result
+        progress.apply(message.progress)
       } else if (message.type === 'deadline') {
         clearTimeout(deadlineTimer)
         if (message.kind === 'start')
           deadlineTimer = setTimeout(() => {
-            partial = message.result
+            progress.apply(message.progress)
+            if (progress.result) {
+              progress.result.status = 'failed'
+              progress.result.reason = 'timeout'
+            }
             if (!graceTimer)
               graceTimer = setTimeout(() => {
                 process.stderr.write(`hanamaru: shutdown grace exceeded (${grace}ms)\n`)
-                if (partial) printResult(partial)
+                if (progress.result) printResult(progress.result)
                 finish(interrupted ? 130 : 1)
               }, grace)
           }, message.timeoutMs)
       } else if (message.type === 'timeout') {
         clearTimeout(deadlineTimer)
-        partial = message.result
+        progress.apply({ kind: 'init', result: message.result })
         if (!graceTimer)
           graceTimer = setTimeout(() => {
             process.stderr.write(`hanamaru: shutdown grace exceeded (${grace}ms)\n`)
-            if (partial) printResult(partial)
+            if (progress.result) printResult(progress.result)
             finish(interrupted ? 130 : 1)
           }, grace)
       } else if (message.type === 'result') {

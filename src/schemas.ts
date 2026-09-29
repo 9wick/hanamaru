@@ -263,13 +263,19 @@ export const runResultSchema = v.object({
   reason: v.picklist(['completed', 'timeout', 'interrupted', 'cleanup-failed']),
   tests: v.array(nodeResultSchema),
 })
+export const progressSchema = v.variant('kind', [
+  v.object({ kind: v.literal('init'), result: runResultSchema }),
+  v.object({ kind: v.literal('case'), result: caseResultSchema }),
+  v.object({ kind: v.literal('group'), path: v.array(v.number()), middleware: v.nullable(groupMiddlewareSchema) }),
+])
 const reporterSchema = v.picklist(['pretty', 'json'])
 export const cliMessageSchema = v.union([
   v.object({ type: v.literal('loading'), file: v.string(), timeout: v.number() }),
   v.object({ type: v.literal('running'), reporter: reporterSchema, shutdownGrace: v.number() }),
-  v.object({ type: v.picklist(['progress', 'timeout']), result: runResultSchema }),
+  v.object({ type: v.literal('progress'), progress: progressSchema }),
+  v.object({ type: v.literal('timeout'), result: runResultSchema }),
   v.object({ type: v.literal('deadline'), kind: v.literal('end') }),
-  v.object({ type: v.literal('deadline'), kind: v.literal('start'), timeoutMs: v.number(), result: runResultSchema }),
+  v.object({ type: v.literal('deadline'), kind: v.literal('start'), timeoutMs: v.number(), progress: progressSchema }),
   v.object({ type: v.literal('result'), result: runResultSchema, reporter: reporterSchema }),
   v.object({ type: v.literal('error'), message: v.string() }),
 ])

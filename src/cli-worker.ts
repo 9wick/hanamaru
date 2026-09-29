@@ -155,13 +155,16 @@ async function collectAndRun() {
       failOnFlaky: workerData.options.failOnFlaky,
       filter: workerData.options.filter,
       signal: controller.signal,
-      onProgress: (result) => send({ type: 'progress', result: withSources(result) }),
+      onProgress: (progress) =>
+        send({
+          type: 'progress',
+          progress: progress.kind === 'init' ? { ...progress, result: withSources(progress.result) } : progress,
+        }),
       onTimeout: (result) => send({ type: 'timeout', result: withSources(result) }),
       onDeadline: (deadline) =>
         send({
           type: 'deadline',
           ...deadline,
-          ...(deadline.kind === 'start' ? { result: withSources(deadline.result) } : {}),
         }),
     }
     const blueprints = collectBlueprints(definitions)

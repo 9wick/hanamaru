@@ -87,16 +87,23 @@ export interface ErrorAssertions {
   toMatchObject(value: Record<string, Value>): ErrorAssertion
   toSatisfy(predicate: (error: Value) => boolean): ErrorAssertion
 }
-export interface CallMatchers<F extends AnyFn> {
+export interface CallMatchers<F extends AnyFn, C = object> {
   calledTimes(count: number): CallAssertion
   notCalled(): CallAssertion
   calledWith(...args: Parameters<F>): CallAssertion
   calledOnceWith(...args: Parameters<F>): CallAssertion
   calledNthWith(n: number, ...args: Parameters<F>): CallAssertion
+  calledWithFrom(build: (ctx: Ctx<C>) => Parameters<F>): CallAssertion
+  calledOnceWithFrom(build: (ctx: Ctx<C>) => Parameters<F>): CallAssertion
+  calledNthWithFrom(n: number, build: (ctx: Ctx<C>) => Parameters<F>): CallAssertion
 }
 /** 呼び出しは行わず、メソッドの呼び出し条件を記述する。 */
-export interface CallBuilder {
-  <O extends object, K extends FnKeys<O>>(obj: O, key: K): CallMatchers<MethodOf<O, K>>
+export interface CallBuilder<C = object> {
+  <O extends object, K extends FnKeys<O>>(obj: O, key: K): CallMatchers<MethodOf<O, K>, C>
+  from<O extends object, K extends string>(
+    build: (ctx: Ctx<C>) => O,
+    key: K & FnKeys<NoInfer<O>>,
+  ): CallMatchers<MethodOf<O, Extract<K, keyof O>>, C>
 }
 export interface Expect<F extends AnyFn, C> {
   readonly result: ValueAssertions<Awaited<ReturnType<F>>>
@@ -104,7 +111,7 @@ export interface Expect<F extends AnyFn, C> {
   readonly ctx: Ctx<C>
 }
 export type CallExpectations = readonly [CallAssertion, ...CallAssertion[]]
-export type CallsBuilder = (call: CallBuilder) => CallExpectations
+export type CallsBuilder<C = object> = (call: CallBuilder<C>) => CallExpectations
 export interface ItBuilder<F extends AnyFn, C> extends ExecutionSettings<ItBuilder<F, C>> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, C>
   args(...args: Parameters<F>): ItArgs<F, C>
@@ -112,11 +119,11 @@ export interface ItBuilder<F extends AnyFn, C> extends ExecutionSettings<ItBuild
 }
 export interface ItArgs<F extends AnyFn, C> extends ExecutionSettings<ItArgs<F, C>> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItArgs<F, C>
-  expect(build: (e: Expect<F, C>) => Assertions): ItExpected
-  expectCalls(build: CallsBuilder): ItCalls<F, C>
+  expect(build: (e: Expect<F, C>) => Assertions): ItExpected<C>
+  expectCalls(build: CallsBuilder<C>): ItCalls<F, C>
 }
-export interface ItExpected extends ItDone {
-  expectCalls(build: CallsBuilder): ItDone
+export interface ItExpected<C = object> extends ItDone {
+  expectCalls(build: CallsBuilder<C>): ItDone
 }
 export interface ItCalls<F extends AnyFn, C> extends ItDone {
   expect(build: (e: Expect<F, C>) => Assertions): ItDone
@@ -279,14 +286,18 @@ export type ErrorAssertion = {
 export type CallAssertion = {
   readonly [assertionTag]: true
   readonly subject: 'call'
-  readonly object: object
   readonly key: string
   readonly check:
     | { readonly matcher: 'calledTimes'; readonly count: number }
     | { readonly matcher: 'notCalled' }
     | { readonly matcher: 'calledWith' | 'calledOnceWith'; readonly args: readonly Value[] }
     | { readonly matcher: 'calledNthWith'; readonly n: number; readonly args: readonly Value[] }
-}
+    | { readonly matcher: 'calledWith' | 'calledOnceWith'; readonly argsFrom: object }
+    | { readonly matcher: 'calledNthWith'; readonly n: number; readonly argsFrom: object }
+} & (
+  | { readonly object: object; readonly objectFrom?: never }
+  | { readonly objectFrom: object; readonly object?: never }
+)
 /** 結果または例外について照合する条件の記述子。 */
 export type Assertion = ErasedResultAssertion | ErrorAssertion
 export type Assertions =

@@ -13,6 +13,7 @@ export function collectModulePreparation(blueprints: RuntimeBlueprint[]): Module
   const modules = new Map<string, Set<string>>()
   const collect = (items: readonly (RuntimeMock | RuntimeCallAssertion)[]) => {
     for (const item of items) {
+      if (item.object === undefined) continue
       const id = moduleIdentity(item.object)
       if (!id) {
         if (Reflect.get(item.object, Symbol.toStringTag) === 'Module')

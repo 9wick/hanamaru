@@ -221,7 +221,7 @@ origin・path・config・各試行と失敗を保持し、任意値はDiagnostic
 | 130 | Ctrl+Cによる中断 |
 
 一致ファイルなし、完成済みテストなし、filter後0件はコード2にする。
-export漏れや絞り込み間違いを、テスト成功として報告しない。
+登録漏れや絞り込み間違いを、テスト成功として報告しない。
 group前処理の通常例外で全子のケースが未実行でも、group middlewareの失敗を報告し、runはfailed / completed、終了コードは1にする。他の中断原因があれば終了理由の優先順位に従う。
 
 Ctrl+Cでは完了済みの結果を保ち、失敗のない実行中の試行をcancelled、未実行の実行対象をnotRun: cancelledにする。既存の失敗や中断後のcleanup失敗は[終了状態の表](./results.md#終了状態の表)に従う。

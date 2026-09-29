@@ -154,7 +154,7 @@ middlewareがnextより前にthrowした場合は、その失敗を記録して�
 
 ## 呼び出し記録とモック
 
-expectCallsで返した条件から、記録対象を確定します。利用者によるspy登録は不要です。
+expectCallsで返した条件から、記録対象を確定します。call.fromとcalled*WithFromのresolverはmiddleware前処理後、記録設定・argsFrom・targetの前に同期的に一度評価します。retryではctxから再解決し、resolverの例外はinstrumentationの失敗にします。利用者によるspy登録は不要です。
 
 | 指定 | 実行時の処理 |
 |---|---|
@@ -224,7 +224,7 @@ middleware・差し替え設定・argsの失敗でテスト対象を呼んでい
 元のdescriptorを保存して復元し、継承メソッドをshadowした場合は追加したown propertyを削除します。
 
 CLIのmodule namespaceは内部の中継を使い、読み取り専用のnamespace自体を書き換えません。
-全件のmock/expectCalls対象を実行workerの読込前に準備し、試行ごとに中継先と記録を切り替え・復元します。
+全件の静的なmodule mock/expectCalls対象を実行workerの読込前に準備し、試行ごとに中継先と記録を切り替え・復元します。
 頭脳が保持するblueprintに従い、実行workerは同じ変換済みコードからローカル関数を取得します。
 再評価した定義の構造が異なれば、target実行前に収集エラーにします。
 

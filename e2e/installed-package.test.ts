@@ -412,3 +412,62 @@ test('CLI Ctrl+C interrupts a blocked target and exits 130', async () => {
   expect(attempt.status).toBe('cancelled')
   expect(attempt.cleanup).toBe('incomplete')
 })
+
+test('installed CLI keeps diagnostic inspection failures separate from target outcomes', () => {
+  const file = consumerFixture(
+    installed,
+    'inspection-regression',
+    `
+const target = () => new Proxy({}, { ownKeys() { throw new Error('inspection exploded') } })
+export const cases = new Test().target(target).it('must throw', t => t.args().expect(e => [e.error.toThrow('inspection exploded')]))
+`,
+  )
+  const result = jsonResult(invoke(installed.env, file, '-r', 'json'), 1)
+  expect(testNode(result).cases[0].attempts[0].outcome).toMatchObject({ kind: 'return', value: { kind: 'omitted' } })
+})
+
+test('installed pretty reporter shows group setup causes and concrete error expectations', () => {
+  const file = consumerFixture(
+    installed,
+    'failure-details',
+    `
+const child = new Test().target(() => 1).it('child', t => t.args().expect(e => [e.result.toBe(1)]))
+export const group = new Test().group('database', middleware(async () => { throw new Error('DATABASE_CONNECTION_REFUSED') }), [child])
+export const errors = new Test().target(() => { throw new Error('actual') }).it('message', t => t.args().expect(e => [e.error.toThrow('wanted-message')]))
+`,
+  )
+  const result = invoke(installed.env, file, '-r', 'pretty')
+  expect(result.status, result.stderr).toBe(1)
+  expect(result.stdout).toContain('DATABASE_CONNECTION_REFUSED')
+  expect(result.stdout).toContain('wanted-message')
+})
+
+test('installed CLI resolves dynamic fixture objects and namespace argument expectations', () => {
+  writeFileSync(join(installed.consumer, 'dynamic-service.ts'), 'export const send = (id: number) => id\n')
+  const file = consumerFixture(
+    installed,
+    'dynamic-calls',
+    `
+import * as service from './dynamic-service.ts'
+import { send } from './dynamic-service.ts'
+let setups = 0
+const child = new Test().use(middleware(async (_, next) => {
+  const client = { send(id: number) { return id } }
+  const original = client.send
+  try { return await next({client, id: ++setups}) }
+  finally { if (client.send !== original) throw new Error('not restored') }
+})).target((client: {send(id: number): number}, id: number) => client.send(id))
+.it('fixture', t => t.retry(1).argsFrom(ctx => [ctx.client, ctx.id]).expect(e => [e.result.toBe(2)])
+.expectCalls(call => [call.from(ctx => ctx.client, 'send').calledOnceWithFrom(ctx => [ctx.id])]))
+export const fixtures = new Test().group('resources', [child])
+export const namespace = new Test().use(middleware(async (_, next) => next({id: 7}))).target((id: number) => send(id))
+.it('mock', t => t.mock(service, 'send', m => m.returns(42)).argsFrom(ctx => [ctx.id])
+.expect(e => [e.result.toBe(42)]).expectCalls(call => [call(service, 'send').calledOnceWithFrom(ctx => [ctx.id])]))
+.it('restore', t => t.argsFrom(ctx => [ctx.id]).expect(e => [e.result.toBe(e.ctx.id)])
+.expectCalls(call => [call(service, 'send').calledNthWithFrom(1, ctx => [ctx.id])]))
+`,
+  )
+  const result = jsonResult(invoke(installed.env, file, '-r', 'json'), 0)
+  expect(childTest(groupNode(result)).cases[0].attempts).toHaveLength(2)
+  expect(testNode(result, 1).cases.map((item) => item.attempts.at(-1)?.status)).toEqual(['passed', 'passed'])
+})

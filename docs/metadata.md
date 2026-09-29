@@ -128,8 +128,11 @@ blueprintを受け取った時点で、記録対象の参照とキー、回数�
 実行器はcallsから記録対象を得て、mocksと同じobject・keyなら1つのラッパーにまとめます。
 モックがなければ本物の処理、あれば指定した振る舞いを呼び、同じ記録に対して条件を照合します。
 
-この段階ではmiddlewareは未実行です。呼び出し対象と期待する引数は定義時に渡せる値を使います。
-middlewareで初めて得る参照や値を、呼び出し条件に使うAPIは現時点では含みません。
+この段階ではmiddlewareは未実行です。静的な呼び出し条件はobjectとcheck.argsを保持します。
+`call.from` の記述子はobjectの代わりにobjectFromを、`called*WithFrom` はcheck.argsの代わりにcheck.argsFromを保持します。
+これらはctxを受け取るresolverであり、blueprint取得時には実行しません。matcher名・key・n等は定義時に取得できます。
+resolverは各attemptのmiddleware前処理後、記録設定前に評価します。プラグインは未解決の値を既知の値として扱わず、resolverとして表示・保持します。
+module namespaceの参照は静的に渡し、期待引数のargsFromと組み合わせられます。
 
 ## 結果・例外の期待はコンテキストから組み立てる
 
@@ -172,6 +175,7 @@ expectは静的な値だけを使う場合も遅延扱いです。
 | eachの名前・本体 | 定義時に各行1回 | 行順に通常のケースへ展開 |
 | mockの振る舞いコールバック | 定義時 | behaviorに展開 |
 | expectCallsのコールバック | 定義時 | callsの記述子に展開 |
+| call.from / called*WithFromのresolver | 各attemptの記録設定前 | objectFrom / check.argsFromとして保持 |
 | useのmiddleware | 試行開始時にstepsの登録順で入り、nextで後続を実行した後、逆順に戻る | kind: middlewareとrun関数参照 |
 | argsFrom | テスト対象の呼び出し前 | kind: from-contextとbuild関数 |
 | expectのコールバック | テスト対象の呼び出し後 | kind: deferredとbuild関数 |
