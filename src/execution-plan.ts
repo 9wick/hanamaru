@@ -2,6 +2,7 @@ import type { BehaviorBlueprint } from './api.js'
 import type { ExecutionNode } from './internal.js'
 type BehaviorShape = { kind: BehaviorBlueprint['kind']; once?: BehaviorShape[]; fallback?: BehaviorShape }
 import { moduleIdentity } from './module-reference.js'
+import { defaultMiddlewareTimeoutMs } from './shared.js'
 
 export function indexExecutionNodes(nodes: ExecutionNode[]) {
   const entries = new Map<string, ExecutionNode>()
@@ -32,10 +33,12 @@ export function describeExecutionPlan(nodes: ExecutionNode[]) {
     kind: node.kind,
     name: node.bp.name,
     config: node.config,
-    frames: node.frames.map((frame) => frame.steps.map((step) => step.timeout ?? 10_000)),
+    frames: node.frames.map((frame) => frame.steps.map((step) => step.timeout ?? defaultMiddlewareTimeoutMs)),
     mocks: node.mocks.map((mock) => ({ ...reference(mock), behavior: behavior(mock.behavior) })),
     ...(node.kind === 'group'
-      ? { middleware: node.bp.middleware ? { timeout: node.bp.middleware.timeout ?? 10_000 } : null }
+      ? {
+          middleware: node.bp.middleware ? { timeout: node.bp.middleware.timeout ?? defaultMiddlewareTimeoutMs } : null,
+        }
       : {
           target: node.bp.target.kind,
           cases: node.bp.cases.map((item) => ({

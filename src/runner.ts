@@ -55,7 +55,17 @@ import { errorMessage } from './shared.js'
 import { equal, matchObject } from './compare.js'
 import { diagnostic } from './diagnostic.js'
 import { DefinitionBuilder, isDefinition, validateAssertion, checkedAssertion, checkedCall } from './definition.js'
-import { configWith, methodValue, middlewareTag, plainFields, positive, resultTag, retryCount } from './shared.js'
+import {
+  configWith,
+  defaultExecutionConfig,
+  defaultMiddlewareTimeoutMs,
+  methodValue,
+  middlewareTag,
+  plainFields,
+  positive,
+  resultTag,
+  retryCount,
+} from './shared.js'
 
 const now = () => performance.now()
 class CaseFailed extends Error {
@@ -326,7 +336,7 @@ async function withMiddleware<T>(
     nextPromise: Promise<import('./internal.js').RuntimeMiddlewareResult> | undefined,
     nextToken: import('./internal.js').RuntimeMiddlewareResult | undefined
   let timedOut = false
-  const timeoutMs = step.timeout ?? 10_000
+  const timeoutMs = step.timeout ?? defaultMiddlewareTimeoutMs
   let timer = setTimeout(() => {
     timedOut = true
     onTimeout?.()
@@ -1001,10 +1011,15 @@ async function runNode(
     : await executeGroupMiddleware(node, executeChildren, state, (stage) => {
         if (stage === 'inside' || stage === 'end') state.onDeadline?.({ kind: 'end' })
         else {
-          state.activeGroup = { path, stage, started, timeoutMs: required(node.bp.middleware).timeout ?? 10_000 }
+          state.activeGroup = {
+            path,
+            stage,
+            started,
+            timeoutMs: required(node.bp.middleware).timeout ?? defaultMiddlewareTimeoutMs,
+          }
           state.onDeadline?.({
             kind: 'start',
-            timeoutMs: required(node.bp.middleware).timeout ?? 10_000,
+            timeoutMs: required(node.bp.middleware).timeout ?? defaultMiddlewareTimeoutMs,
             progress: activeProgress(state, 'timeout'),
           })
         }
@@ -1158,7 +1173,7 @@ export function collectBlueprints(input: Value): RuntimeBlueprint[] {
   return blueprints
 }
 export function createPlan(blueprints: RuntimeBlueprint[], options: InternalRunOptions = {}): Plan {
-  const allNodes = blueprints.flatMap((bp, index) => expand(bp, index, { timeout: 5_000, retry: 0 }, [], [], null))
+  const allNodes = blueprints.flatMap((bp, index) => expand(bp, index, defaultExecutionConfig, [], [], null))
   const unfilteredOnly = allCases(allNodes).some((item) => item.mode === 'only')
   if (unfilteredOnly && options.forbidOnly) throw new TypeError('only is forbidden')
   const nodes = options.filter === undefined ? allNodes : filterNodes(allNodes, options.filter)

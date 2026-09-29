@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
-import type { DiagnosticValue, SourceLocation, TargetOutcome } from './api.js'
+import type { SourceLocation } from './api.js'
 import type { MutableRunResult, MutableCaseResult, MutableNodeResult } from './internal.js'
 import { errorMessage } from './shared.js'
 import { ProgressStore } from './progress.js'
 import { parseArgs } from './cli-args.js'
+import { formatValue } from './format.js'
 import * as v from 'valibot'
 import { cliMessageSchema } from './schemas.js'
 import { Worker } from 'node:worker_threads'
-import { inspect } from 'node:util'
 import { readFileSync } from 'node:fs'
 import { relative } from 'node:path'
 
@@ -16,50 +16,6 @@ const { version } = v.parse(
   v.object({ version: v.string() }),
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')),
 )
-function formatValue(value: DiagnosticValue | TargetOutcome | string): string {
-  if (!value || typeof value !== 'object') return inspect(value)
-  switch (value.kind) {
-    case 'undefined':
-      return 'undefined'
-    case 'null':
-      return 'null'
-    case 'hole':
-      return '<hole>'
-    case 'number':
-    case 'bigint':
-    case 'boolean':
-      return String(value.value)
-    case 'string':
-      return JSON.stringify(value.value)
-    case 'symbol':
-      return `Symbol(${value.description ?? ''})#${value.id}`
-    case 'function':
-      return `[Function ${value.name || '<anonymous>'}]`
-    case 'reference':
-      return `[Reference #${value.id}]`
-    case 'date':
-      return `Date(${value.value ?? 'Invalid'})`
-    case 'regexp':
-      return `/${value.source}/${value.flags}`
-    case 'accessor':
-      return `[accessor get=${value.get} set=${value.set}]`
-    case 'omitted':
-      return `[omitted: ${value.reason}]`
-    case 'array':
-      return `[${value.items.map(formatValue).join(', ')}]`
-    case 'map':
-      return `Map(${value.entries.map(([key, item]) => `${formatValue(key)} => ${formatValue(item)}`).join(', ')})`
-    case 'set':
-      return `Set(${value.values.map(formatValue).join(', ')})`
-    case 'object':
-      return `${value.type === 'Object' ? '' : value.type}{ ${value.properties
-        .filter((p) => p.key.kind !== 'string' || p.key.value !== 'stack')
-        .map((p) => `${p.key.kind === 'string' ? p.key.value : formatValue(p.key)}: ${formatValue(p.value)}`)
-        .join(', ')} }`
-    default:
-      return inspect(value)
-  }
-}
 function formatFailure(item: MutableCaseResult, depth: number, groupOrigins: SourceLocation[]) {
   const out: string[] = [],
     pad = '  '.repeat(depth)
