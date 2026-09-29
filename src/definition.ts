@@ -68,12 +68,12 @@ function valueAssertions(subject: 'result' | 'error') {
     toThrow: (message: string | RegExp) => assertion({ matcher: 'toThrow', message }),
   }
 }
-function callBuilder(object: object, key: string) {
+function callMatchers(target: { object: object } | { objectFrom: object }, key: string) {
   const item = (check: CallCheck): RuntimeCallAssertion => ({
     [assertionTag]: true,
     subject: 'call',
     check,
-    object,
+    ...target,
     key,
   })
   return {
@@ -82,12 +82,18 @@ function callBuilder(object: object, key: string) {
     calledWith: (...args: Value[]) => item({ matcher: 'calledWith', args }),
     calledOnceWith: (...args: Value[]) => item({ matcher: 'calledOnceWith', args }),
     calledNthWith: (n: number, ...args: Value[]) => item({ matcher: 'calledNthWith', n, args }),
+    calledWithFrom: (argsFrom: object) => item({ matcher: 'calledWith', argsFrom }),
+    calledOnceWithFrom: (argsFrom: object) => item({ matcher: 'calledOnceWith', argsFrom }),
+    calledNthWithFrom: (n: number, argsFrom: object) => item({ matcher: 'calledNthWith', n, argsFrom }),
   }
 }
+const callBuilder = Object.assign((object: object, key: string) => callMatchers({ object }, key), {
+  from: (objectFrom: object, key: string) => callMatchers({ objectFrom }, key),
+})
 function validateCalls(calls: readonly RuntimeCallAssertion[]): readonly RuntimeCallAssertion[] {
   if (!calls.length) throw new TypeError('expectCalls must return a nonempty array of call assertions')
   for (const item of calls) {
-    methodValue(item.object, item.key)
+    if (item.object !== undefined) methodValue(item.object, item.key)
     if (item.check.matcher === 'calledNthWith' && (!Number.isSafeInteger(item.check.n) || item.check.n < 1))
       throw new TypeError('calledNthWith index must be positive')
     if (item.check.matcher === 'calledTimes' && (!Number.isSafeInteger(item.check.count) || item.check.count < 0))
@@ -206,7 +212,7 @@ class CaseBuilder<F extends AnyFn, C> {
   argsFrom(build: (ctx: Readonly<C>) => Parameters<F>): ItArgs<F, C> {
     return this.copy({ args: { kind: 'from-context', build } })
   }
-  expect(build: (e: Expect<F, C>) => Assertions): ItExpected {
+  expect(build: (e: Expect<F, C>) => Assertions): ItExpected<C> {
     if (this.data.expect) throw new TypeError('expect already set')
     return this.copy({
       [doneTag]: true,
@@ -217,7 +223,7 @@ class CaseBuilder<F extends AnyFn, C> {
       },
     })
   }
-  expectCalls(build: CallsBuilder): ItCalls<F, C> {
+  expectCalls(build: CallsBuilder<C>): ItCalls<F, C> {
     if (this.data.calls.length) throw new TypeError('expectCalls already set')
     const calls = arrayValue(invoke(build, undefined, [callBuilder])).map(checkedCall)
     return this.copy({ [doneTag]: true, calls: validateCalls(calls) })
@@ -489,10 +495,17 @@ export function checkedAssertion(input: Value): RuntimeValueAssertion {
 export function checkedCall(input: Value): RuntimeCallAssertion {
   const value = objectValue(input)
   if (!validateAssertion(value) || property(value, 'subject') !== 'call') throw new TypeError('invalid call assertion')
-  const object = objectValue(property(value, 'object')),
-    key = v.parse(v.string(), property(value, 'key'))
+  const target =
+    property(value, 'objectFrom') === undefined
+      ? { object: objectValue(property(value, 'object')) }
+      : { objectFrom: functionValue(property(value, 'objectFrom')) }
+  const key = v.parse(v.string(), property(value, 'key'))
   const check = objectValue(property(value, 'check')),
     matcher = property(check, 'matcher')
+  const args = () =>
+    property(check, 'argsFrom') === undefined
+      ? { args: arrayValue(property(check, 'args')) }
+      : { argsFrom: functionValue(property(check, 'argsFrom')) }
   let condition: CallCheck
   switch (matcher) {
     case 'notCalled':
@@ -503,14 +516,14 @@ export function checkedCall(input: Value): RuntimeCallAssertion {
       break
     case 'calledWith':
     case 'calledOnceWith':
-      condition = { matcher, args: arrayValue(property(check, 'args')) }
+      condition = { matcher, ...args() }
       break
     case 'calledNthWith':
-      condition = { matcher, n: v.parse(v.number(), property(check, 'n')), args: arrayValue(property(check, 'args')) }
+      condition = { matcher, n: v.parse(v.number(), property(check, 'n')), ...args() }
       break
     default:
       throw new TypeError('invalid call matcher')
   }
-  return { [assertionTag]: true, subject: 'call', object, key, check: condition }
+  return { [assertionTag]: true, subject: 'call', ...target, key, check: condition }
 }
 export const Test: TestConstructor = DefinitionBuilder

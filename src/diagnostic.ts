@@ -8,9 +8,33 @@ function keyOf(key: string | symbol, symbols: Map<symbol, number>): DiagnosticKe
 }
 export function diagnostic<T>(value: T): DiagnosticValue {
   const objects = new WeakMap<object, number>()
+  const inspected: object[] = []
   const symbols = new Map<symbol, number>()
   let nextId = 1
+  function discardSince(start: number) {
+    while (inspected.length > start) objects.delete(required(inspected.pop()))
+  }
   function visit<T>(value: T, depth = 0): DiagnosticValue {
+    const start = inspected.length
+    try {
+      const result = inspectValue(value, depth)
+      if (result.kind === 'omitted') discardSince(start)
+      return result
+    } catch (error) {
+      discardSince(start)
+      // Proxy traps can throw even when descriptors are read without invoking getters.
+      let reason = 'inspection failed'
+      try {
+        const message: unknown =
+          typeof error === 'object' && error !== null ? Object.getOwnPropertyDescriptor(error, 'message')?.value : error
+        if (typeof message === 'string') reason += `: ${message}`
+      } catch {
+        reason += '; thrown value is also uninspectable'
+      }
+      return { kind: 'omitted', reason }
+    }
+  }
+  function inspectValue<T>(value: T, depth: number): DiagnosticValue {
     const input = valueOf(value)
     if (input === undefined) return { kind: 'undefined' }
     if (input === null) return { kind: 'null' }
@@ -34,7 +58,11 @@ export function diagnostic<T>(value: T): DiagnosticValue {
     if (objects.has(input)) return { kind: 'reference', id: required(objects.get(input)) }
     const id = nextId++
     objects.set(input, id)
-    if (typeof input === 'function') return { kind: 'function', id, name: input.name || '' }
+    inspected.push(input)
+    if (typeof input === 'function') {
+      const name: unknown = Object.getOwnPropertyDescriptor(input, 'name')?.value
+      return { kind: 'function', id, name: typeof name === 'string' ? name : '<accessor>' }
+    }
     if (input instanceof Date)
       return {
         kind: 'date',

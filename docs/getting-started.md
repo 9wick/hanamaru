@@ -4,6 +4,24 @@
 
 hanamaruパッケージとTypeScriptを開発依存に追加した環境で、テストを定義してCLIで実行します。設定ファイルは不要です。依存の配布状況とランタイムの制約は[実装状況](./limitations.md)を参照してください。
 
+## ローカル配布物をインストールする
+
+公開npm経由の配布は未検証です。現在のソースから試す場合は、まずこのリポジトリで配布物を作ります。
+
+```console
+npm ci
+npm pack
+```
+
+生成された `hanamaru-0.1.0.tgz` を使い、利用するプロジェクト側で開発依存に追加します。
+次の `/path/to` はtarballを置いた実際のパスに置き換えてください。
+
+```console
+npm install --save-dev /path/to/hanamaru-0.1.0.tgz typescript@5.8.3
+```
+
+[実行環境とコマンド](#実行環境とコマンド)のpackage.json・tsconfig.jsonを用意し、次の2ファイルを `src` 以下へ置いて実行します。
+
 ## 最初のテスト
 
 対象の `math.ts`。
@@ -36,7 +54,7 @@ registerTest(addition)
 1. `.target(add)` で対象を渡すと、引数と期待値の型が決まります。
 2. `.it()` にケース名を書き、`.args()` に対象の引数を渡します。
 3. `.expect()` で期待する条件の配列を返します。
-4. 完成した定義をexportすると、CLIの実行対象になります。
+4. 完成した定義を `registerTest` に渡すと、CLIの実行対象になります。
 
 `.args('1', 2)` や `e.result.toBe('3')` は型エラーです。
 ケースの識別子や対象ファイルの情報を書く必要はありません。

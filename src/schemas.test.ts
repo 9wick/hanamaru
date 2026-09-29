@@ -48,9 +48,9 @@ test('validated worker messages preserve commands, deadlines, and nested results
   }
   for (const message of [
     { type: 'result', reporter: 'json', result },
-    { type: 'deadline', kind: 'start', timeoutMs: 100, result },
+    { type: 'deadline', kind: 'start', timeoutMs: 100, progress: { kind: 'init', result } },
     { type: 'deadline', kind: 'end' },
-    { type: 'progress', result },
+    { type: 'progress', progress: { kind: 'init', result } },
     { type: 'error', message: 'failure' },
   ])
     expect(parse(cliMessageSchema, message)).toStrictEqual(message)

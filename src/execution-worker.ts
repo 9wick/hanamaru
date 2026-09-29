@@ -130,7 +130,7 @@ async function startExecution() {
           )
             throw new TypeError('invalid attempt job')
           state.activeAttempt = { phase: 'middleware' }
-          const result = await executeAttempt(node, runtime.bindCase(item), command.number, state)
+          const result = await executeAttempt(node, runtime.bindCase(item), command.number, state, runtime.bindCall)
           state.activeAttempt = null
           send({ type: 'reply', id: command.id, value: { ...result, reason: state.reason } })
         } else if (command.type === 'group-open') {

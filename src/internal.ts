@@ -32,7 +32,7 @@ export type ValueCheck =
   | { matcher: 'toSatisfy'; predicate: object }
   | { matcher: 'toBeInstanceOf'; ctor: object }
   | { matcher: 'toThrow'; message: string | RegExp }
-export type CallCheck =
+export type ResolvedCallCheck =
   | { matcher: 'calledTimes'; count: number }
   | { matcher: 'notCalled' }
   | { matcher: 'calledWith' | 'calledOnceWith'; args: readonly Value[] }
@@ -42,15 +42,23 @@ export interface RuntimeValueAssertion {
   subject: 'result' | 'error'
   check: ValueCheck
 }
-export interface RuntimeCallAssertion {
+export type CallCheck =
+  | ResolvedCallCheck
+  | { matcher: 'calledWith' | 'calledOnceWith'; argsFrom: object }
+  | { matcher: 'calledNthWith'; n: number; argsFrom: object }
+export interface ResolvedCallAssertion {
   readonly [assertionTag]: true
   subject: 'call'
-  check: CallCheck
+  check: ResolvedCallCheck
   object: object
   key: string
   sourceObject?: object
 }
-export type RuntimeAssertion = RuntimeValueAssertion | RuntimeCallAssertion
+export type RuntimeCallAssertion = Omit<ResolvedCallAssertion, 'object' | 'check'> & { check: CallCheck } & (
+    | { object: object; objectFrom?: never }
+    | { objectFrom: object; object?: never }
+  )
+export type RuntimeAssertion = RuntimeValueAssertion | ResolvedCallAssertion
 export interface RuntimeMock {
   object: object
   key: string
@@ -203,7 +211,11 @@ export interface MutableRunResult {
   reason: Reason | 'completed'
   tests: MutableNodeResult[]
 }
-export type Deadline = { kind: 'end' } | { kind: 'start'; timeoutMs: number; result: MutableRunResult }
+export type Progress =
+  | { kind: 'init'; result: MutableRunResult }
+  | { kind: 'case'; result: MutableCaseResult }
+  | { kind: 'group'; path: number[]; middleware: MutableGroupMiddleware | null }
+export type Deadline = { kind: 'end' } | { kind: 'start'; timeoutMs: number; progress: Progress }
 export type Stage = 'before' | 'inside' | 'after' | 'end' | 'contract'
 export interface AttemptState {
   reason: Reason | null
@@ -222,14 +234,14 @@ export interface RunState extends AttemptState {
     timeoutMs: number
   } | null
   activeGroup: { path: number[]; stage: 'before' | 'after' | 'contract'; started: number; timeoutMs: number } | null
-  onProgress?: (result: MutableRunResult) => void
+  onProgress?: (progress: Progress) => void
   onDeadline?: (deadline: Deadline) => void
   executor: Executor | null
 }
 export interface InternalRunOptions extends RunOptions {
   filter?: string
   signal?: AbortSignal
-  onProgress?: (result: MutableRunResult) => void
+  onProgress?: (progress: Progress) => void
   onTimeout?: (result: MutableRunResult) => void
   onDeadline?: (deadline: Deadline) => void
 }
@@ -250,7 +262,7 @@ export interface GroupReply {
   entered?: false
 }
 export interface Executor {
-  attach(state: RunState, snapshot: (reason: Reason) => MutableRunResult): void
+  attach(state: RunState, snapshot: (reason: Reason) => Progress): void
   attempt(path: number[], number: number): Promise<AttemptReply>
   group(path: number[], body: () => Promise<boolean>): Promise<GroupReply>
   close(): Promise<void>
@@ -285,7 +297,8 @@ export type Reporter = 'pretty' | 'json'
 export type CliMessage =
   | { type: 'loading'; file: string; timeout: number }
   | { type: 'running'; reporter: Reporter; shutdownGrace: number }
-  | { type: 'progress' | 'timeout'; result: MutableRunResult }
+  | { type: 'progress'; progress: Progress }
+  | { type: 'timeout'; result: MutableRunResult }
   | ({ type: 'deadline' } & Deadline)
   | { type: 'result'; result: MutableRunResult; reporter: Reporter }
   | { type: 'error'; message: string }

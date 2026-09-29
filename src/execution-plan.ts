@@ -18,7 +18,8 @@ export function indexExecutionNodes(nodes: ExecutionNode[]) {
 
 export function describeExecutionPlan(nodes: ExecutionNode[]) {
   const objects = new Map<object, number>()
-  const reference = ({ object, key }: { object: object; key: string }) => {
+  const reference = ({ object, key }: { object?: object; key: string }) => {
+    if (object === undefined) return { key, fromContext: true }
     if (!objects.has(object)) objects.set(object, objects.size)
     return { object: objects.get(object), key, module: moduleIdentity(object) ?? null }
   }
@@ -47,7 +48,11 @@ export function describeExecutionPlan(nodes: ExecutionNode[]) {
               : {
                   args: item.args.kind,
                   mocks: item.mocks.map((mock) => ({ ...reference(mock), behavior: behavior(mock.behavior) })),
-                  calls: item.calls.map((call) => ({ ...reference(call), matcher: call.check.matcher })),
+                  calls: item.calls.map((call) => ({
+                    ...reference(call),
+                    matcher: call.check.matcher,
+                    argsFrom: 'argsFrom' in call.check,
+                  })),
                 }),
           })),
         }),

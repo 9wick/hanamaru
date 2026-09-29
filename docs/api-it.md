@@ -88,8 +88,7 @@ expectCallsのコールバックは定義時に1回評価します。
 それをblueprintへ保持するため、実行器はテスト対象を呼ぶ前に記録対象を確定できます。
 mockやspyの事前登録は不要で、別途importする補助関数もありません。
 
-この段階ではmiddlewareは未実行です。callにコンテキストはなく、対象参照と期待する引数は定義時に渡せる値を使います。
-実行時のコンテキストを使う引数や結果の期待には、argsFromとexpectを使います。
+この段階ではmiddlewareは未実行です。静的な参照・引数はそのまま保持し、`call.from` と `calledWithFrom` / `calledOnceWithFrom` / `calledNthWithFrom` はctxから取得するresolverを保持します。resolverは各attemptの記録設定前に評価します。[動的な呼び出し条件](./api-expect.md#middlewareで生成した参照・値を検証する)を参照してください。
 
 ## 結果の期待を組み立てる時点
 

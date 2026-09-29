@@ -82,6 +82,42 @@ calledNthWithのnは1始まりの正の安全な整数で、定義時・実行�
 calledNthWithは合計回数を制約しないため、必要ならcalledTimesを併記します。
 引数は記録時の参照を保持し、深く複製しません。テスト対象が後から値を変更した場合は検証時の状態を比較します。
 
+## middlewareで生成した参照・値を検証する
+
+`call.from(ctx => ctx.client, 'send')` で、middlewareが作ったオブジェクトのメソッドを記録できます。
+期待する引数には `calledWithFrom(build)`、`calledOnceWithFrom(build)`、`calledNthWithFrom(n, build)` を使えます。
+`build` は型付きのctxから引数タプルを返します。静的な `call(obj, key)` とも組み合わせられます。
+
+<!-- example: docs/examples/context-calls.test.ts -->
+```ts
+import { Test, registerTest, middleware } from 'hanamaru'
+
+interface Client {
+  send(id: string): Promise<void>
+}
+
+registerTest(new Test()
+  .use(middleware(async (_, next) => {
+    const client: Client = { async send(_id) {} }
+    return next({ client, id: 'created-user' })
+  }))
+  .target((client: Client, id: string) => client.send(id))
+  .it('準備したclientが生成したIDで呼ばれる', t => t
+    .argsFrom(ctx => [ctx.client, ctx.id])
+    .expectCalls(call => [
+      call.from(ctx => ctx.client, 'send')
+        .calledOnceWithFrom(ctx => [ctx.id]),
+    ])))
+```
+出典: [docs/examples/context-calls.test.ts](examples/context-calls.test.ts)
+
+参照と期待引数のresolverは、各attemptのmiddleware前処理後、記録設定・argsFrom・targetの前に同期的に一度評価します。
+retryでは新しいctxで評価し直し、skip/todoでは呼びません。resolverの例外はinstrumentationの失敗になり、targetを呼ばずmiddlewareの後始末へ進みます。
+期待引数が参照する値は深く複製しません。対象による後続の変更は、静的な呼び出し条件と同様に検証時に見えます。
+
+`call.from` は各attemptで得る通常オブジェクト向けです。module namespaceはCLIが読込前に準備するため、
+`call(namespace, key).calledOnceWithFrom(...)` のように参照を静的に渡し、期待引数だけをctxから取得します。
+
 ## コンテキスト
 
 <!-- example: docs/examples/matchers.test.ts#context -->

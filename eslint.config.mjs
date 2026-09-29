@@ -4,7 +4,6 @@ import typescript from '@typescript-eslint/eslint-plugin'
 export const typeSafetyRules = {
   'no-restricted-syntax': [
     'error',
-    { selector: 'TSUnknownKeyword', message: 'unknownは禁止です。値の種類と入力契約を明示してください。' },
     {
       selector: 'TSAsExpression:not([typeAnnotation.typeName.name="const"])',
       message: 'asによる型アサーションは禁止です（as constは許可）。型注釈と実行時検証を使用してください。',

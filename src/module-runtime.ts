@@ -152,10 +152,11 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
     import: async (file: string): Promise<Record<string, Value>> => view(file, await runner.import(file)),
     close: () => runner.close(),
     bindNode: <N extends ExecutionNode>(node: N): N => ({ ...node, mocks: node.mocks.map(bindEntry) }),
+    bindCall: bindEntry,
     bindCase: (item: RuntimeCase): RuntimeCase => ({
       ...item,
       mocks: item.mocks.map(bindEntry),
-      calls: item.calls.map(bindEntry),
+      calls: item.calls.map((call) => (call.object === undefined ? call : bindEntry(call))),
     }),
   }
 }

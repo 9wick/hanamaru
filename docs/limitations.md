@@ -57,7 +57,7 @@ Nodeはnode_modules内のTypeScript実行も制限するため、配布パッケ
 TestBlueprintには実行に必要な関数や参照を保持する。JSONで往復可能とは限らない。
 任意関数の内部動作や依存を完全に解析する機能も含まない。
 expectは遅延した処理として保持し、blueprint取得時にはその内部のアサーション一覧まで展開しない。
-expectCallsは定義時に記述子へ展開し、blueprintから対象・キー・条件を取得できる。
+expectCallsは定義時に記述子へ展開する。静的な対象・引数は値として、call.fromとcalled*WithFromの値はresolverとして保持する。キー・matcher・nは定義時に取得できる。
 文脈から得る値は、その取得方法をblueprintに保持する。
 [プラグイン向けblueprint](./metadata.md)を参照。
 
