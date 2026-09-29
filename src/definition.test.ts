@@ -36,3 +36,23 @@ test('basic test and blueprint do not run target during definition', async () =>
   expect(node.cases[0].attempts[0]?.status).toBe('passed')
   expect(calls).toBe(1)
 })
+
+test('builders keep their definition data out of the public surface', () => {
+  const base = new Test()
+  const suiteBuilder = new Test().target(double).it('double', (t) => t.args(2).expect((e) => [e.result.toBe(4)]))
+  expect('data' in base).toBe(false)
+  expect('data' in suiteBuilder).toBe(false)
+  expect(Object.keys(base)).toEqual([])
+  expect(Object.keys(suiteBuilder)).toEqual([])
+})
+
+test('deriving a builder leaves the source blueprint unchanged', () => {
+  const first = new Test().target(double).it('one', (t) => t.args(1).expect((e) => [e.result.toBe(2)]))
+  const second = first.it('two', (t) => t.args(2).expect((e) => [e.result.toBe(4)]))
+  const firstBlueprint = first.blueprint()
+  const secondBlueprint = second.blueprint()
+  expect.assert(firstBlueprint.kind === 'test')
+  expect.assert(secondBlueprint.kind === 'test')
+  expect(firstBlueprint.cases.map((item) => item.name)).toEqual(['one'])
+  expect(secondBlueprint.cases.map((item) => item.name)).toEqual(['one', 'two'])
+})

@@ -41,6 +41,7 @@ import type {
   RuntimeBlueprint,
   RuntimeGroup,
   CaseBlueprint,
+  RuntimeCase,
   Fields,
 } from './internal.js'
 import {
@@ -186,25 +187,37 @@ export function middleware<C, S extends object>(
 }
 
 class CaseBuilder<F extends AnyFn, C> {
-  readonly data: CaseData
+  readonly #data: CaseData
   constructor(data: CaseData) {
-    this.data = data
+    this.#data = data
   }
   get [doneTag](): true {
-    if (!this.data[doneTag]) throw new TypeError('case must return args and an expectation')
+    if (!this.#data[doneTag]) throw new TypeError('case must return args and an expectation')
     return true
   }
+  // DefinitionBuilder は別クラスで #data を読めないため、完成検査と取り出しをここに置く。
+  completed(base: {
+    name: string
+    mode: RuntimeCase['mode']
+    origin: SourceLocation
+    row: CaseBlueprint['row']
+  }): RuntimeCase {
+    const d = this.#data
+    if (!d[doneTag] || !d.args || (!d.expect && !d.calls.length))
+      throw new TypeError('case must return args and an expectation')
+    return { ...base, config: d.config, mocks: d.mocks, args: d.args, expect: d.expect, calls: d.calls }
+  }
   copy(patch: Partial<CaseData>): CaseBuilder<F, C> {
-    return new CaseBuilder({ ...this.data, ...patch })
+    return new CaseBuilder({ ...this.#data, ...patch })
   }
   timeout(ms: number) {
-    return this.copy({ config: { ...this.data.config, timeout: positive(ms, 'timeout') } })
+    return this.copy({ config: { ...this.#data.config, timeout: positive(ms, 'timeout') } })
   }
   retry(count: number) {
-    return this.copy({ config: { ...this.data.config, retry: retryCount(count) } })
+    return this.copy({ config: { ...this.#data.config, retry: retryCount(count) } })
   }
   mock<O extends object, K extends FnKeys<O>>(object: O, key: K, def: MockDef<MethodOf<O, K>>): CaseBuilder<F, C> {
-    return this.copy({ mocks: mergeMock(this.data.mocks, createMock(object, key, def)) })
+    return this.copy({ mocks: mergeMock(this.#data.mocks, createMock(object, key, def)) })
   }
   args(...args: Parameters<F>): ItArgs<F, C> {
     return this.copy({ args: { kind: 'value', value: arrayValue(args) } })
@@ -213,7 +226,7 @@ class CaseBuilder<F extends AnyFn, C> {
     return this.copy({ args: { kind: 'from-context', build } })
   }
   expect(build: (e: Expect<F, C>) => Assertions): ItExpected<C> {
-    if (this.data.expect) throw new TypeError('expect already set')
+    if (this.#data.expect) throw new TypeError('expect already set')
     return this.copy({
       [doneTag]: true,
       expect: {
@@ -224,7 +237,7 @@ class CaseBuilder<F extends AnyFn, C> {
     })
   }
   expectCalls(build: CallsBuilder<C>): ItCalls<F, C> {
-    if (this.data.calls.length) throw new TypeError('expectCalls already set')
+    if (this.#data.calls.length) throw new TypeError('expectCalls already set')
     const calls = arrayValue(invoke(build, undefined, [callBuilder])).map(checkedCall)
     return this.copy({ [doneTag]: true, calls: validateCalls(calls) })
   }
@@ -250,10 +263,10 @@ export function unregisteredDefinitions(files: ReadonlySet<string>, registered: 
 }
 
 export class DefinitionBuilder<R extends object = {}, C extends object = R, F extends AnyFn = AnyFn> {
-  readonly data: DefinitionData
+  readonly #data: DefinitionData
   readonly [definitionTag]?: true
   constructor(data: DefinitionData | null = null) {
-    this.data = data ?? {
+    this.#data = data ?? {
       stage: 'base',
       config: {},
       steps: [],
@@ -267,27 +280,27 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
     if (trackedDefinitions && this[definitionTag]) trackedDefinitions.set(this, { origin: location(), used: false })
   }
   copy(patch: Partial<DefinitionData>): DefinitionBuilder<R, C, F> {
-    const next = new DefinitionBuilder<R, C, F>({ ...this.data, ...patch })
+    const next = new DefinitionBuilder<R, C, F>({ ...this.#data, ...patch })
     const previous = trackedDefinitions?.get(this)
     if (previous) previous.used = true
     return next
   }
   settingAllowed() {
-    if (this.data.stage === 'group' || this.data.stage === 'suite')
+    if (this.#data.stage === 'group' || this.#data.stage === 'suite')
       throw new TypeError('common settings are fixed after the first group or case')
   }
   timeout(ms: number) {
     this.settingAllowed()
-    return this.copy({ config: { ...this.data.config, timeout: positive(ms, 'timeout') } })
+    return this.copy({ config: { ...this.#data.config, timeout: positive(ms, 'timeout') } })
   }
   retry(count: number) {
     this.settingAllowed()
-    return this.copy({ config: { ...this.data.config, retry: retryCount(count) } })
+    return this.copy({ config: { ...this.#data.config, retry: retryCount(count) } })
   }
   use<S extends object>(step: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R> {
     this.settingAllowed()
     if (step?.[middlewareTag] !== true) throw new TypeError('use requires middleware()')
-    return new DefinitionBuilder<R, ExtendContext<C, S>, F>({ ...this.data, steps: [...this.data.steps, step] })
+    return new DefinitionBuilder<R, ExtendContext<C, S>, F>({ ...this.#data, steps: [...this.#data.steps, step] })
   }
   mock<O extends object, K extends FnKeys<O>>(
     object: O,
@@ -295,14 +308,14 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
     def: MockDef<MethodOf<O, K>>,
   ): DefinitionBuilder<R, C, F> {
     this.settingAllowed()
-    return this.copy({ mocks: mergeMock(this.data.mocks, createMock(object, key, def)) })
+    return this.copy({ mocks: mergeMock(this.#data.mocks, createMock(object, key, def)) })
   }
   target<T extends AnyFn>(fn: T): TestBuilder<T, C, R>
   target<T extends AnyFn>(name: string, fn: T): TestBuilder<T, C, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
   target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
   target(...input: Value[]): object {
-    if (this.data.stage !== 'base') throw new TypeError('target already selected')
+    if (this.#data.stage !== 'base') throw new TypeError('target already selected')
     const [first, ...rest] = input
     const name = typeof first === 'string' && rest.length ? first : null
     const args = name === null ? input : rest
@@ -325,7 +338,7 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
     row: CaseBlueprint['row'] = null,
     origin = location(),
   ) {
-    if (this.data.stage !== 'target' && this.data.stage !== 'suite') throw new TypeError('select target before cases')
+    if (this.#data.stage !== 'target' && this.#data.stage !== 'suite') throw new TypeError('select target before cases')
     if (typeof name !== 'string') throw new TypeError('case name must be a string')
     let item: CaseBlueprint
     if (mode === 'todo') item = { name, mode, origin, row: null, config: {} }
@@ -337,11 +350,9 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
           new CaseBuilder<F, C>({ config: {}, mocks: [], args: null, expect: null, calls: [] }),
         ]),
       )
-      if (!built.data[doneTag] || !built.data.args || (!built.data.expect && !built.data.calls.length))
-        throw new TypeError('case must return args and an expectation')
-      item = { name, mode, origin, row, ...built.data, args: built.data.args }
+      item = built.completed({ name, mode, origin, row })
     }
-    return this.copy({ stage: 'suite', cases: [...this.data.cases, item] })
+    return this.copy({ stage: 'suite', cases: [...this.#data.cases, item] })
   }
   it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
   it(name: string, body: object): object {
@@ -392,7 +403,8 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
   group<const D extends GroupChildren<C>>(children: D): GroupStage<C, R, FirstPhase<ChildrenPhase<D>>>
   group<const D extends GroupChildren<C>>(name: string, children: D): GroupStage<C, R, FirstPhase<ChildrenPhase<D>>>
   group(...input: Value[]): object {
-    if (this.data.stage !== 'base' && this.data.stage !== 'group') throw new TypeError('group requires a group builder')
+    if (this.#data.stage !== 'base' && this.#data.stage !== 'group')
+      throw new TypeError('group requires a group builder')
     const origin = location(),
       [first, ...rest] = input
     const name = typeof first === 'string' ? first : null
@@ -422,10 +434,10 @@ export class DefinitionBuilder<R extends object = {}, C extends object = R, F ex
       mocks: [],
       children: children.map((child) => ({ origin, blueprint: child.blueprint() })),
     }
-    return this.copy({ stage: 'group', groups: [...this.data.groups, group] })
+    return this.copy({ stage: 'group', groups: [...this.#data.groups, group] })
   }
   blueprint(): RuntimeBlueprint {
-    const d = this.data
+    const d = this.#data
     if (d.stage === 'suite') {
       if (d.name === null || d.target === null) throw new TypeError('test definition is incomplete')
       return {
