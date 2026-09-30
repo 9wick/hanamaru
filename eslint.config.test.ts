@@ -12,7 +12,7 @@ const eslint = new ESLint({
 })
 // 型情報付きルールの対象外に置くため、tsconfigのincludeに入らないパスを使う。
 const syntaxFile = 'virtual/lint-sample.ts'
-const implementationFile = 'src/value.ts'
+const implementationFile = 'src/foundation/value.ts'
 const messages = async (code: string, filePath: string = syntaxFile) =>
   (await eslint.lintText(code, { filePath }))[0].messages
 
@@ -130,4 +130,40 @@ test('lint accepts checked inputs and described negative type tests', async () =
       (m) => m.ruleId === '@typescript-eslint/ban-ts-comment',
     ),
   ).toBe(true)
+})
+
+// 依存ルールの契約: 通常・再export・動的import・型参照すべてで外向きの依存を拒否する。
+test('layer boundaries reject outward dependencies and entrypoint shortcuts', async () => {
+  const filename = new URL('./src/domain/definition/validation.ts', import.meta.url).pathname
+  for (const source of [
+    "import { runCommand } from '../../interfaces/cli/command.js'; export { runCommand }",
+    "export * from '../../infrastructure/comparison.js'",
+    "export const runtime = import('../../infrastructure/comparison.js')",
+    "export type Options = import('../../application/collection/options.js').CliOptions",
+    "export * from '../../index.js'",
+    "export * from '../definition/../../infrastructure/comparison.js'",
+    "import { readFileSync } from 'node:fs'; export { readFileSync }",
+  ]) {
+    expect(
+      (await messages(source, filename)).some((message) => message.ruleId === 'architecture/dependencies'),
+      source,
+    ).toBe(true)
+  }
+})
+
+test('layer boundaries accept inward dependencies', async () => {
+  const cases = [
+    ['src/interfaces/library/run.ts', "export * from '../../application/execution/options.js'"],
+    ['src/application/execution/runner.ts', "export * from '../../domain/result/types.js'"],
+    ['src/infrastructure/workers/client.ts', "export * from '../../application/ports/executor.js'"],
+    ['src/domain/result/diagnostic.ts', "export * from '../../foundation/value.js'"],
+  ]
+  for (const [file, source] of cases) {
+    expect(
+      (await messages(source, new URL(file, import.meta.url).pathname)).filter(
+        (message) => message.ruleId === 'architecture/dependencies',
+      ),
+      file,
+    ).toEqual([])
+  }
 })

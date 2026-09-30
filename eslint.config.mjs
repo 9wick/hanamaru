@@ -1,3 +1,4 @@
+import { architecturePlugin } from './scripts/architecture.mjs'
 import parser from '@typescript-eslint/parser'
 import typescript from '@typescript-eslint/eslint-plugin'
 
@@ -34,6 +35,12 @@ const typeAwareRules = {
   '@typescript-eslint/no-misused-promises': 'error',
 }
 export default [
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/**/*.test.ts'],
+    plugins: { architecture: architecturePlugin },
+    rules: { 'architecture/dependencies': 'error' },
+  },
   { ignores: ['node_modules/**', 'dist/**', 'coverage/**'] },
   { linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: 'error' } },
   {

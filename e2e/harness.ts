@@ -1,5 +1,5 @@
-import { spawn, spawnSync } from 'node:child_process'
 import type { SpawnSyncReturns } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -12,8 +12,8 @@ import type {
   MutableGroupResult,
   MutableNodeResult,
   MutableTestResult,
-} from '../src/internal.ts'
-import { runResultSchema } from '../src/schemas.ts'
+} from '../src/domain/result/mutable.js'
+import { runResultSchema } from '../src/domain/result/schemas.js'
 
 export const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -30,15 +30,18 @@ export const workspace: CliEnvironment = {
   args: [join(repository, 'dist/cli.js')],
   cwd: repository,
 }
+
 /** workspaceのfixtureがhanamaruを読み込む指定子。 */
 export const workspaceRuntime = pathToFileURL(join(repository, 'dist/index.js')).href
 
 export const runtime = v.parse(v.picklist(['node', 'bun', 'deno']), process.env.HANAMARU_RUNTIME ?? 'node')
+
 const launchers: Record<typeof runtime, { command: string; args: string[] }> = {
   node: { command: process.execPath, args: [] },
   bun: { command: 'bun', args: [] },
   deno: { command: 'deno', args: ['run', '--allow-all', '--no-prompt', '--node-modules-dir=manual', '--no-lock'] },
 }
+
 export const launcher = launchers[runtime]
 
 export function execute(
@@ -52,6 +55,7 @@ export function execute(
   expect(result.signal, `${command} did not exit normally: ${result.stderr}`).toBeNull()
   return result
 }
+
 export function invoke(env: CliEnvironment, ...args: string[]): SpawnSyncReturns<string> {
   return execute(env.command, [...env.args, ...args], env.cwd)
 }
@@ -63,6 +67,7 @@ export interface InterruptedRun {
   readonly stderr: string
   readonly interrupted: boolean
 }
+
 /** markerがstderrに現れたらSIGINTを送り、終了するまでの出力と終了状態を返す。 */
 export async function interrupt(env: CliEnvironment, args: string[], marker: string): Promise<InterruptedRun> {
   const child = spawn(env.command, [...env.args, ...args], { cwd: env.cwd, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -100,6 +105,7 @@ export interface Fixture {
   readonly dir: string
   readonly file: string
 }
+
 /** workspace用のfixture。一時ディレクトリごとテスト終了時に破棄する。 */
 export function fixture(source: string): Fixture {
   const dir = mkdtempSync(join(tmpdir(), 'hanamaru-cli-'))
@@ -119,6 +125,7 @@ export interface InstalledPackage {
   readonly consumer: string
   readonly root: string
 }
+
 /** tarballを作ってconsumerにインストールし、インストール済みbinを起動する環境を返す。 */
 export function installPackage(): InstalledPackage {
   const root = mkdtempSync(join(tmpdir(), 'hanamaru-package-'))
@@ -151,9 +158,11 @@ export function installPackage(): InstalledPackage {
     },
   }
 }
+
 export function removePackage(installed: InstalledPackage) {
   rmSync(installed.root, { recursive: true, force: true })
 }
+
 // consumerディレクトリは1ファイル内の全テストで共有する。ここに書いたhanamaru.config.tsやtsconfig.jsonは
 // 後続のテストからも見えるため、テストの実行順序に依存する。
 export function consumerFixture(installed: InstalledPackage, name: string, source: string): string {
@@ -170,10 +179,12 @@ function registeredFixture(source: string): string {
 }
 
 export type ParsedRunResult = v.InferOutput<typeof runResultSchema>
+
 /** CLIのJSON出力をスキーマで検証して読む。version以外の形の破れもここで失敗する。 */
 export function runResult(stdout: string): ParsedRunResult {
   return v.parse(runResultSchema, JSON.parse(stdout))
 }
+
 export function jsonResult(result: SpawnSyncReturns<string>, code: number): ParsedRunResult {
   expect(result.status, result.stderr).toBe(code)
   return runResult(result.stdout)
@@ -183,27 +194,34 @@ export function asTest(node: MutableNodeResult): MutableTestResult {
   expect.assert(node.kind === 'test')
   return node
 }
+
 export function asGroup(node: MutableNodeResult): MutableGroupResult {
   expect.assert(node.kind === 'group')
   return node
 }
+
 export function testNode(result: ParsedRunResult, index = 0): MutableTestResult {
   return asTest(result.tests[index])
 }
+
 export function groupNode(result: ParsedRunResult, index = 0): MutableGroupResult {
   return asGroup(result.tests[index])
 }
+
 export function childTest(group: MutableGroupResult, index = 0): MutableTestResult {
   return asTest(group.children[index].result)
 }
+
 export function childGroup(group: MutableGroupResult, index = 0): MutableGroupResult {
   return asGroup(group.children[index].result)
 }
+
 export function middlewareOf(group: MutableGroupResult): MutableGroupMiddleware {
   const { middleware } = group
   expect.assert(middleware !== null)
   return middleware
 }
+
 export function cases(node: MutableNodeResult): MutableCaseResult[] {
   return node.kind === 'group' ? node.children.flatMap((child) => cases(child.result)) : node.cases
 }

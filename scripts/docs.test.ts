@@ -258,3 +258,37 @@ test('the legacy markdown checks still run', async () => {
   expect(messages).toContain('malformed table: | a | b | c |')
   expect(messages).toContain('unbalanced code fences')
 })
+
+test('nested documents remain subject to links, example sync, and marker checks', async () => {
+  const files = documents()
+  files['docs/guides/nested.md'] = [
+    '# Nested',
+    '[missing](missing.md)',
+    '',
+    '<!-- example: docs/examples/sample.test.ts -->',
+    '```ts',
+    'outOfDate()',
+    '```',
+    '出典: [docs/examples/sample.test.ts](../examples/sample.test.ts)',
+    '',
+    '```ts',
+    'missingMarker()',
+    '```',
+    '',
+  ].join('\n')
+  const root = await tree(files)
+  try {
+    const checked = await run([], { cwd: root })
+    expect(checked.code).toBe(1)
+    expect(checked.lines.join('\n')).toContain('docs/guides/nested.md:')
+    expect(checked.lines.join('\n')).toContain('missing missing.md')
+    expect(checked.lines.join('\n')).toContain('code block is out of sync')
+    expect(checked.lines.join('\n')).toContain('code block needs a marker')
+    await run(['--write'], { cwd: root })
+    const synced = await readFile(join(root, 'docs/guides/nested.md'), 'utf8')
+    expect(synced).toContain(sampleBody.join('\n'))
+    expect(synced).toContain('](../examples/sample.test.ts)')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

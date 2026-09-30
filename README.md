@@ -69,7 +69,7 @@ registerTest(addition)
 npx hanamaru src/math.test.ts
 ```
 
-このコマンドは、例のファイルを `src/math.test.ts` に置いた場合です。引数なしの `npx hanamaru` は `**/*.{test,spec}.ts` を探索します。型チェックを含むtest scriptは[はじめる](./docs/getting-started.md#実行環境とコマンド)を参照してください。
+このコマンドは、例のファイルを `src/math.test.ts` に置いた場合です。引数なしの `npx hanamaru` は `**/*.{test,spec}.ts` を探索します。型チェックを含むtest scriptは[はじめる](docs/guides/getting-started.md#実行環境とコマンド)を参照してください。
 
 ## 行データからケースを書く
 
@@ -92,7 +92,7 @@ registerTest(addition)
 出典: [docs/examples/each.test.ts](docs/examples/each.test.ts)
 
 eachはitと並ぶ入口です。行ごとに名前やIDを追加せず、引数・期待の型を保ってケースを並べます。
-[eachの表示と実行](./docs/each.md)を参照してください。
+[eachの表示と実行](docs/guides/each.md)を参照してください。
 
 ## モックなしでも呼び出しを検証する
 
@@ -129,7 +129,7 @@ const userGroup = new Test()
 
 groupで関連するテストを一つのまとまりにし、配下へ共通のmock・use・timeout・retryを適用できます。
 名前は任意です。子が一つでも配列で渡します。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
-グループ化と共通設定の範囲は[テストをグループにまとめる](./docs/grouping.md)を参照してください。
+グループ化と共通設定の範囲は[テストをグループにまとめる](docs/guides/grouping.md)を参照してください。
 
 ## group全体で資源を共有する
 
@@ -158,7 +158,7 @@ middlewareは一度だけserverを用意し、`next({ server })` の値を両方
 `.timeout(1_000)` と `.retry(2)` はgroup、`.target()` の前後、ケースで設定できます。
 内側で指定した項目だけを上書きし、未指定の項目は親から引き継ぎます。
 retryは失敗したケースだけを再試行し、各試行を結果に残します。
-[timeoutとretry](./docs/execution-options.md)に設定例と停止の保証を記載しています。
+[timeoutとretry](docs/guides/execution-options.md)に設定例と停止の保証を記載しています。
 
 ## ケースは独立して実行できる
 
@@ -193,13 +193,13 @@ registerTest(userCount)
 
 middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型は後続のargsFromや`e.ctx`へ伝わります。
 値を渡すだけなら `.use(middleware(async (_, next) => next({ expected: 3 })))` と書けます。
-詳しくは[middleware](./docs/middleware.md)を参照してください。
+詳しくは[middleware](docs/guides/middleware.md)を参照してください。
 
 ## 定義したテストを実行する
 
 日常のテスト実行にはCLIを使います。テストファイルは実行するルートを `registerTest` で登録し、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
 
-[テストの登録](./docs/registration.md)はCLIの実行対象の宣言です。exportしただけのテストは実行対象になりません。読むファイルの集合を名前で選ぶ設定は[project](./docs/projects.md)です。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
+[テストの登録](docs/guides/registration.md)はCLIの実行対象の宣言です。exportしただけのテストは実行対象になりません。読むファイルの集合を名前で選ぶ設定は[project](docs/guides/projects.md)です。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
 
 ### プログラムから結果を受け取る
 
@@ -214,7 +214,7 @@ const result = await run(users)
 ```
 出典: [docs/examples/metadata.ts](docs/examples/metadata.ts)
 
-`run` は設定ファイルを読まず、ファイル探索やprojectの選択を行いません。CLIとライブラリAPIの保証の違いは[実行方法の選び方](./docs/cli.md#実行方法の選び方)を参照してください。
+`run` は設定ファイルを読まず、ファイル探索やprojectの選択を行いません。CLIとライブラリAPIの保証の違いは[実行方法の選び方](docs/reference/cli.md#実行方法の選び方)を参照してください。
 
 ### 失敗を確認する
 
@@ -228,41 +228,41 @@ createUser
       actual:   合計2回
 ```
 
-結果用の識別子やソース位置を手書きする必要はありません。詳しくは[宣言位置と実行結果](./docs/results.md)を参照してください。
+結果用の識別子やソース位置を手書きする必要はありません。詳しくは[宣言位置と実行結果](docs/reference/results.md)を参照してください。
 
 ## ドキュメント
 
-最初のテストを書いて実行する手順は、[はじめる](./docs/getting-started.md)を参照してください。
+最初のテストを書いて実行する手順は、[はじめる](docs/guides/getting-started.md)を参照してください。
 
 ### テストを書く
 
-- [Test ビルダー](./docs/api-test.md) / [it ビルダー](./docs/api-it.md)
-- [マッチャ](./docs/api-expect.md) / [モック](./docs/api-mock.md)
-- [行データからケースを書く（each）](./docs/each.md)
-- [middleware](./docs/middleware.md) / [テストをグループにまとめる](./docs/grouping.md)
+- [Test ビルダー](docs/reference/api-test.md) / [it ビルダー](docs/reference/api-it.md)
+- [マッチャ](docs/reference/api-expect.md) / [モック](docs/reference/api-mock.md)
+- [行データからケースを書く（each）](docs/guides/each.md)
+- [middleware](docs/guides/middleware.md) / [テストをグループにまとめる](docs/guides/grouping.md)
 
 ### 実行して結果を確認する
 
-- [CLIと設定ファイル](./docs/cli.md)
-- [テストの登録](./docs/registration.md)
-- [projectで読むファイルを選ぶ](./docs/projects.md)
-- [projectの利用例：unitとintegration/e2eを分ける](./docs/project-use-cases.md)
-- [timeoutとretry](./docs/execution-options.md)
-- [宣言位置と実行結果](./docs/results.md)
+- [CLIと設定ファイル](docs/reference/cli.md)
+- [テストの登録](docs/guides/registration.md)
+- [projectで読むファイルを選ぶ](docs/guides/projects.md)
+- [projectの利用例：unitとintegration/e2eを分ける](docs/guides/project-use-cases.md)
+- [timeoutとretry](docs/guides/execution-options.md)
+- [宣言位置と実行結果](docs/reference/results.md)
 
 ### 仕様を詳しく知る
 
-- [設計思想](./docs/concepts.md)
-- [型推論](./docs/type-inference.md)
-- [実行セマンティクス](./docs/semantics.md)
-- [制約と実装状況](./docs/limitations.md)
-- [用語集](./docs/glossary.md)
+- [設計思想](docs/concepts/concepts.md)
+- [型推論](docs/reference/type-inference.md)
+- [実行セマンティクス](docs/concepts/semantics.md)
+- [制約と実装状況](docs/reference/limitations.md)
+- [用語集](docs/concepts/glossary.md)
 
 ### プラグインを作る
 
-- [プラグイン向けblueprint](./docs/metadata.md)
+- [プラグイン向けblueprint](docs/reference/metadata.md)
 
 ## 対応環境
 
 Node.js 22.18以上、Bun 1.3以上、Deno 2.9.2以上を対象としています。TypeScriptの型契約は5.8以上を対象とします。
-ランタイムごとの起動方法とTypeScriptの制約は[対応環境](./docs/limitations.md)と[CLI](./docs/cli.md)を参照してください。
+ランタイムごとの起動方法とTypeScriptの制約は[対応環境](docs/reference/limitations.md)と[CLI](docs/reference/cli.md)を参照してください。
