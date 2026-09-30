@@ -11,7 +11,7 @@
 
 また、moduleの場所をユーザーに明示させる必要があるという説明は早計だった。読み込みの観測とnamespaceの同一性照合による自動特定は実験で成立した。元のソースを変更せず中継moduleを生成する代替方式はNodeで追加47 attemptの期待結果が一致したが、Bunで失敗が残る。現行backendをこの代替方式へ置き換えたわけではない。
 
-再現コマンド・成功/失敗の生データ・残る条件は、隣の実験worktreeの `experiments/module-identity/RESULTS.md` と `results-*.json` に記録する。
+再現コマンド・成功/失敗の条件・残る論点は [experiments/module-identity.md](./experiments/module-identity.md) に記録する。生データ（`results-*.json`）は保存していない。
 
 ## 目的と範囲
 
