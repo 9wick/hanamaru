@@ -49,7 +49,7 @@ async function buildSnapshot(root: string): Promise<Snapshot> {
 }
 
 function isDocument(path: string): boolean {
-  return path.startsWith('docs/') && path.endsWith('.md') && !path.slice('docs/'.length).includes('/')
+  return path.startsWith('docs/') && path.endsWith('.md')
 }
 
 function isExampleFile(path: string): boolean {

@@ -40,9 +40,9 @@
 6. Node 22/24、Bun、DenoでCLIを実行する。未検証の組み合わせは明記する。
 
 過去のnative mock実装・実験の判断は `attempt-queue.md` と
-[experiments/module-mock-queue.md](./experiments/module-mock-queue.md)・
-[experiments/module-identity.md](./experiments/module-identity.md)・
-[experiments/import-transform.md](./experiments/import-transform.md) に残す。
+[experiments/module-mock-queue.md](experiments/module-mock-queue.md)・
+[experiments/module-identity.md](experiments/module-identity.md)・
+[experiments/import-transform.md](experiments/import-transform.md) に残す。
 本書の契約が、過去の「変換しない」「公開型を変更しない」という制約を置き換える。
 
 ## 目的達成の確認（2026-09-27）

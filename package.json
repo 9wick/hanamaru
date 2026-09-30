@@ -27,9 +27,9 @@
     "test:examples:run": "node dist/cli.js --ci docs/examples/*.test.ts",
     "check:docs": "node --disable-warning=ExperimentalWarning scripts/docs.ts",
     "docs:sync": "node --disable-warning=ExperimentalWarning scripts/docs.ts --write",
-    "lint": "vp lint --deny-warnings src e2e docs/examples scripts/docs.ts scripts/docs eslint.config.test.ts && eslint . --max-warnings 0",
-    "format": "vp fmt src e2e scripts/docs.ts scripts/docs vite.config.ts eslint.config.mjs eslint.config.test.ts",
-    "format:check": "vp fmt --check src e2e scripts/docs.ts scripts/docs vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "lint": "vp lint --deny-warnings src e2e docs/examples scripts/docs.ts scripts/docs scripts/architecture.mjs eslint.config.test.ts && eslint . --max-warnings 0",
+    "format": "vp fmt src e2e scripts/docs.ts scripts/docs scripts/architecture.mjs vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "format:check": "vp fmt --check src e2e scripts/docs.ts scripts/docs scripts/architecture.mjs vite.config.ts eslint.config.mjs eslint.config.test.ts",
     "build": "vp pack && tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:docs"

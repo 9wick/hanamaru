@@ -30,7 +30,7 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 | `npm run test:e2e` | ビルドしたCLIとインストール済みパッケージでの公開契約 |
 | `npm run test:package` | tarballをインストールした利用者プロジェクトでの公開APIとCLI |
 | `npm run test:examples` | 公開文書のサンプルをhanamaru自身で実行した結果 |
-| `npm run check:docs` | リンク・アンカー・表・コードフェンスと、README.md / docs/*.md の全tsブロックが例と一致すること |
+| `npm run check:docs` | リンク・アンカー・表・コードフェンスと、README.md / docs/**/*.md の全tsブロックが例と一致すること |
 | `npm run docs:sync` | 例に合わせて文書のtsブロックと出典行を書き換え |
 
 `test:e2e` / `test:package` / `test:examples` は単独実行でも先にビルドします。
@@ -40,7 +40,7 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 
 | 層 | 実行系 | 置き場所 |
 | --- | --- | --- |
-| unit | Vitest | テスト対象の横の `src/xxx.test.ts`、ルートの `eslint.config.test.ts`、`scripts/**/*.test.ts` |
+| unit | Vitest | テスト対象の横の `src/<layer>/**/*.test.ts`、ルートの `eslint.config.test.ts`、`scripts/**/*.test.ts` |
 | e2e | Vitest | `e2e/` |
 | examples | hanamaru CLI | `docs/examples/*.test.ts` |
 
@@ -65,7 +65,7 @@ e2eは直前の `npm run build` の結果を見ます。
 
 ## 文書のサンプル
 
-README.mdとdocs/*.mdの `ts` ブロックは、全て例ファイルから抜き出したものです。
+README.mdとdocs/**/*.mdの `ts` ブロックは、全て例ファイルから抜き出したものです。
 例は隠した準備コードを持たない、それ自体で読める完結したファイルです。
 
 | 種別 | 置き場所 | 検証 |
@@ -131,8 +131,37 @@ lintと通信境界のテストは、禁止コードと不正な受信値を直�
 
 ## CI
 
-[CI](./.github/workflows/ci.yml) はpush・PR・手動実行に対応します。
+[CI](.github/workflows/ci.yml) はpush・PR・手動実行に対応します。
 Node.js 22.18.0 / 24で全検査と配布物のE2Eを実行します。
 Bun 1.3.5 / latest、Deno 2.9.2 / v2.xでは同じ配布物E2Eを実行します。
 Bun / Denoのjobではunitテスト・lint・型検査を重複実行しません。
 OSはLinuxです。他のOSと公開npmレジストリ経由のインストールは未検証です。
+
+
+## ソースコードの配置
+
+第一階層は責務のlayer、その下は同じ責務の中の関心で分けます。
+
+| 配置 | 責務・探すもの |
+| --- | --- |
+| `src/interfaces/library/` | TestのBuilder、公開APIから内部定義への変換 |
+| `src/interfaces/cli/` | 引数の解釈、pretty/JSON表示 |
+| `src/application/collection/` | 登録、projectの選択、収集から実行までの手順 |
+| `src/application/execution/` | 計画、attempt、middleware、retry、進捗 |
+| `src/application/ports/` | Worker実行・モジュール読込・比較など、外部実装に要求する契約 |
+| `src/domain/` | 定義・期待条件・実行設定・結果のモデルと妥当性 |
+| `src/infrastructure/` | Vite、Worker、ファイル探索、比較ライブラリ、宣言位置の取得 |
+| `src/foundation/` | 特定の業務や実行環境を知らないJavaScript値・関数・エラーの操作 |
+
+`interfaces → application → domain → foundation` と `infrastructure → application/domain/foundation` の向きを守ります。
+各layer内の参照も許可します。起動ファイル `index.ts`・`cli.ts`・`cli-worker.ts`・`execution-worker.ts` が具体実装を接続します。
+内部実装からこれらの入口を逆にimportしません。`npm run lint` のESLintルールが、型参照・再export・動的importも含めて検査します。
+公開設定 `Config.vite` のVite型だけは既存API互換性のためapplicationに残し、実行時のVite依存はinfrastructureに置きます。
+
+型・schema・unitテストは責務の所有者のそばに置きます。共通という理由だけで `shared.ts` や全体の `types/` に集めません。
+公開APIの契約を検証するテストは `src/index.ts` から読み込み、E2Eは引き続き `e2e/` に置きます。
+宣言位置の取得は起動ファイルのディレクトリを基準に実装フレームを除外します。
+Workerと公開APIのURLも起動ファイルで組み立てるため、内部ファイルの階層が配布物の探索に影響しません。
+
+文書は `docs/guides/`（使い方）、`docs/reference/`（仕様）、`docs/concepts/`（考え方）で分けます。
+`docs/examples/` と `docs/spec/` は実行・型検証用のソースで、文書検査は `docs/` 配下のMarkdownを再帰的に対象とします。
