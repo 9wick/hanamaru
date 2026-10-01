@@ -45,6 +45,53 @@ test('each attempt announces the cancelled view before it runs', async () => {
   expect(completed.attempts[0]?.status).toBe('passed')
 })
 
+test('each group announces its middleware once its children are done', async () => {
+  const progress: Progress[] = []
+  const child = new Test().target((n: number) => n).it('leaf', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
+  const inner = new Test().group(
+    'inner',
+    middleware(async (_, next) => next()),
+    [child],
+  )
+  const root = new Test().group('root', [inner])
+  await run(root, internalOptions({ onProgress: (value) => progress.push(structuredClone(value)) }))
+  expect(progress.map((value) => value.kind)).toStrictEqual(['init', 'case', 'case', 'group', 'group'])
+  const groups = progress.filter((value) => value.kind === 'group')
+  // 子から親の順に、middlewareを持たないgroupもnullとして通知する。
+  expect(groups.map((value) => value.path)).toStrictEqual([[0, 0], [0]])
+  expect(groups.map((value) => value.middleware?.status ?? null)).toStrictEqual(['passed', null])
+})
+
+test('a timeout snapshot keeps the results finished before it', async () => {
+  const snapshots: MutableRunResult[] = []
+  const cases = new Test()
+    .timeout(20)
+    .target(async (n: number) => {
+      if (n === 2) await new Promise<void>((resolve) => setTimeout(resolve, 80))
+      return n
+    })
+    .it('fast', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
+    .it('slow', (t) => t.args(2).expect((e) => [e.result.toBe(2)]))
+    .todo('later')
+  const root = new Test().group(
+    'root',
+    middleware(async (_, next) => next()),
+    [cases],
+  )
+  const result = await run(root, internalOptions({ onTimeout: (value) => snapshots.push(structuredClone(value)) }))
+  expect(result.reason).toBe('timeout')
+  expect(snapshots.length).toBe(1)
+  const node = snapshots[0]?.tests[0]
+  expect.assert(node?.kind === 'group')
+  // 打ち切り時点ではgroupはまだ終わっていないため、初期ツリーのままになる。
+  expect(node.middleware?.status).toBe('not-run')
+  const child = node.children[0]?.result
+  expect.assert(child?.kind === 'test')
+  expect(child.cases.map((item) => item.attempts[0]?.status ?? null)).toStrictEqual(['passed', 'failed', null])
+  expect(child.cases.map((item) => item.notRun ?? null)).toStrictEqual([null, null, 'todo'])
+  expect(child.cases[1]?.attempts[0]?.failures[0]?.kind).toBe('timeout')
+})
+
 test('an attempt timeout reports the phase it reached', async () => {
   const deadlines: Deadline[] = []
   const snapshots: MutableRunResult[] = []
