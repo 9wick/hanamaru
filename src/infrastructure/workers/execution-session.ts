@@ -1,22 +1,23 @@
 import { RunEvents, RunTracker } from '../../application/execution/services.js'
 import type { Value } from '../../foundation/value.js'
-import type { ExecutionCommand, ExecutionMessage } from './protocol.js'
+import type { ExecutionChannel } from './execution-channel.js'
+import type { ExecutionCommand, ExecutionIncoming } from './protocol.js'
 
 /** compileを頼んだhostへの返信待ち。発番と突き合わせを1か所に閉じ込める。 */
 export class CompileRequests {
   readonly #waiting = new Map<number, { resolve: (value: Value) => void; reject: (error: Value) => void }>()
-  readonly #ask: (request: { id: number; name: string; args: Value[] }) => void
+  readonly #channel: ExecutionChannel
   #nextId = 0
 
-  constructor(ask: (request: { id: number; name: string; args: Value[] }) => void) {
-    this.#ask = ask
+  constructor(channel: ExecutionChannel) {
+    this.#channel = channel
   }
 
   request(name: string, args: Value[]): Promise<Value> {
     return new Promise<Value>((resolve, reject) => {
       const id = this.#nextId++
       this.#waiting.set(id, { resolve, reject })
-      this.#ask({ id, name, args })
+      this.#channel.compile({ id, name, args })
     })
   }
 
@@ -61,8 +62,22 @@ export class ExecutionSession {
   readonly tracker = new RunTracker()
   readonly events: RunEvents
 
-  constructor(send: (message: ExecutionMessage) => void) {
-    this.compiles = new CompileRequests((request) => send({ type: 'compile', ...request }))
-    this.events = new RunEvents({ onTimeout: () => send({ type: 'timeout', phase: this.tracker.phase ?? undefined }) })
+  constructor(channel: ExecutionChannel) {
+    this.compiles = new CompileRequests(channel)
+    this.events = new RunEvents({ onTimeout: () => channel.timedOut(this.tracker.phase ?? undefined) })
+  }
+
+  /**
+   * 親から届いた1件を行き先へ振り分ける。覚えのないcompile返信だけはprotocolの破れで、
+   * どう畳むかは入口が決めるため、見分けた結果だけを返す。
+   */
+  receive(message: ExecutionIncoming): boolean {
+    if (message.type === 'compiled') return this.compiles.settle(message)
+    if (message.type === 'interrupt') {
+      this.tracker.interrupt()
+      return true
+    }
+    this.commands.push(message)
+    return true
   }
 }

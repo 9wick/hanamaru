@@ -1,41 +1,79 @@
+import { MessageChannel } from 'node:worker_threads'
+import * as v from 'valibot'
 import { expect, test } from 'vite-plus/test'
-import type { Value } from '../../foundation/value.js'
+import { ExecutionChannel } from './execution-channel.js'
 import { CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
-import type { ExecutionCommand, ExecutionMessage } from './protocol.js'
+import type { ExecutionCommand } from './protocol.js'
+import { executionMessageSchema } from './schemas.js'
 
 function attempt(id: number): ExecutionCommand {
   return { type: 'attempt', id, path: [0, 0], number: 1 }
 }
 
+/**
+ * 本物のMessagePortを通し、protocolへ出た形そのものを観察する。
+ * 配送は送信と同じtickでは終わらないため、待つ件数を指定して受け取りを待ち合わせる。
+ */
+function wired() {
+  const { port1, port2 } = new MessageChannel()
+  const sent: v.InferOutput<typeof executionMessageSchema>[] = []
+  let notify = () => {}
+  port2.on('message', (message) => {
+    sent.push(v.parse(executionMessageSchema, message))
+    notify()
+  })
+  return {
+    channel: new ExecutionChannel(port1),
+    sent,
+    until: (count: number) =>
+      new Promise<void>((resolve) => {
+        notify = () => {
+          if (sent.length >= count) resolve()
+        }
+        notify()
+      }),
+    close: () => {
+      port1.close()
+      port2.close()
+    },
+  }
+}
+
 test('compile requests number their asks and resolve the matching reply', async () => {
-  const asked: { id: number; name: string; args: Value[] }[] = []
-  const compiles = new CompileRequests((request) => asked.push(request))
+  const { channel, sent, until, close } = wired()
+  const compiles = new CompileRequests(channel)
   const first = compiles.request('fetchModule', ['a'])
   const second = compiles.request('fetchModule', ['b'])
-  expect(asked).toStrictEqual([
-    { id: 0, name: 'fetchModule', args: ['a'] },
-    { id: 1, name: 'fetchModule', args: ['b'] },
+  await until(2)
+  expect(sent).toStrictEqual([
+    { type: 'compile', id: 0, name: 'fetchModule', args: ['a'] },
+    { type: 'compile', id: 1, name: 'fetchModule', args: ['b'] },
   ])
   expect(compiles.settle({ id: 1, result: 'second' })).toBe(true)
   expect(compiles.settle({ id: 0, result: 'first' })).toBe(true)
   expect(await first).toBe('first')
   expect(await second).toBe('second')
+  close()
 })
 
 test('a compile reply carrying an error rejects the request with that message', async () => {
-  const compiles = new CompileRequests(() => {})
+  const { channel, close } = wired()
+  const compiles = new CompileRequests(channel)
   const request = compiles.request('fetchModule', [])
   expect(compiles.settle({ id: 0, error: 'transform failed' })).toBe(true)
   await expect(request).rejects.toThrow(/transform failed/)
+  close()
 })
 
 test('a reply for an unknown or already settled request is reported as unmatched', async () => {
-  const compiles = new CompileRequests(() => {})
+  const { channel, close } = wired()
+  const compiles = new CompileRequests(channel)
   const request = compiles.request('fetchModule', [])
   expect(compiles.settle({ id: 7 })).toBe(false)
   expect(compiles.settle({ id: 0, result: 1 })).toBe(true)
   expect(compiles.settle({ id: 0, result: 1 })).toBe(false)
   expect(await request).toBe(1)
+  close()
 })
 
 test('queued commands come out in arrival order', async () => {
@@ -55,21 +93,37 @@ test('a command that arrives after the taker hands it over directly', async () =
   expect((await commands.take()).id).toBe(4)
 })
 
-test('the session reports a timeout with the phase its tracker last marked', () => {
-  const sent: ExecutionMessage[] = []
-  const session = new ExecutionSession((message) => sent.push(message))
+test('the session reports a timeout with the phase its tracker last marked', async () => {
+  const { channel, sent, until, close } = wired()
+  const session = new ExecutionSession(channel)
   session.events.timedOut()
   session.tracker.markPhase('target')
   session.events.timedOut()
+  await until(2)
   expect(sent).toStrictEqual([
     { type: 'timeout', phase: undefined },
     { type: 'timeout', phase: 'target' },
   ])
+  close()
 })
 
-test('the session asks for compilation through the worker protocol', () => {
-  const sent: ExecutionMessage[] = []
-  const session = new ExecutionSession((message) => sent.push(message))
+test('the session asks for compilation through the worker protocol', async () => {
+  const { channel, sent, until, close } = wired()
+  const session = new ExecutionSession(channel)
   void session.compiles.request('getBuiltins', [])
+  await until(1)
   expect(sent).toStrictEqual([{ type: 'compile', id: 0, name: 'getBuiltins', args: [] }])
+  close()
+})
+
+test('the session routes each incoming message to its destination', async () => {
+  const { channel, close } = wired()
+  const session = new ExecutionSession(channel)
+  expect(session.receive({ type: 'interrupt' })).toBe(true)
+  expect(session.tracker.reason).toBe('interrupted')
+  expect(session.receive(attempt(5))).toBe(true)
+  expect((await session.commands.take()).id).toBe(5)
+  // 覚えのないcompile返信だけは入口が畳み方を決めるため、見分けた結果を返す。
+  expect(session.receive({ type: 'compiled', id: 9, result: 1 })).toBe(false)
+  close()
 })

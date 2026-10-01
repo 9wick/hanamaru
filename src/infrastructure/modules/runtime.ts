@@ -25,6 +25,9 @@ import type { ModuleRegistry } from './reference.js'
 
 type Namespace = Record<PropertyKey, Value>
 
+/** 組み立てたmodule runtime。差し替えの台帳を抱えるため、1つの実行につき1つだけ作る。 */
+export type ModuleRuntime = ReturnType<typeof createModuleRuntime>
+
 export function createModuleRuntime(
   registry: ModuleRegistry,
   invoke: ModuleInvoke,
