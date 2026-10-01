@@ -3,8 +3,10 @@ import { relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
-import { collectAndRun } from '../../application/collection/collect-and-run.js'
 import type { CliMessage } from '../../application/collection/events.js'
+import { loadConfig } from '../../application/collection/load-config.js'
+import { CollectionSession } from '../../application/collection/session.js'
+import type { ProjectFiles } from '../../application/ports/collection-host.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
 import { property } from '../../foundation/value.js'
@@ -30,26 +32,34 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
   port.on('message', (message) => {
     if (property(message, 'type') === 'interrupt') controller.abort()
   })
-  collectAndRun(workerData, controller.signal, send, {
-    comparison,
-    files: {
-      resolve,
-      relative: (file) => relative(process.cwd(), file),
-      glob: (pattern) => [...globSync(pattern, { cwd: process.cwd() })],
-      readConfig,
-    },
-    modules: {
-      createCompiler: (vite) => createModuleCompiler(runtimeURL, vite),
-      createRuntime: (invoke) => {
-        const runtime = createModuleRuntime(registry, invoke)
-        return { import: (file) => runtime.import(pathToFileURL(file).href), close: () => runtime.close() }
+  const files: ProjectFiles = {
+    resolve,
+    relative: (file) => relative(process.cwd(), file),
+    glob: (pattern) => [...globSync(pattern, { cwd: process.cwd() })],
+    readConfig,
+  }
+  const session = new CollectionSession(
+    {
+      comparison,
+      files,
+      modules: {
+        createCompiler: (vite) => createModuleCompiler(runtimeURL, vite),
+        createRuntime: (invoke) => {
+          const runtime = createModuleRuntime(registry, invoke)
+          return { import: (file) => runtime.import(pathToFileURL(file).href), close: () => runtime.close() }
+        },
+        prepare: (blueprints) => collectModulePreparation(registry, blueprints),
+        describe: (nodes) => describeExecutionPlan(registry, nodes),
       },
-      prepare: (blueprints) => collectModulePreparation(registry, blueprints),
-      describe: (nodes) => describeExecutionPlan(registry, nodes),
+      warn: (message) => {
+        process.stderr.write(message)
+      },
+      openExecution: (run, services) => new WorkerExecutor(executionWorkerURL, run, services),
     },
-    warn: (message) => {
-      process.stderr.write(message)
-    },
-    openExecution: (run, services) => new WorkerExecutor(executionWorkerURL, run, services),
-  }).catch((error) => send({ type: 'error', message: errorStack(error) }))
+    send,
+  )
+  // 設定はcompilerより先に要る。vite設定を知らないままtest runtimeを立てられない。
+  loadConfig(workerData.options, files, send)
+    .then((config) => session.run(workerData, config, controller.signal))
+    .catch((error) => send({ type: 'error', message: errorStack(error) }))
 }

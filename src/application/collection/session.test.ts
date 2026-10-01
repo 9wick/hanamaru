@@ -1,14 +1,16 @@
 import { expect, test } from 'vite-plus/test'
 import { Test } from '../../index.js'
 import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
+import { errorStack } from '../../foundation/errors.js'
 import * as comparison from '../../infrastructure/comparison.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
 import type { CollectionHost } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
-import { collectAndRun } from './collect-and-run.js'
 import type { Config } from './config.js'
 import { recordCollectionEvent } from './current-scope.js'
 import type { CliMessage } from './events.js'
+import { loadConfig } from './load-config.js'
+import { CollectionSession } from './session.js'
 
 function definition(): RuntimeDefinitionHandle {
   const suite = new Test().target((n: number) => n).it('case', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
@@ -94,8 +96,15 @@ function harness(options: Options = {}) {
   return { host, send, flow, closed, warnings }
 }
 
-function collect(host: CollectionHost, send: (event: CliMessage) => void, request: CollectionRequest) {
-  return collectAndRun(request, new AbortController().signal, send, host)
+/** 入口と同じ順序。設定を読んでからsessionへ渡す。 */
+async function collect(host: CollectionHost, send: (event: CliMessage) => void, request: CollectionRequest) {
+  const session = new CollectionSession(host, send)
+  try {
+    const config = await loadConfig(request.options, host.files, send)
+    await session.run(request, config, new AbortController().signal)
+  } catch (error) {
+    send({ type: 'error', message: errorStack(error) })
+  }
 }
 
 test('the config load has its own timeout and the rest uses the configured one', async () => {
