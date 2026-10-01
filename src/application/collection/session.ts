@@ -196,7 +196,7 @@ export class CollectionSession {
     }
   }
 
-  /** 実行場所はrunの進み具合を見ながら進むため、通知の受け取り手を繋いでから開く。 */
+  /** 実行の持ち場はrunの進み具合を見ながら進むため、通知の受け取り手を繋いでから開く。 */
   async #execute({ plan, settings, spec, withSources }: Planned, limits: CollectionLimits, signal: AbortSignal) {
     const listeners: RunListeners = {
       onProgress: (progress) =>
@@ -207,7 +207,7 @@ export class CollectionSession {
       onDeadline: (deadline) => this.#events.deadline(deadline),
     }
     this.#reporter.listen(listeners)
-    await this.#executor.start(spec, {
+    const execution = await this.#executor.start(spec, {
       invoke: (name, args) => this.#modules.invoke(name, args),
       signal,
       onLoading: (file) => this.#events.loading(file, limits.timeout),
@@ -216,9 +216,9 @@ export class CollectionSession {
     let result
     try {
       // 重なりの錠は走査より先に取る。読み込んだテストファイルから始まったrunも重なりとして弾く。
-      result = await runExclusively(() => this.#walker.run(() => plan, settings, signal))
+      result = await runExclusively(() => this.#walker.run(execution, () => plan, settings, signal))
     } finally {
-      await this.#executor.close()
+      await execution.close()
     }
     this.#events.result(withSources(result), limits.reporter)
   }

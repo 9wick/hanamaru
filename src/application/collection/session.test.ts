@@ -10,8 +10,8 @@ import { collectBlueprints } from '../../interfaces/library/run.js'
 import { DirectCalls } from '../execution/services.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
-import type { AttemptReply, ExecutionServices, ExecutionSpec, GroupReply } from '../ports/executor.js'
-import { ExecutionPlace, Executor } from '../ports/executor.js'
+import type { AttemptReply, ExecutionHandle, ExecutionServices, ExecutionSpec, GroupReply } from '../ports/executor.js'
+import { Executor } from '../ports/executor.js'
 import type { CliOptions } from './options.js'
 import type { Config as ProjectConfig } from './config.js'
 import { recordCollectionEvent } from './current-scope.js'
@@ -108,13 +108,9 @@ function harness(options: Options = {}) {
     }
   }
 
-  @Config()
-  class TestExecutor extends Executor {
-    start(_spec: ExecutionSpec, services: ExecutionServices): Promise<void> {
-      services.onLoading('execution worker setup')
-      return Promise.resolve()
-    }
-    attempt(_path: number[], number: number): Promise<AttemptReply> {
+  /** 実行の持ち場は1回のrunに属する。開いた回数と畳んだ回数は収集の流れから見える。 */
+  const testExecution: ExecutionHandle = {
+    attempt(_node, _item, _path, number): Promise<AttemptReply> {
       return Promise.resolve({
         result: {
           attempt: number,
@@ -127,24 +123,22 @@ function harness(options: Options = {}) {
         },
         retryable: false,
       })
-    }
-    async group(_path: number[], body: () => Promise<boolean>): Promise<GroupReply> {
-      await body()
+    },
+    async group(_node, _path, body): Promise<GroupReply> {
+      await body({})
       return { middleware: { status: 'passed', durationMs: 0, failures: [], cleanup: 'complete' }, reason: null }
-    }
+    },
     close(): Promise<void> {
       closed.push('execution')
       return Promise.resolve()
-    }
+    },
   }
 
   @Config()
-  class TestPlace extends ExecutionPlace {
-    readonly executor: Executor
-
-    constructor(executor = inject(Executor)) {
-      super()
-      this.executor = executor
+  class TestExecutor extends Executor {
+    start(_spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
+      services.onLoading('execution worker setup')
+      return Promise.resolve(testExecution)
     }
   }
 
@@ -154,7 +148,6 @@ function harness(options: Options = {}) {
     TestWarnings,
     TestModules,
     TestExecutor,
-    TestPlace,
     ValueComparison,
     DirectCalls,
   ]

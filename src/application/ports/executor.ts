@@ -1,4 +1,6 @@
 import { Config } from '@zeltjs/core'
+import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
+import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
 import type { ModuleInvoke, ModulePreparation, RootReference } from './module-loader.js'
 
@@ -29,28 +31,20 @@ export interface ExecutionServices {
 }
 
 /**
- * attemptとgroupを別の場所で走らせる実行場所。
+ * 1回のrunぶんの実行の持ち場。計画を辿る側は、手元で走らせるか別の場所へ渡すかを知らずに同じ形で頼む。
+ * 節そのものは手元で走らせる側が、pathは別の場所へ渡す側が見る。どちらを使うかは持ち場が決める。
+ */
+export interface ExecutionHandle {
+  attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply>
+  group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply>
+  close(): Promise<void>
+}
+
+/**
+ * 実行の持ち場を開く口。
  * 何を走らせるかも外との繋ぎ方も収集が終わるまで決まらないため、どちらもstartで受け取る。
  */
 @Config({ abstract: true })
 export abstract class Executor {
-  abstract start(spec: ExecutionSpec, services: ExecutionServices): Promise<void>
-  abstract attempt(path: number[], number: number): Promise<AttemptReply>
-  abstract group(path: number[], body: () => Promise<boolean>): Promise<GroupReply>
-  abstract close(): Promise<void>
-}
-
-/**
- * 計画を辿る側から見た実行場所の有無。
- * ライブラリのrunは手元で走らせるため実行場所を持たず、収集workerは実行workerを指す。
- */
-@Config({ abstract: true })
-export abstract class ExecutionPlace {
-  abstract readonly executor: Executor | null
-}
-
-/** 手元で走らせるrunの実行場所。ライブラリのrunがこれを選ぶ。 */
-@Config()
-export class LocalExecution extends ExecutionPlace {
-  readonly executor: Executor | null = null
+  abstract start(spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle>
 }

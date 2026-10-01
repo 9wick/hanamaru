@@ -4,11 +4,11 @@ import * as v from 'valibot'
 import type { RunOptions, RunSettings } from '../../application/execution/options.js'
 import { runExclusively } from '../../application/execution/current-run.js'
 import { createPlan } from '../../application/execution/plan.js'
+import { LocalExecutor } from '../../application/execution/local.js'
 import { RunWalker } from '../../application/execution/runner.js'
 import type { RunListeners } from '../../application/execution/services.js'
 import { DirectCalls, RunReporter } from '../../application/execution/services.js'
 import type { Comparison } from '../../application/ports/comparison.js'
-import { LocalExecution } from '../../application/ports/executor.js'
 import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import type { TestDefinition } from '../../domain/definition/types.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
@@ -42,13 +42,23 @@ export function createRun(comparison: ConfigClass<Comparison>) {
     const received: RunInput = options
     // 錠はscopeを立てるより先に取る。収集の途中で始まったrunも重なりとして弾く。
     return runExclusively(async () => {
-      const scope = await createApp([]).createRuntime({ configs: [comparison, LocalExecution, DirectCalls] })
+      const scope = await createApp([]).createRuntime({ configs: [comparison, LocalExecutor, DirectCalls] })
       try {
         const walker = await scope.get(RunWalker)
         ;(await scope.get(RunReporter)).listen(received)
-        return finalizeRun(
-          await walker.run(() => createPlan(collectBlueprints(input), received), received, received.signal),
-        )
+        const execution = await (await scope.get(LocalExecutor)).start()
+        try {
+          return finalizeRun(
+            await walker.run(
+              execution,
+              () => createPlan(collectBlueprints(input), received),
+              received,
+              received.signal,
+            ),
+          )
+        } finally {
+          await execution.close()
+        }
       } finally {
         await scope.shutdown()
       }

@@ -8,7 +8,7 @@ import { ValueComparison } from '../comparison.js'
 import { ProjectFilesystem } from '../filesystem/project-files.js'
 import { ModuleEntry } from '../modules/entry.js'
 import { CompilerTransport } from '../modules/transport.js'
-import { WorkerExecutionPlace, WorkerExecutor } from './client.js'
+import { WorkerExecutionLauncher } from './client.js'
 import { CollectionChannel } from './collection-channel.js'
 import { CollectionWorker } from './collection-worker.js'
 import { CollectionEnvironment } from './environment.js'
@@ -49,8 +49,7 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
         CollectionChannel,
         CompilerTransport,
         WorkerModuleToolchain,
-        WorkerExecutor,
-        WorkerExecutionPlace,
+        WorkerExecutionLauncher,
         DirectCalls,
       ],
     })

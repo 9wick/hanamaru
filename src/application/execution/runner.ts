@@ -1,6 +1,5 @@
 import { Injectable, inject } from '@zeltjs/core'
 import type { CaseBlueprint, Fields } from '../../domain/definition/runtime.js'
-import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import type { ExecutionNode, GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
 import type {
   MutableAttempt,
@@ -11,12 +10,9 @@ import type {
   MutableTestResult,
 } from '../../domain/result/mutable.js'
 import { required } from '../../foundation/value.js'
-import type { Executor } from '../ports/executor.js'
-import { ExecutionPlace } from '../ports/executor.js'
-import { AttemptExecutor } from './attempt.js'
+import type { ExecutionHandle } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed } from './faults.js'
-import { GroupMiddlewareExecutor } from './middleware.js'
 import { allCases } from './plan.js'
 import type { ProgressStore } from './progress.js'
 import { RunProgress } from './run-progress.js'
@@ -26,32 +22,19 @@ import { RunEvents, RunTracker } from './services.js'
 import type { Progress } from './state.js'
 
 /**
- * 計画を辿って1回のrunを進める。何を辿るか・設定・中断の合図は実行ごとに決まるため引数で受け取る。
- * 実行場所を持つrunはattemptとgroupをそこへ渡し、持たないrunは手元の実行サービスで走らせる。
+ * 計画を辿って1回のrunを進める。
+ * 実行の持ち場・何を辿るか・設定・中断の合図は実行ごとに決まるため、引数で受け取る。
  */
 @Injectable()
 export class RunWalker {
   readonly #results: ProgressStore
   readonly #events: RunEvents
   readonly #tracker: RunTracker
-  readonly #attempts: AttemptExecutor
-  readonly #groups: GroupMiddlewareExecutor
-  readonly #executor: Executor | null
 
-  constructor(
-    results = inject(RunProgress),
-    events = inject(RunEvents),
-    tracker = inject(RunTracker),
-    attempts = inject(AttemptExecutor),
-    groups = inject(GroupMiddlewareExecutor),
-    place = inject(ExecutionPlace),
-  ) {
+  constructor(results = inject(RunProgress), events = inject(RunEvents), tracker = inject(RunTracker)) {
     this.#results = results
     this.#events = events
     this.#tracker = tracker
-    this.#attempts = attempts
-    this.#groups = groups
-    this.#executor = place.executor
   }
 
   /**
@@ -64,7 +47,12 @@ export class RunWalker {
   }
 
   /** 重なりの錠は入口が持つ。この走査が始まる時点で錠は取られている。 */
-  async run(buildPlan: () => Plan, settings: RunSettings, signal?: AbortSignal): Promise<MutableRunResult> {
+  async run(
+    execution: ExecutionHandle,
+    buildPlan: () => Plan,
+    settings: RunSettings,
+    signal?: AbortSignal,
+  ): Promise<MutableRunResult> {
     const { nodes, only } = buildPlan()
     const tracker = this.#tracker
     // 走り出す前に中断されていた実行は、1件も動かさずに打ち切った姿で返す。
@@ -87,7 +75,7 @@ export class RunWalker {
         tests.push(
           tracker.reason
             ? cancelledTree(node, [node.originalIndex ?? index], only)
-            : await this.#node(node, [node.originalIndex ?? index], only),
+            : await this.#node(execution, node, [node.originalIndex ?? index], only),
         )
     } finally {
       signal?.removeEventListener('abort', interrupt)
@@ -102,27 +90,36 @@ export class RunWalker {
     }
   }
 
-  async #node(node: ExecutionNode, path: number[], only: boolean): Promise<MutableNodeResult> {
+  async #node(
+    execution: ExecutionHandle,
+    node: ExecutionNode,
+    path: number[],
+    only: boolean,
+  ): Promise<MutableNodeResult> {
     // testの中身はcaseごとに通知済みなので、節として追加で知らせるのはgroupのmiddlewareだけ。
-    if (node.kind === 'test') return this.#test(node, path, only)
-    const value = await this.#group(node, path, only)
+    if (node.kind === 'test') return this.#test(execution, node, path, only)
+    const value = await this.#group(execution, node, path, only)
     this.#publish({ kind: 'group', path, middleware: value.middleware })
     return value
   }
 
-  async #test(node: SuiteNode, path: number[], only: boolean): Promise<MutableTestResult> {
+  async #test(execution: ExecutionHandle, node: SuiteNode, path: number[], only: boolean): Promise<MutableTestResult> {
     const cases: MutableCaseResult[] = []
     for (const [index, item] of node.bp.cases.entries()) {
-      const value = await this.#case(node, item, index, path, only)
+      const value = await this.#case(execution, node, item, index, path, only)
       cases.push(value)
       this.#publish({ kind: 'case', result: value })
     }
     return { kind: 'test', name: node.bp.name, path, cases }
   }
 
-  async #group(node: GroupNode, path: number[], only: boolean): Promise<MutableGroupResult> {
+  async #group(
+    execution: ExecutionHandle,
+    node: GroupNode,
+    path: number[],
+    only: boolean,
+  ): Promise<MutableGroupResult> {
     const tracker = this.#tracker
-    const events = this.#events
     const children: MutableGroupResult['children'] = []
     const childPath = (child: ExecutionNode, index: number) => [...path, child.originalIndex ?? index]
     const group = (middleware: MutableGroupResult['middleware']): MutableGroupResult => ({
@@ -142,7 +139,7 @@ export class RunWalker {
           origin: required(child.entryOrigin),
           result: tracker.reason
             ? cancelledTree(prepared, childPath(child, index), only)
-            : await this.#node(prepared, childPath(child, index), only),
+            : await this.#node(execution, prepared, childPath(child, index), only),
         })
       }
       if (resultFailed(children.map((entry) => entry.result))) throw new CaseFailed()
@@ -162,28 +159,10 @@ export class RunWalker {
       }
       return group(middleware)
     }
-    const started = now()
-    const execution = this.#executor
-      ? await this.#executor.group(path, async () => {
-          try {
-            await executeChildren({})
-            return false
-          } catch (error) {
-            if (!(error instanceof CaseFailed)) throw error
-            return true
-          }
-        })
-      : await this.#groups.execute(node, executeChildren, (stage) => {
-          if (stage === 'inside' || stage === 'end') events.deadline({ kind: 'end' })
-          else {
-            const timeoutMs = required(node.bp.middleware).timeout ?? defaultMiddlewareTimeoutMs
-            tracker.begin({ kind: 'group', path, stage, started, timeoutMs })
-            events.deadline({ kind: 'start', timeoutMs, progress: tracker.activeProgress('timeout') })
-          }
-        })
-    if (execution.reason) tracker.abort(execution.reason)
+    const reply = await execution.group(node, path, executeChildren)
+    if (reply.reason) tracker.abort(reply.reason)
     // middlewareが落ちた時点で残りの子は動かないため、実行しなかった姿で埋める。
-    if (execution.middleware.status === 'failed')
+    if (reply.middleware.status === 'failed')
       for (let index = children.length; index < node.children.length; index++) {
         const child = node.children[index]
         children.push({
@@ -192,10 +171,11 @@ export class RunWalker {
         })
       }
     tracker.end()
-    return group(execution.middleware)
+    return group(reply.middleware)
   }
 
   async #case(
+    execution: ExecutionHandle,
     node: SuiteNode,
     item: CaseBlueprint,
     index: number,
@@ -215,9 +195,7 @@ export class RunWalker {
       // 走り出す前に、いま中断されたらどう見えるかを知らせる。確定した結果ではないので手元には残さない。
       events.progress(tracker.activeProgress('interrupted'))
       events.deadline({ kind: 'start', timeoutMs: base.config.timeout, progress: tracker.activeProgress('timeout') })
-      const { result, retryable } = this.#executor
-        ? await this.#executor.attempt(base.path, number)
-        : await this.#attempts.execute(node, item, number)
+      const { result, retryable } = await execution.attempt(node, item, base.path, number)
       events.deadline({ kind: 'end' })
       tracker.end()
       attempts.push(result)
