@@ -1,0 +1,88 @@
+import { Config, inject } from '@zeltjs/core'
+import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
+import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
+import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
+import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
+import { required } from '../../foundation/value.js'
+import type { AttemptReply, ExecutionHandle, GroupReply } from '../ports/executor.js'
+import { Executor } from '../ports/executor.js'
+import { AttemptExecutor } from './attempt.js'
+import { now } from './clock.js'
+import { GroupMiddlewareExecutor } from './middleware.js'
+import { CallBinder, RunEvents, RunTracker } from './services.js'
+
+/** 差し替えを行うruntimeを持たない実行の繋ぎ方。対象をそのまま使う。 */
+export class DirectCalls extends CallBinder {
+  bind(call: ResolvedCallAssertion): ResolvedCallAssertion {
+    return call
+  }
+}
+
+/**
+ * 手元のプロセスで走らせる持ち場。節はそのまま実行サービスへ渡せるため、pathは見ない。
+ * 囲みの区間は手元で測るため、期限の知らせもここから出す。
+ */
+class LocalExecution implements ExecutionHandle {
+  readonly #attempts: AttemptExecutor
+  readonly #groups: GroupMiddlewareExecutor
+  readonly #tracker: RunTracker
+  readonly #events: RunEvents
+  readonly #calls = new DirectCalls()
+
+  constructor(attempts: AttemptExecutor, groups: GroupMiddlewareExecutor, tracker: RunTracker, events: RunEvents) {
+    this.#attempts = attempts
+    this.#groups = groups
+    this.#tracker = tracker
+    this.#events = events
+  }
+
+  attempt(node: SuiteNode, item: RuntimeCase, _path: number[], number: number): Promise<AttemptReply> {
+    return this.#attempts.execute(node, item, number, this.#calls, this.#events)
+  }
+
+  group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {
+    const started = now()
+    return this.#groups.execute(
+      node,
+      body,
+      (stage) => {
+        if (stage === 'inside' || stage === 'end') this.#events.deadline({ kind: 'end' })
+        else {
+          const timeoutMs = required(node.bp.middleware).timeout ?? defaultMiddlewareTimeoutMs
+          this.#tracker.begin({ kind: 'group', path, stage, started, timeoutMs })
+          this.#events.deadline({ kind: 'start', timeoutMs, progress: this.#tracker.activeProgress('timeout') })
+        }
+      },
+      this.#events,
+    )
+  }
+
+  /** 手元の実行が開いた資源はない。 */
+  close(): Promise<void> {
+    return Promise.resolve()
+  }
+}
+
+/** 手元のプロセスで走らせる実行。ライブラリのrunがこれを選ぶ。 */
+@Config()
+export class LocalExecutor extends Executor {
+  readonly #attempts: AttemptExecutor
+  readonly #groups: GroupMiddlewareExecutor
+  readonly #tracker: RunTracker
+
+  constructor(
+    attempts = inject(AttemptExecutor),
+    groups = inject(GroupMiddlewareExecutor),
+    tracker = inject(RunTracker),
+  ) {
+    super()
+    this.#attempts = attempts
+    this.#groups = groups
+    this.#tracker = tracker
+  }
+
+  /** 走らせる計画も外との繋ぎも、手元の実行には要らない。読み込んだ節がそのまま対象になる。 */
+  start(events: RunEvents): Promise<ExecutionHandle> {
+    return Promise.resolve(new LocalExecution(this.#attempts, this.#groups, this.#tracker, events))
+  }
+}

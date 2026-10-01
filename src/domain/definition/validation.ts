@@ -1,3 +1,4 @@
+import * as v from 'valibot'
 import type { Value } from '../../foundation/value.js'
 import { arrayValue, functionValue, nonempty, objectValue, property } from '../../foundation/value.js'
 import type { RuntimeCallAssertion } from '../assertion/runtime.js'
@@ -5,9 +6,20 @@ import { checkedCall, validateAssertion } from '../assertion/validation.js'
 import type { ExecutionConfig } from '../execution/config.js'
 import { positive, retryCount } from '../execution/config.js'
 import { methodValue } from './operations.js'
-import type { RuntimeBehavior, RuntimeBlueprint, RuntimeMock } from './runtime.js'
+import type {
+  RuntimeBehavior,
+  RuntimeBlueprint,
+  RuntimeDefinitionHandle,
+  RuntimeMiddleware,
+  RuntimeMock,
+} from './runtime.js'
 import { behaviorTag, middlewareTag } from './tags.js'
 import type { BehaviorBlueprint, SourceLocation } from './types.js'
+
+export function checkedMiddleware(value: object): RuntimeMiddleware {
+  const timeout = v.parse(v.optional(v.number()), property(value, 'timeout'))
+  return { [middlewareTag]: true, kind: 'middleware', run: functionValue(property(value, 'run')), timeout }
+}
 
 export function checkedBehavior(input: Value, completed = true): RuntimeBehavior {
   const value = objectValue(input)
@@ -144,4 +156,10 @@ export function validateBlueprint(bp: RuntimeBlueprint, ancestors = new Set<Runt
     else for (const entry of bp.children) validateBlueprint(entry, ancestors)
   }
   ancestors.delete(bp)
+}
+
+export function validatedBlueprints(definitions: readonly RuntimeDefinitionHandle[]): RuntimeBlueprint[] {
+  const blueprints = definitions.map((definition) => definition.blueprint())
+  blueprints.forEach((blueprint) => validateBlueprint(blueprint))
+  return blueprints
 }

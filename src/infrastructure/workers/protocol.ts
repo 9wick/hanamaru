@@ -1,7 +1,7 @@
 import type { CliOptions } from '../../application/collection/options.js'
 import type { Stage } from '../../application/execution/state.js'
 import type { AttemptReply, Executor, GroupReply } from '../../application/ports/executor.js'
-import type { ModuleInvoke, ModulePreparation, RootReference } from '../../application/ports/module-loader.js'
+import type { ModulePreparation, RootReference } from '../../application/ports/module-loader.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
 import type { Value } from '../../foundation/value.js'
 
@@ -44,11 +44,5 @@ export type ExecutionIncoming =
   | ExecutionCommand
   | { type: 'interrupt' }
   | { type: 'compiled'; id: number; result?: Value; error?: string }
-
-export interface ExecutionOptions extends ExecutionWorkerData {
-  signal?: AbortSignal
-  onLoading: (file: string) => void
-  invoke: ModuleInvoke
-}
 
 export type ExecutionClient = Executor

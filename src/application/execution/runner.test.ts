@@ -10,14 +10,14 @@ import type {
   TestResult,
 } from '../../index.js'
 import { Test, middleware, run } from '../../index.js'
-import type { InternalRunOptions } from './state.js'
+import type { RunInput } from '../../interfaces/library/run.js'
 
 import type { Value } from '../../foundation/value.js'
 
 const add = (a: number, b: number): number => a + b
 
 // filterとsignalは公開RunOptionsにない内部オプション。オブジェクトリテラルを直接渡さずに型を合わせる。
-const internalOptions = (options: InternalRunOptions): RunOptions => options
+const internalOptions = (options: RunInput): RunOptions => options
 
 function testNode(result: RunResult, index = 0): TestResult {
   const node = result.tests[index]

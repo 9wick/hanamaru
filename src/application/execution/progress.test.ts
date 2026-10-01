@@ -1,12 +1,27 @@
+import { createApp } from '@zeltjs/core'
 import { expect, test } from 'vite-plus/test'
 import { Test, middleware } from '../../index.js'
-import * as comparison from '../../infrastructure/comparison.js'
+import { ValueComparison } from '../../infrastructure/comparison.js'
+import { LocalExecutor } from './local.js'
 import { ProgressStore } from './progress.js'
+import type { RunListeners } from './services.js'
+import { ListenerEvents, RunSnapshot } from './services.js'
 
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
 import { createPlan } from './plan.js'
-import { runPlan } from './runner.js'
+import { RunWalker } from './runner.js'
+
+/** 手元で走らせるrunの一式。ライブラリのrunと同じscopeの組み立て。 */
+async function walkerFor(listeners: RunListeners) {
+  const scope = await createApp([]).createRuntime({ configs: [ValueComparison, LocalExecutor] })
+  const events = new ListenerEvents(listeners, await scope.get(RunSnapshot))
+  return {
+    walker: await scope.get(RunWalker),
+    execution: await (await scope.get(LocalExecutor)).start(events),
+    events,
+  }
+}
 
 test('progress transfer grows linearly and reconstructs nested case results', async () => {
   async function measure(count: number) {
@@ -25,25 +40,77 @@ test('progress transfer grows linearly and reconstructs nested case results', as
       [cases],
     )
     const plan = createPlan(collectBlueprints(root))
-    const result = await runPlan(
-      plan,
-      {
-        onProgress(progress) {
-          bytes += JSON.stringify(progress).length
-          store.apply(structuredClone(progress))
-        },
-        onDeadline(deadline) {
-          bytes += JSON.stringify(deadline).length
-        },
+    const { walker, execution, events } = await walkerFor({
+      onProgress(progress) {
+        bytes += JSON.stringify(progress).length
+        store.apply(structuredClone(progress))
       },
-      comparison,
-    )
+      onDeadline(deadline) {
+        bytes += JSON.stringify(deadline).length
+      },
+    })
+    const result = await walker.run(execution, () => plan, {}, events)
     expect(store.result?.tests).toEqual(result.tests)
     return bytes
   }
   const small = await measure(50)
   const large = await measure(100)
   expect(large).toBeLessThan(small * 2.3)
+})
+
+test('the progress stream reconstructs nested groups, skips and retries', async () => {
+  const store = new ProgressStore()
+  let attempts = 0
+  const flaky = new Test()
+    .retry(1)
+    .target(() => ++attempts)
+    .it('flaky', (t) => t.args().expect((e) => [e.result.toBe(2)]))
+  const steady = new Test()
+    .target((n: number) => n)
+    .it('passes', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
+    .skip('skipped', (t) => t.args(2).expect((e) => [e.result.toBe(2)]))
+    .todo('todo')
+  const inner = new Test().group(
+    'inner',
+    middleware(async (_, next) => next()),
+    [flaky],
+  )
+  const root = new Test().group('root', [inner, steady])
+  const { walker, execution, events } = await walkerFor({
+    onProgress: (progress) => store.apply(structuredClone(progress)),
+  })
+  const result = await walker.run(execution, () => createPlan(collectBlueprints(root)), {}, events)
+  expect(result.status).toBe('passed')
+  expect(store.result?.tests).toStrictEqual(result.tests)
+})
+
+test('the progress stream reconstructs the cancelled tree after an interrupt', async () => {
+  const controller = new AbortController()
+  const store = new ProgressStore()
+  const active = new Test()
+    .target(() => {
+      controller.abort()
+      return 1
+    })
+    .it('active', (t) => t.args().expect((e) => [e.result.toBe(1)]))
+  const pending = new Test().target((n: number) => n).it('pending', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
+  const root = new Test().group(
+    'root',
+    middleware(async (_, next) => next()),
+    [active, pending],
+  )
+  const { walker, execution, events } = await walkerFor({
+    onProgress: (progress) => store.apply(structuredClone(progress)),
+  })
+  const result = await walker.run(
+    execution,
+    () => createPlan(collectBlueprints([root, pending])),
+    {},
+    events,
+    controller.signal,
+  )
+  expect(result.reason).toBe('interrupted')
+  expect(store.result?.tests).toStrictEqual(result.tests)
 })
 
 test('progress rejects unknown paths and recomputes failure state after retry recovery', () => {

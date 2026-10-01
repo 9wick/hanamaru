@@ -1,38 +1,41 @@
+import { Config } from '@zeltjs/core'
 import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
-import type { Config } from '../collection/config.js'
+import type { Config as ProjectConfig } from '../collection/config.js'
 import type { CliOptions } from '../collection/options.js'
-import type { Comparison } from './comparison.js'
-import type { Executor } from './executor.js'
-import type { ModuleInvoke, ModulePreparation, RootReference } from './module-loader.js'
-export interface FileDiscovery {
-  resolve(file: string): string
-  glob(pattern: string): string[]
+import type { ModulePreparation } from './module-loader.js'
+
+/** 実行場所を基準にしたファイルの読み取り。探索・設定・表示名のどれも同じ基準に従う。 */
+@Config({ abstract: true })
+export abstract class ProjectFiles {
+  abstract resolve(file: string): string
+  abstract glob(pattern: string): string[]
+  abstract relative(file: string): string
+  abstract readConfig(options: CliOptions, onLoading: (file: string) => void): Promise<ProjectConfig>
 }
-export interface ModuleCompiler {
-  invoke: ModuleInvoke
-  close(): Promise<void>
-}
-export interface CollectionRuntime {
+
+/**
+ * 開いたtest runtime一式。1回の収集ぶんの持ち場で、開いた資源は畳むところまでここが受け持つ。
+ * prepareとdescribeは純粋な変換に見えるが、runtimeが組み立てたnamespaceの出自を知る台帳を見るため、
+ * 資源を開く口と同じ持ち主でなければ噛み合わない。
+ */
+export interface ModuleSession {
   import(file: string): Promise<Value>
-  close(): Promise<void>
-}
-export interface CollectionHost extends FileDiscovery {
-  comparison: Comparison
-  relative(file: string): string
-  warn(message: string): void
-  readConfig(options: CliOptions, onLoading: (file: string) => void): Promise<Config>
-  createCompiler(vite: Config['vite']): Promise<ModuleCompiler>
-  createRuntime(invoke: ModuleInvoke): CollectionRuntime
+  invoke(name: string, args: Value[]): Promise<Value>
   prepare(blueprints: RuntimeBlueprint[]): ModulePreparation[]
   describe(nodes: ExecutionNode[]): Value
-  openExecution(options: {
-    roots: RootReference[]
-    preparation: ModulePreparation[]
-    shape: string
-    invoke: ModuleInvoke
-    signal: AbortSignal
-    onLoading: (file: string) => void
-  }): Promise<Executor>
+  close(): Promise<void>
+}
+
+/** test runtimeを立てる口。vite設定は設定ファイルを読むまで決まらないため、組み立て時ではなくここで受け取る。 */
+@Config({ abstract: true })
+export abstract class ModuleToolchain {
+  abstract open(vite: ProjectConfig['vite']): Promise<ModuleSession>
+}
+
+/** 人へ向けた警告の行き先。結果表示の通り道とは分ける。 */
+@Config({ abstract: true })
+export abstract class Warnings {
+  abstract warn(message: string): void
 }

@@ -1,40 +1,118 @@
+import { Config, inject } from '@zeltjs/core'
 import { Worker } from 'node:worker_threads'
 import * as v from 'valibot'
 import { ProgressStore } from '../../application/execution/progress.js'
-import type { CollectionRequest, ReportResult } from '../../application/ports/collection-runner.js'
+import type { CollectionRequest } from '../../application/ports/collection-runner.js'
+import { CollectionRunner, ResultPresenter } from '../../application/ports/collection-runner.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
+import { CliEnvironment } from './environment.js'
 import { cliMessageSchema } from './schemas.js'
-export async function superviseCollection(
-  workerURL: URL,
-  { options, files }: CollectionRequest,
-  report: ReportResult,
-): Promise<number> {
-  const worker = new Worker(workerURL, { workerData: { options, files } })
-  let loadingTimer: ReturnType<typeof setTimeout> | undefined
-  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
-  let graceTimer: ReturnType<typeof setTimeout> | undefined
-  let grace = 1_000,
-    complete = false,
-    interrupted = false,
-    reporter = options.reporter
-  const progress = new ProgressStore()
-  const done = new Promise<number>((resolve, reject) => {
-    const printResult = (result: MutableRunResult) => report(result, reporter)
-    const finish = (code: number) => {
-      if (complete) return
-      complete = true
-      clearTimeout(loadingTimer)
-      clearTimeout(deadlineTimer)
-      clearTimeout(graceTimer)
-      process.off('SIGINT', interrupt)
-      worker.terminate().then(() => resolve(code), reject)
-    }
-    const interrupt = () => {
-      interrupted = true
-      process.stderr.write('hanamaru: interrupted\n')
-      worker.postMessage({ type: 'interrupt' })
-      if (!graceTimer)
-        graceTimer = setTimeout(() => {
+
+/**
+ * 収集の期限・実行の期限・終了の猶予を測る3本のタイマー。
+ * 猶予はいちばん先に決まった理由で1度だけ始める。あとから別の理由が来ても測り直さない。
+ */
+class ShutdownTimers {
+  #loading: ReturnType<typeof setTimeout> | undefined
+  #deadline: ReturnType<typeof setTimeout> | undefined
+  #grace: ReturnType<typeof setTimeout> | undefined
+
+  restartLoading(timeoutMs: number, onExpire: () => void): void {
+    clearTimeout(this.#loading)
+    this.#loading = setTimeout(onExpire, timeoutMs)
+  }
+
+  clearLoading(): void {
+    clearTimeout(this.#loading)
+    this.#loading = undefined
+  }
+
+  restartDeadline(timeoutMs: number, onExpire: () => void): void {
+    clearTimeout(this.#deadline)
+    this.#deadline = setTimeout(onExpire, timeoutMs)
+  }
+
+  clearDeadline(): void {
+    clearTimeout(this.#deadline)
+    this.#deadline = undefined
+  }
+
+  startGrace(graceMs: number, onExpire: () => void): void {
+    if (this.#grace) return
+    this.#grace = setTimeout(onExpire, graceMs)
+  }
+
+  clearAll(): void {
+    this.clearLoading()
+    this.clearDeadline()
+    clearTimeout(this.#grace)
+    this.#grace = undefined
+  }
+}
+
+/** 監督の進み具合。中断された事実は終了コードを決めるまで残す。 */
+type SupervisorPhase = { kind: 'running' } | { kind: 'interrupted' } | { kind: 'complete' }
+
+/** 中断された実行は、停止の理由にかかわらず130で終わる。 */
+function exitCode(phase: SupervisorPhase, code: number): number {
+  return phase.kind === 'interrupted' ? 130 : code
+}
+
+/** workerが実行に入った時点で確定する終了の作法。 */
+interface ShutdownPolicy {
+  graceMs: number
+  reporter: string | undefined
+}
+
+/**
+ * 収集workerを起こして見張り、終了コードを決める。1回のCLI起動が1回の監督で、
+ * 期限・猶予・中断された事実はその1回の中だけで意味を持つため、runの間だけ手元に置く。
+ */
+@Config()
+export class CollectionSupervisor extends CollectionRunner {
+  readonly #workerURL: URL
+  readonly #progress: ProgressStore
+  readonly #presenter: ResultPresenter
+
+  constructor(
+    environment = inject(CliEnvironment),
+    progress = inject(ProgressStore),
+    presenter = inject(ResultPresenter),
+  ) {
+    super()
+    this.#workerURL = environment.collectionWorkerURL
+    this.#progress = progress
+    this.#presenter = presenter
+  }
+
+  run({ options, files }: CollectionRequest): Promise<number> {
+    const progress = this.#progress
+    const worker = new Worker(this.#workerURL, { workerData: { options, files } })
+    const timers = new ShutdownTimers()
+    let phase: SupervisorPhase = { kind: 'running' }
+    let policy: ShutdownPolicy = { graceMs: 1_000, reporter: options.reporter }
+    return new Promise<number>((resolve, reject) => {
+      const printResult = (result: MutableRunResult) => this.#presenter.present(result, policy.reporter)
+      const finish = (code: number) => {
+        if (phase.kind === 'complete') return
+        phase = { kind: 'complete' }
+        timers.clearAll()
+        process.off('SIGINT', interrupt)
+        worker.terminate().then(() => resolve(code), reject)
+      }
+      // 猶予を使い切ったら、手元の部分結果を出してから降りる。
+      const reportAfterGrace = (code: number) => {
+        timers.startGrace(policy.graceMs, () => {
+          process.stderr.write(`hanamaru: shutdown grace exceeded (${policy.graceMs}ms)\n`)
+          if (progress.result) printResult(progress.result)
+          finish(exitCode(phase, code))
+        })
+      }
+      const interrupt = () => {
+        phase = { kind: 'interrupted' }
+        process.stderr.write('hanamaru: interrupted\n')
+        worker.postMessage({ type: 'interrupt' })
+        timers.startGrace(policy.graceMs, () => {
           if (progress.result)
             printResult({
               ...progress.result,
@@ -42,74 +120,62 @@ export async function superviseCollection(
               reason: 'interrupted',
             })
           finish(130)
-        }, grace)
-    }
-    process.on('SIGINT', interrupt)
-    worker.on('message', (input) => {
-      if (complete) return
-      const parsed = v.safeParse(cliMessageSchema, input)
-      if (!parsed.success) {
-        process.stderr.write(`hanamaru: invalid worker message: ${v.summarize(parsed.issues)}\n`)
-        finish(interrupted ? 130 : 2)
-        return
+        })
       }
-      const message = parsed.output
-      if (message.type === 'loading') {
-        clearTimeout(loadingTimer)
-        loadingTimer = setTimeout(() => {
-          process.stderr.write(`hanamaru: collection timeout: ${message.file} (${message.timeout}ms)\n`)
-          finish(interrupted ? 130 : 2)
-        }, message.timeout)
-      } else if (message.type === 'running') {
-        clearTimeout(loadingTimer)
-        grace = message.shutdownGrace
-        reporter = message.reporter
-      } else if (message.type === 'progress') {
-        progress.apply(message.progress)
-      } else if (message.type === 'deadline') {
-        clearTimeout(deadlineTimer)
-        if (message.kind === 'start')
-          deadlineTimer = setTimeout(() => {
-            progress.apply(message.progress)
-            if (progress.result) {
-              progress.result.status = 'failed'
-              progress.result.reason = 'timeout'
-            }
-            if (!graceTimer)
-              graceTimer = setTimeout(() => {
-                process.stderr.write(`hanamaru: shutdown grace exceeded (${grace}ms)\n`)
-                if (progress.result) printResult(progress.result)
-                finish(interrupted ? 130 : 1)
-              }, grace)
-          }, message.timeoutMs)
-      } else if (message.type === 'timeout') {
-        clearTimeout(deadlineTimer)
-        progress.apply({ kind: 'init', result: message.result })
-        if (!graceTimer)
-          graceTimer = setTimeout(() => {
-            process.stderr.write(`hanamaru: shutdown grace exceeded (${grace}ms)\n`)
-            if (progress.result) printResult(progress.result)
-            finish(interrupted ? 130 : 1)
-          }, grace)
-      } else if (message.type === 'result') {
-        reporter = message.reporter
-        printResult(message.result)
-        finish(interrupted ? 130 : message.result.status === 'passed' ? 0 : 1)
-      } else if (message.type === 'error') {
-        process.stderr.write(`hanamaru: ${message.message}\n`)
-        finish(interrupted ? 130 : 2)
-      }
+      process.on('SIGINT', interrupt)
+      worker.on('message', (input) => {
+        if (phase.kind === 'complete') return
+        const parsed = v.safeParse(cliMessageSchema, input)
+        if (!parsed.success) {
+          process.stderr.write(`hanamaru: invalid worker message: ${v.summarize(parsed.issues)}\n`)
+          finish(exitCode(phase, 2))
+          return
+        }
+        const message = parsed.output
+        if (message.type === 'loading') {
+          timers.restartLoading(message.timeout, () => {
+            process.stderr.write(`hanamaru: collection timeout: ${message.file} (${message.timeout}ms)\n`)
+            finish(exitCode(phase, 2))
+          })
+        } else if (message.type === 'running') {
+          timers.clearLoading()
+          policy = { graceMs: message.shutdownGrace, reporter: message.reporter }
+        } else if (message.type === 'progress') {
+          progress.apply(message.progress)
+        } else if (message.type === 'deadline') {
+          if (message.kind === 'end') timers.clearDeadline()
+          else
+            timers.restartDeadline(message.timeoutMs, () => {
+              progress.apply(message.progress)
+              if (progress.result) {
+                progress.result.status = 'failed'
+                progress.result.reason = 'timeout'
+              }
+              reportAfterGrace(1)
+            })
+        } else if (message.type === 'timeout') {
+          timers.clearDeadline()
+          progress.apply({ kind: 'init', result: message.result })
+          reportAfterGrace(1)
+        } else if (message.type === 'result') {
+          policy = { ...policy, reporter: message.reporter }
+          printResult(message.result)
+          finish(exitCode(phase, message.result.status === 'passed' ? 0 : 1))
+        } else if (message.type === 'error') {
+          process.stderr.write(`hanamaru: ${message.message}\n`)
+          finish(exitCode(phase, 2))
+        }
+      })
+      worker.on('error', (error) => {
+        process.stderr.write(`hanamaru: ${error.stack ?? error}\n`)
+        finish(exitCode(phase, 2))
+      })
+      worker.on('exit', (code) => {
+        if (phase.kind !== 'complete') {
+          process.stderr.write(`hanamaru: worker exited (${code})\n`)
+          finish(exitCode(phase, 2))
+        }
+      })
     })
-    worker.on('error', (error) => {
-      process.stderr.write(`hanamaru: ${error.stack ?? error}\n`)
-      finish(interrupted ? 130 : 2)
-    })
-    worker.on('exit', (code) => {
-      if (!complete) {
-        process.stderr.write(`hanamaru: worker exited (${code})\n`)
-        finish(interrupted ? 130 : 2)
-      }
-    })
-  })
-  return done
+  }
 }

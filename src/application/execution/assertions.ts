@@ -121,10 +121,10 @@ export function evaluate(
   outcome: TargetOutcome,
   rawValue: Value,
   records: Map<object, Map<string, Value[][]>>,
-  failures: Failure[],
-  assertions: AssertionResult[],
   comparison: Comparison,
-) {
+): { failures: Failure[]; assertions: AssertionResult[] } {
+  const failures: Failure[] = [],
+    assertions: AssertionResult[] = []
   let expected: readonly RuntimeValueAssertion[] = []
   if (item.expect) {
     try {
@@ -212,6 +212,7 @@ export function evaluate(
       })
     }
   }
+  return { failures, assertions }
 }
 
 export function faultToFailure<T>(input: T, phase: ExecutionPhase = 'middleware'): Failure {

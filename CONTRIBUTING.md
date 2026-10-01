@@ -158,6 +158,24 @@ OSはLinuxです。他のOSと公開npmレジストリ経由のインストー�
 内部実装からこれらの入口を逆にimportしません。`npm run lint` のESLintルールが、型参照・再export・動的importも含めて検査します。
 公開設定 `Config.vite` のVite型だけは既存API互換性のためapplicationに残し、実行時のVite依存はinfrastructureに置きます。
 
+## サービスの組み立て
+
+サービスは `@zeltjs/core` のDIコンテナが組み立てます。`@Injectable()` を付けたクラスが
+constructorの `inject()` で依存を受け取り、`@Config({ abstract: true })` の抽象クラスが
+applicationからinfrastructureへ求める契約の宛名になります。実装の選択は起動ファイルが
+`createRuntime({ configs })` へ具体クラスを渡して行い、`src/application` だけは宛名を書くために
+`@zeltjs/core` をimportできます（domain・foundationは引き続きValibotのみ）。
+
+scopeは1回のrunにつき1つです。CLIの親プロセスは1回の起動ごとに、収集worker・実行workerはworkerごとに、
+ライブラリの `run()` は呼び出しごとにscopeを立てて畳みます。結果の表示先(`ResultPresenter`)や
+実行の持ち場を開く口(`Executor`)は宛名で、繋ぎ先は各起動ファイルが `configs` で選びます。公開APIの利用者がコンテナに触ることはありません。
+
+runごとに変わる入力（収集の要求・vite設定・mockの準備・実行の計画・通知の受け取り手）はConfigに載せず、
+メソッド引数として渡します。1回ぶんの資源も同じで、Vite serverやmodule runtimeは
+立ち上げ役(`ModuleCompilerLauncher`・`ModuleRuntimeLauncher`・`WorkerExecutionLauncher`)が
+`start` で開いて持ち場(`RunningCompiler`・`RunningRuntime`・`RunningExecution`)を返し、
+開かせた流れが runtime → compiler の順に畳みます。開く前に終わったrunには畳む相手がありません。
+
 型・schema・unitテストは責務の所有者のそばに置きます。共通という理由だけで `shared.ts` や全体の `types/` に集めません。
 公開APIの契約を検証するテストは `src/index.ts` から読み込み、E2Eは引き続き `e2e/` に置きます。
 宣言位置の取得は起動ファイルのディレクトリを基準に実装フレームを除外します。
