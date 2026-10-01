@@ -1,11 +1,12 @@
-import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
+import type { ResolvedCallAssertion, RuntimeCallAssertion } from '../../domain/assertion/runtime.js'
 import { methodValue } from '../../domain/definition/operations.js'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
 import { configWith } from '../../domain/execution/config.js'
 import type { SuiteNode } from '../../domain/execution/model.js'
 import { diagnostic } from '../../domain/result/diagnostic.js'
-import type { MutableAttempt } from '../../domain/result/mutable.js'
+import type { MutableAttempt, Reason } from '../../domain/result/mutable.js'
 import type { AssertionResult, ExecutionPhase, Failure, TargetOutcome } from '../../domain/result/types.js'
+import type { Value } from '../../foundation/value.js'
 import { arrayValue, invoke, objectValue, property, valueOf } from '../../foundation/value.js'
 import type { AttemptReply } from '../ports/executor.js'
 import { callReference, evaluate, failure, faultToFailure } from './assertions.js'
@@ -15,6 +16,84 @@ import { patchMethods, restoreMethods } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
 import type { AttemptServices } from './services.js'
+import { StageTimer } from './services.js'
+
+/** 1回のattemptが積み上げる観測結果。結果の形に変えるのは最後の1か所だけ。 */
+type AttemptRecord = {
+  outcome: TargetOutcome | null
+  readonly failures: Failure[]
+  readonly assertions: AssertionResult[]
+  cleanup: 'complete' | 'incomplete'
+  retryable: boolean
+}
+
+/** 例外をattemptの記録へ翻訳した判定。runを打ち切るかどうかは呼び出し側がtrackerへ渡す。 */
+type AttemptFault = {
+  readonly failures: readonly Failure[]
+  readonly cleanup: 'complete' | 'incomplete'
+  readonly retryable: boolean
+  readonly abort: Reason | null
+}
+
+/** 後処理の失敗は再試行しても直らないため、retryableを落としてrunも打ち切る。 */
+function classifyAttemptError(error: Value, phase: ExecutionPhase): AttemptFault {
+  if (error instanceof CleanupFault)
+    return {
+      failures: error.errors
+        .filter((issue) => !(issue instanceof CaseFailed))
+        .map((issue) => faultToFailure(issue, 'cleanup')),
+      cleanup: error.incomplete ? 'incomplete' : 'complete',
+      retryable: false,
+      abort: 'cleanup-failed',
+    }
+  if (error instanceof CaseFailed) return { failures: [], cleanup: 'complete', retryable: true, abort: null }
+  if (error instanceof MiddlewareFault && error.stage === 'contract')
+    return { failures: [faultToFailure(error, phase)], cleanup: 'complete', retryable: false, abort: null }
+  if (error instanceof MiddlewareFault && error.stage === 'after' && error.kind !== 'timeout')
+    return {
+      failures: [faultToFailure(error, phase)],
+      cleanup: 'incomplete',
+      retryable: false,
+      abort: 'cleanup-failed',
+    }
+  return { failures: [faultToFailure(error, phase)], cleanup: 'complete', retryable: true, abort: null }
+}
+
+/** 検証まで届かなかったcall期待は、結果から消さずに未評価として残す。 */
+function pendingCallAssertions(
+  calls: readonly RuntimeCallAssertion[],
+  evaluated: readonly AssertionResult[],
+): AssertionResult[] {
+  return calls
+    .map((condition, index) => ({ condition, index }))
+    .filter(
+      ({ index }) =>
+        !evaluated.some((entry) => entry.assertion.source === 'expectCalls' && entry.assertion.index === index),
+    )
+    .map(({ condition, index }): AssertionResult => ({
+      assertion: callReference(condition, index),
+      status: 'not-evaluated',
+      reason: 'attempt failed before call verification',
+    }))
+}
+
+function finalizeAttempt(
+  record: AttemptRecord,
+  calls: readonly RuntimeCallAssertion[],
+  number: number,
+  durationMs: number,
+  reason: Reason | null,
+): MutableAttempt {
+  return {
+    attempt: number,
+    status: record.failures.length ? 'failed' : reason === 'interrupted' ? 'cancelled' : 'passed',
+    durationMs,
+    outcome: record.outcome,
+    assertions: [...record.assertions, ...pendingCallAssertions(calls, record.assertions)],
+    failures: record.failures,
+    cleanup: record.cleanup,
+  }
+}
 
 export async function executeAttempt(
   node: SuiteNode,
@@ -24,26 +103,23 @@ export async function executeAttempt(
   bindCall: (call: ResolvedCallAssertion) => ResolvedCallAssertion = (call) => call,
 ): Promise<AttemptReply> {
   const { tracker, events } = services
-  const started = now()
   const config = configWith(node.config, item.config)
-  const failures: Failure[] = [],
-    assertions: AssertionResult[] = []
-  let outcome: TargetOutcome | null = null
-  let activePhase: ExecutionPhase = 'middleware'
-  let timedOut = false
-  let timeoutPhase: ExecutionPhase | null = null
-  let cleanup: 'complete' | 'incomplete' = 'complete'
-  let retryable = true
-  const timer = setTimeout(() => {
-    timedOut = true
-    timeoutPhase = activePhase
-    tracker.markPhase(activePhase)
+  const started = now()
+  const record: AttemptRecord = {
+    outcome: null,
+    failures: [],
+    assertions: [],
+    cleanup: 'complete',
+    retryable: true,
+  }
+  const timer = new StageTimer<ExecutionPhase>(config.timeout, 'middleware', (phase) => {
+    tracker.markPhase(phase)
     tracker.abort('timeout')
     events.timedOut()
-  }, config.timeout)
+  })
   const core = async (ctx: Readonly<Fields>) => {
-    if (timedOut) return
-    activePhase = 'instrumentation'
+    if (timer.expired()) return
+    timer.enter('instrumentation')
     const calls = item.calls.map((condition): ResolvedCallAssertion => {
       const object = condition.object ?? objectValue(invoke(condition.objectFrom, undefined, [ctx]))
       if (condition.objectFrom && property(object, Symbol.toStringTag) === 'Module')
@@ -57,10 +133,10 @@ export async function executeAttempt(
     let failed = false,
       originalError
     try {
-      activePhase = 'args'
+      timer.enter('args')
       const args = item.args.kind === 'value' ? item.args.value : arrayValue(invoke(item.args.build, undefined, [ctx]))
       if (!Array.isArray(args)) throw new TypeError('argsFrom must return an array')
-      activePhase = 'target'
+      timer.enter('target')
       let rawValue
       let outcomeKind: TargetOutcome['kind'] = 'return'
       try {
@@ -75,23 +151,24 @@ export async function executeAttempt(
         outcomeKind = 'throw'
       }
       instruments.stopRecording()
-      outcome = { kind: outcomeKind, value: diagnostic(rawValue) }
-      activePhase = 'expect'
+      const outcome: TargetOutcome = { kind: outcomeKind, value: diagnostic(rawValue) }
+      record.outcome = outcome
+      timer.enter('expect')
       const evaluated = evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, services.comparison)
-      failures.push(...evaluated.failures)
-      assertions.push(...evaluated.assertions)
-      if (failures.length) throw new CaseFailed()
+      record.failures.push(...evaluated.failures)
+      record.assertions.push(...evaluated.assertions)
+      if (record.failures.length) throw new CaseFailed()
     } catch (error) {
       failed = true
       originalError = valueOf(error)
     }
-    activePhase = 'cleanup'
+    timer.enter('cleanup')
     const errors = restoreMethods(instruments.restore)
     if (errors.length) throw new CleanupFault(failed ? [originalError, ...errors] : errors)
     if (failed) throw originalError
   }
   const runFrame = async (index: number, ctx: Fields): Promise<void> => {
-    if (timedOut) return
+    if (timer.expired()) return
     if (index === node.frames.length) return core(Object.freeze(ctx))
     const frame = node.frames[index]
     const walkSteps = async (stepIndex: number, current: Fields): Promise<void> => {
@@ -108,50 +185,28 @@ export async function executeAttempt(
   try {
     await runFrame(0, {})
   } catch (error) {
-    if (error instanceof CleanupFault) {
-      retryable = false
-      cleanup = error.incomplete ? 'incomplete' : 'complete'
-      if (tracker.reason !== 'timeout') tracker.abort('cleanup-failed')
-      for (const issue of error.errors)
-        if (!(issue instanceof CaseFailed)) failures.push(faultToFailure(issue, 'cleanup'))
-    } else if (!(error instanceof CaseFailed)) {
-      if (error instanceof MiddlewareFault && error.stage === 'contract') retryable = false
-      if (error instanceof MiddlewareFault && error.stage === 'after' && error.kind !== 'timeout') {
-        retryable = false
-        cleanup = 'incomplete'
-        if (tracker.reason !== 'timeout') tracker.abort('cleanup-failed')
-      }
-      failures.push(faultToFailure(error, activePhase))
-    }
+    const fault = classifyAttemptError(valueOf(error), timer.stage)
+    record.failures.push(...fault.failures)
+    record.cleanup = fault.cleanup
+    record.retryable = fault.retryable
+    // タイムアウトはrunを打ち切る理由として強く、後処理の失敗で上書きしない。
+    if (fault.abort && tracker.reason !== 'timeout') tracker.abort(fault.abort)
   } finally {
-    clearTimeout(timer)
+    timer.clear()
   }
-  if (timedOut || now() - started > config.timeout) {
+  const overdue = timer.overdue()
+  if (overdue) {
     tracker.abort('timeout')
-    failures.push(
-      failure('timeout', timeoutPhase ?? activePhase, `attempt exceeded ${config.timeout}ms`, {
+    record.failures.push(
+      failure('timeout', overdue.stage, `attempt exceeded ${config.timeout}ms`, {
         timeoutMs: config.timeout,
-        cleanup,
+        cleanup: record.cleanup,
       }),
     )
   }
-  if (failures.some((x) => x.kind === 'timeout')) tracker.abort('timeout')
-  for (const [index, condition] of item.calls.entries()) {
-    if (!assertions.some((entry) => entry.assertion.source === 'expectCalls' && entry.assertion.index === index))
-      assertions.push({
-        assertion: callReference(condition, index),
-        status: 'not-evaluated',
-        reason: 'attempt failed before call verification',
-      })
+  if (record.failures.some((x) => x.kind === 'timeout')) tracker.abort('timeout')
+  return {
+    result: finalizeAttempt(record, item.calls, number, now() - started, tracker.reason),
+    retryable: record.retryable,
   }
-  const result: MutableAttempt = {
-    attempt: number,
-    status: failures.length ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
-    durationMs: now() - started,
-    outcome,
-    assertions,
-    failures,
-    cleanup,
-  }
-  return { result, retryable }
 }
