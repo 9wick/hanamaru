@@ -1,9 +1,10 @@
-import { Config, Injectable, inject } from '@zeltjs/core'
+import { Injectable } from '@zeltjs/core'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
-import { RunEvents, RunSnapshot } from '../execution/services.js'
+import type { RunSnapshot } from '../execution/services.js'
+import { RunEvents } from '../execution/services.js'
 import type { Deadline, Progress } from '../execution/state.js'
-import { CollectionEvents } from './events.js'
+import type { CollectionEvents } from './events.js'
 
 /** どのファイルのどのprojectから来た根か。 */
 export interface TestSource {
@@ -32,14 +33,14 @@ export class RunSources {
 /**
  * 収集workerが実行の通知を受ける手。親へ渡す結果だけは出どころを付けた姿にする。
  * 部分結果ツリーはこのworkerが持つため、打ち切り時の姿もここで組み立てる。
+ * 出どころは計画が組み上がってはじめて引けるため、1回のrunごとに組み立てる。
  */
-@Config()
 export class CollectionRunEvents extends RunEvents {
   readonly #events: CollectionEvents
   readonly #sources: RunSources
   readonly #snapshot: RunSnapshot
 
-  constructor(events = inject(CollectionEvents), sources = inject(RunSources), snapshot = inject(RunSnapshot)) {
+  constructor(events: CollectionEvents, sources: RunSources, snapshot: RunSnapshot) {
     super()
     this.#events = events
     this.#sources = sources

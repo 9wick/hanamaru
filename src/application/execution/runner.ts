@@ -20,19 +20,24 @@ import type { RunSettings } from './options.js'
 import { RunEvents, RunTracker } from './services.js'
 import type { Progress } from './state.js'
 
+/** 1回のrunを辿る間ずっと同じ相手。実行の持ち場・通知の受け取り手・onlyの有無は走り出す前に決まる。 */
+interface Walk {
+  execution: ExecutionHandle
+  events: RunEvents
+  only: boolean
+}
+
 /**
  * 計画を辿って1回のrunを進める。
- * 実行の持ち場・何を辿るか・設定・中断の合図は実行ごとに決まるため、引数で受け取る。
+ * 実行の持ち場・何を辿るか・設定・通知の受け取り手・中断の合図は実行ごとに決まるため、引数で受け取る。
  */
 @Injectable()
 export class RunWalker {
   readonly #results: ProgressStore
-  readonly #events: RunEvents
   readonly #tracker: RunTracker
 
-  constructor(results = inject(ProgressStore), events = inject(RunEvents), tracker = inject(RunTracker)) {
+  constructor(results = inject(ProgressStore), tracker = inject(RunTracker)) {
     this.#results = results
-    this.#events = events
     this.#tracker = tracker
   }
 
@@ -40,9 +45,9 @@ export class RunWalker {
    * 確定した結果は、手元の部分結果ツリーと外向きの通知の両方に同じprogressで渡す。
    * 打ち切り時の結果は受け取り手がprogressから組み立てた木と一致していなければならないため、片方だけを更新しない。
    */
-  #publish(progress: Progress): void {
+  #publish(walk: Walk, progress: Progress): void {
     this.#results.apply(progress)
-    this.#events.progress(progress)
+    walk.events.progress(progress)
   }
 
   /** 重なりの錠は入口が持つ。この走査が始まる時点で錠は取られている。 */
@@ -50,14 +55,16 @@ export class RunWalker {
     execution: ExecutionHandle,
     buildPlan: () => Plan,
     settings: RunSettings,
+    events: RunEvents,
     signal?: AbortSignal,
   ): Promise<MutableRunResult> {
     const { nodes, only } = buildPlan()
+    const walk: Walk = { execution, events, only }
     const tracker = this.#tracker
     // 走り出す前に中断されていた実行は、1件も動かさずに打ち切った姿で返す。
     if (signal?.aborted) tracker.interrupt()
     // 実行前の結果は、全てを実行しなかった姿。ここから完了したものだけを差し替えていく。
-    this.#publish({
+    this.#publish(walk, {
       kind: 'init',
       result: {
         version: 1,
@@ -74,7 +81,7 @@ export class RunWalker {
         tests.push(
           tracker.reason
             ? cancelledTree(node, [node.originalIndex ?? index], only)
-            : await this.#node(execution, node, [node.originalIndex ?? index], only),
+            : await this.#node(walk, node, [node.originalIndex ?? index]),
         )
     } finally {
       signal?.removeEventListener('abort', interrupt)
@@ -89,35 +96,26 @@ export class RunWalker {
     }
   }
 
-  async #node(
-    execution: ExecutionHandle,
-    node: ExecutionNode,
-    path: number[],
-    only: boolean,
-  ): Promise<MutableNodeResult> {
+  async #node(walk: Walk, node: ExecutionNode, path: number[]): Promise<MutableNodeResult> {
     // testの中身はcaseごとに通知済みなので、節として追加で知らせるのはgroupのmiddlewareだけ。
-    if (node.kind === 'test') return this.#test(execution, node, path, only)
-    const value = await this.#group(execution, node, path, only)
-    this.#publish({ kind: 'group', path, middleware: value.middleware })
+    if (node.kind === 'test') return this.#test(walk, node, path)
+    const value = await this.#group(walk, node, path)
+    this.#publish(walk, { kind: 'group', path, middleware: value.middleware })
     return value
   }
 
-  async #test(execution: ExecutionHandle, node: SuiteNode, path: number[], only: boolean): Promise<MutableTestResult> {
+  async #test(walk: Walk, node: SuiteNode, path: number[]): Promise<MutableTestResult> {
     const cases: MutableCaseResult[] = []
     for (const [index, item] of node.bp.cases.entries()) {
-      const value = await this.#case(execution, node, item, index, path, only)
+      const value = await this.#case(walk, node, item, index, path)
       cases.push(value)
-      this.#publish({ kind: 'case', result: value })
+      this.#publish(walk, { kind: 'case', result: value })
     }
     return { kind: 'test', name: node.bp.name, path, cases }
   }
 
-  async #group(
-    execution: ExecutionHandle,
-    node: GroupNode,
-    path: number[],
-    only: boolean,
-  ): Promise<MutableGroupResult> {
+  async #group(walk: Walk, node: GroupNode, path: number[]): Promise<MutableGroupResult> {
+    const { execution, only } = walk
     const tracker = this.#tracker
     const children: MutableGroupResult['children'] = []
     const childPath = (child: ExecutionNode, index: number) => [...path, child.originalIndex ?? index]
@@ -138,7 +136,7 @@ export class RunWalker {
           origin: required(child.entryOrigin),
           result: tracker.reason
             ? cancelledTree(prepared, childPath(child, index), only)
-            : await this.#node(execution, prepared, childPath(child, index), only),
+            : await this.#node(walk, prepared, childPath(child, index)),
         })
       }
       if (resultFailed(children.map((entry) => entry.result))) throw new CaseFailed()
@@ -174,15 +172,14 @@ export class RunWalker {
   }
 
   async #case(
-    execution: ExecutionHandle,
+    walk: Walk,
     node: SuiteNode,
     item: CaseBlueprint,
     index: number,
     path: number[],
-    only: boolean,
   ): Promise<MutableCaseResult> {
+    const { execution, events, only } = walk
     const tracker = this.#tracker
-    const events = this.#events
     const base = caseBase(node.config, item, index, path)
     const mode = executableMode(item, only)
     // todoを先に外すことで、以降のitemが実行に必要な定義を備えたcaseだと型でも決まる。

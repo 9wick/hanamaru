@@ -37,12 +37,11 @@ export class CompileRequests extends ModuleTransport {
  * 実行workerが外へ出せる通知。進捗の組み立てと結果ツリーはhost側が持つため、
  * workerが知らせるのはtimeoutと、そのとき見ていたphaseだけになる。
  */
-@Config()
 export class ChannelRunEvents extends RunEvents {
   readonly #channel: ExecutionChannel
   readonly #tracker: RunTracker
 
-  constructor(channel = inject(ExecutionChannel), tracker = inject(RunTracker)) {
+  constructor(channel: ExecutionChannel, tracker: RunTracker) {
     super()
     this.#channel = channel
     this.#tracker = tracker

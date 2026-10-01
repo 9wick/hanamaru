@@ -2,7 +2,8 @@ import { Config, inject } from '@zeltjs/core'
 import { Worker } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CaseFailed } from '../../application/execution/faults.js'
-import { RunEvents, RunTracker } from '../../application/execution/services.js'
+import type { RunEvents } from '../../application/execution/services.js'
+import { RunTracker } from '../../application/execution/services.js'
 import type {
   AttemptReply,
   ExecutionHandle,
@@ -167,28 +168,30 @@ class RunningExecution implements ExecutionHandle {
 
 /**
  * 実行workerを立ち上げて持ち場を開く。
- * 走らせる計画も外との繋ぎも収集が終わるまで決まらないため、workerはstartで初めて起動する。
+ * 通知の受け取り手も走らせる計画も外との繋ぎも収集が終わるまで決まらないため、workerはstartで初めて起動する。
  */
 @Config()
 export class WorkerExecutionLauncher extends Executor {
   readonly #workerURL: URL
   readonly #tracker: RunTracker
-  readonly #events: RunEvents
 
-  constructor(environment = inject(CollectionEnvironment), tracker = inject(RunTracker), events = inject(RunEvents)) {
+  constructor(environment = inject(CollectionEnvironment), tracker = inject(RunTracker)) {
     super()
     this.#workerURL = environment.executionWorkerURL
     this.#tracker = tracker
-    this.#events = events
   }
 
   /** 立ち上がりで落ちたworkerは残しておけない。畳んでから失敗を返す。 */
-  async start({ roots, preparation, shape }: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
+  async start(
+    events: RunEvents,
+    { roots, preparation, shape }: ExecutionSpec,
+    services: ExecutionServices,
+  ): Promise<ExecutionHandle> {
     services.onLoading('execution worker setup')
     const worker = new Worker(this.#workerURL, {
       workerData: { role: 'execution', roots, preparation, shape },
     })
-    const execution = new RunningExecution(worker, services, this.#tracker, this.#events)
+    const execution = new RunningExecution(worker, services, this.#tracker, events)
     try {
       await execution.opened()
     } catch (error) {

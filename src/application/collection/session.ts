@@ -8,6 +8,7 @@ import type { RunSettings } from '../execution/options.js'
 import { runExclusively } from '../execution/current-run.js'
 import { createPlan } from '../execution/plan.js'
 import { RunWalker } from '../execution/runner.js'
+import { RunSnapshot } from '../execution/services.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { ExecutionSpec } from '../ports/executor.js'
@@ -19,7 +20,7 @@ import type { Reporter } from './events.js'
 import { CollectionEvents } from './events.js'
 import type { CliOptions } from './options.js'
 import type { TestSource } from './run-events.js'
-import { RunSources } from './run-events.js'
+import { CollectionRunEvents, RunSources } from './run-events.js'
 import { CollectionLog } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
@@ -73,6 +74,7 @@ export class CollectionSession {
   readonly #executor: Executor
   readonly #walker: RunWalker
   readonly #sources: RunSources
+  readonly #snapshot: RunSnapshot
 
   constructor(
     files = inject(ProjectFiles),
@@ -82,6 +84,7 @@ export class CollectionSession {
     executor = inject(Executor),
     walker = inject(RunWalker),
     sources = inject(RunSources),
+    snapshot = inject(RunSnapshot),
   ) {
     this.#files = files
     this.#modules = modules
@@ -90,6 +93,7 @@ export class CollectionSession {
     this.#executor = executor
     this.#walker = walker
     this.#sources = sources
+    this.#snapshot = snapshot
   }
 
   async run(request: CollectionRequest, signal: AbortSignal): Promise<void> {
@@ -189,7 +193,9 @@ export class CollectionSession {
   }
 
   async #execute({ plan, settings, spec }: Planned, limits: CollectionLimits, signal: AbortSignal) {
-    const execution = await this.#executor.start(spec, {
+    // 1回のrunの通知は収集のprotocolへ出す。出どころを付けられるのは計画が組み上がったこの時点から。
+    const events = new CollectionRunEvents(this.#events, this.#sources, this.#snapshot)
+    const execution = await this.#executor.start(events, spec, {
       invoke: (name, args) => this.#modules.invoke(name, args),
       signal,
       onLoading: (file) => this.#events.loading(file, limits.timeout),
@@ -198,7 +204,7 @@ export class CollectionSession {
     let result
     try {
       // 重なりの錠は走査より先に取る。読み込んだテストファイルから始まったrunも重なりとして弾く。
-      result = await runExclusively(() => this.#walker.run(execution, () => plan, settings, signal))
+      result = await runExclusively(() => this.#walker.run(execution, () => plan, settings, events, signal))
     } finally {
       await execution.close()
     }

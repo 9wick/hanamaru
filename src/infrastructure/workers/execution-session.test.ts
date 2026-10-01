@@ -4,6 +4,7 @@ import * as v from 'valibot'
 import { expect, test } from 'vite-plus/test'
 import { RunTracker } from '../../application/execution/services.js'
 import { ExecutionEnvironment } from './environment.js'
+import { ExecutionChannel } from './execution-channel.js'
 import { ChannelRunEvents, CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
 import type { ExecutionCommand } from './protocol.js'
 import { executionMessageSchema } from './schemas.js'
@@ -29,7 +30,7 @@ function wired() {
     override readonly port = port1
   }
   return {
-    scope: createApp([]).createRuntime({ configs: [TestEnvironment, ChannelRunEvents] }),
+    scope: createApp([]).createRuntime({ configs: [TestEnvironment] }),
     sent,
     until: (count: number) =>
       new Promise<void>((resolve) => {
@@ -102,7 +103,7 @@ test('a command that arrives after the taker hands it over directly', async () =
 test('the worker reports a timeout with the phase its tracker last marked', async () => {
   const { scope, sent, until, close } = wired()
   const open = await scope
-  const events = await open.get(ChannelRunEvents)
+  const events = new ChannelRunEvents(await open.get(ExecutionChannel), await open.get(RunTracker))
   events.timedOut()
   ;(await open.get(RunTracker)).markPhase('target')
   events.timedOut()

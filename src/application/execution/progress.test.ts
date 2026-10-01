@@ -5,7 +5,7 @@ import { ValueComparison } from '../../infrastructure/comparison.js'
 import { LocalExecutor } from './local.js'
 import { ProgressStore } from './progress.js'
 import type { RunListeners } from './services.js'
-import { DirectCalls, listenerEvents } from './services.js'
+import { ListenerEvents, RunSnapshot } from './services.js'
 
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
@@ -14,10 +14,13 @@ import { RunWalker } from './runner.js'
 
 /** 手元で走らせるrunの一式。ライブラリのrunと同じscopeの組み立て。 */
 async function walkerFor(listeners: RunListeners) {
-  const scope = await createApp([]).createRuntime({
-    configs: [ValueComparison, LocalExecutor, DirectCalls, listenerEvents(listeners)],
-  })
-  return { walker: await scope.get(RunWalker), execution: await (await scope.get(LocalExecutor)).start() }
+  const scope = await createApp([]).createRuntime({ configs: [ValueComparison, LocalExecutor] })
+  const events = new ListenerEvents(listeners, await scope.get(RunSnapshot))
+  return {
+    walker: await scope.get(RunWalker),
+    execution: await (await scope.get(LocalExecutor)).start(events),
+    events,
+  }
 }
 
 test('progress transfer grows linearly and reconstructs nested case results', async () => {
@@ -37,7 +40,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
       [cases],
     )
     const plan = createPlan(collectBlueprints(root))
-    const { walker, execution } = await walkerFor({
+    const { walker, execution, events } = await walkerFor({
       onProgress(progress) {
         bytes += JSON.stringify(progress).length
         store.apply(structuredClone(progress))
@@ -46,7 +49,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
         bytes += JSON.stringify(deadline).length
       },
     })
-    const result = await walker.run(execution, () => plan, {})
+    const result = await walker.run(execution, () => plan, {}, events)
     expect(store.result?.tests).toEqual(result.tests)
     return bytes
   }
@@ -73,8 +76,10 @@ test('the progress stream reconstructs nested groups, skips and retries', async 
     [flaky],
   )
   const root = new Test().group('root', [inner, steady])
-  const { walker, execution } = await walkerFor({ onProgress: (progress) => store.apply(structuredClone(progress)) })
-  const result = await walker.run(execution, () => createPlan(collectBlueprints(root)), {})
+  const { walker, execution, events } = await walkerFor({
+    onProgress: (progress) => store.apply(structuredClone(progress)),
+  })
+  const result = await walker.run(execution, () => createPlan(collectBlueprints(root)), {}, events)
   expect(result.status).toBe('passed')
   expect(store.result?.tests).toStrictEqual(result.tests)
 })
@@ -94,11 +99,14 @@ test('the progress stream reconstructs the cancelled tree after an interrupt', a
     middleware(async (_, next) => next()),
     [active, pending],
   )
-  const { walker, execution } = await walkerFor({ onProgress: (progress) => store.apply(structuredClone(progress)) })
+  const { walker, execution, events } = await walkerFor({
+    onProgress: (progress) => store.apply(structuredClone(progress)),
+  })
   const result = await walker.run(
     execution,
     () => createPlan(collectBlueprints([root, pending])),
     {},
+    events,
     controller.signal,
   )
   expect(result.reason).toBe('interrupted')

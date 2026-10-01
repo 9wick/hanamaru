@@ -1,5 +1,4 @@
-import type { ConfigClass } from '@zeltjs/core'
-import { Config, Injectable, inject } from '@zeltjs/core'
+import { Injectable, inject } from '@zeltjs/core'
 import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
 import type { MutableRunResult, Reason } from '../../domain/result/mutable.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
@@ -91,10 +90,9 @@ export type RunListeners = {
 }
 
 /**
- * 実行の外側へ出す通知の宛名。誰が受け取るかは実行の形ごとに違うため、
- * 繋ぎ先はscopeを立てる入口が選ぶ。
+ * 実行の外側へ出す通知の受け取り手。誰が受け取るかは1回のrunごとに決まるため、
+ * 実行を始める側が値として組み立てて渡す。
  */
-@Config({ abstract: true })
 export abstract class RunEvents {
   abstract progress(progress: Progress): void
   abstract deadline(deadline: Deadline): void
@@ -166,46 +164,33 @@ export class RunSnapshot {
   }
 }
 
-/**
- * 呼び出しごとに渡された受け取り手を、1回のrunのscopeへ載せる形にする。
- * 受け取り手はrunを始める入口の引数で決まるため、scopeを立てる場所で宛名に結び付ける。
- */
-export function listenerEvents(listeners: RunListeners): ConfigClass<RunEvents> {
-  @Config()
-  class ListenerEvents extends RunEvents {
-    readonly #snapshot: RunSnapshot
+/** 呼び出しごとに渡された受け取り手へ流す通知。ライブラリの入口が1回ぶんを組み立てる。 */
+export class ListenerEvents extends RunEvents {
+  readonly #listeners: RunListeners
+  readonly #snapshot: RunSnapshot
 
-    constructor(snapshot = inject(RunSnapshot)) {
-      super()
-      this.#snapshot = snapshot
-    }
-
-    progress(progress: Progress): void {
-      listeners.onProgress?.(progress)
-    }
-    deadline(deadline: Deadline): void {
-      listeners.onDeadline?.(deadline)
-    }
-    timedOut(): void {
-      listeners.onTimeout?.(this.#snapshot.capture('timeout'))
-    }
+  constructor(listeners: RunListeners, snapshot: RunSnapshot) {
+    super()
+    this.#listeners = listeners
+    this.#snapshot = snapshot
   }
-  return ListenerEvents
+
+  progress(progress: Progress): void {
+    this.#listeners.onProgress?.(progress)
+  }
+  deadline(deadline: Deadline): void {
+    this.#listeners.onDeadline?.(deadline)
+  }
+  timedOut(): void {
+    this.#listeners.onTimeout?.(this.#snapshot.capture('timeout'))
+  }
 }
 
 /**
  * call期待の対象を、module runtimeが差し替えた関数へ繋ぎ直す手。
  * 差し替えを行うruntimeを持つ実行workerだけが繋ぎ直し、host側は対象をそのまま使う。
+ * 繋ぎ替える相手は1回のrunで開いたruntimeに属するため、実行の持ち場が値として受け取る。
  */
-@Config({ abstract: true })
 export abstract class CallBinder {
   abstract bind(call: ResolvedCallAssertion): ResolvedCallAssertion
-}
-
-/** 差し替えを行うruntimeを持たない実行の繋ぎ方。対象をそのまま使う。 */
-@Config()
-export class DirectCalls extends CallBinder {
-  bind(call: ResolvedCallAssertion): ResolvedCallAssertion {
-    return call
-  }
 }

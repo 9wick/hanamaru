@@ -201,24 +201,25 @@ function groupMiddlewareOutcome(
   return { middleware: { status: 'failed', durationMs, failures, cleanup }, abort }
 }
 
-/** group middlewareで子を囲む。囲む相手と、区間の変わり目を見る相手は呼び出しごとに決まるため引数で受け取る。 */
+/**
+ * group middlewareで子を囲む。
+ * 囲む相手・区間の変わり目を見る相手・通知の受け取り手は呼び出しごとに決まるため引数で受け取る。
+ */
 @Injectable()
 export class GroupMiddlewareExecutor {
   readonly #tracker: RunTracker
-  readonly #events: RunEvents
 
-  constructor(tracker = inject(RunTracker), events = inject(RunEvents)) {
+  constructor(tracker = inject(RunTracker)) {
     this.#tracker = tracker
-    this.#events = events
   }
 
   async execute(
     node: GroupNode,
     body: (fields: Fields) => Promise<void>,
     onStage: (stage: Stage, timeoutMs: number) => void,
+    events: RunEvents,
   ): Promise<GroupReply> {
     const tracker = this.#tracker
-    const events = this.#events
     const started = now()
     try {
       await withMiddleware(

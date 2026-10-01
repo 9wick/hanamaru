@@ -7,9 +7,9 @@ import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
 import { ValueComparison } from '../../infrastructure/comparison.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
-import { DirectCalls } from '../execution/services.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
+import type { RunEvents } from '../execution/services.js'
 import type { AttemptReply, ExecutionHandle, ExecutionServices, ExecutionSpec, GroupReply } from '../ports/executor.js'
 import { Executor } from '../ports/executor.js'
 import type { CliOptions } from './options.js'
@@ -17,7 +17,6 @@ import type { Config as ProjectConfig } from './config.js'
 import { recordCollectionEvent } from './current-scope.js'
 import type { CliMessage } from './events.js'
 import { CollectionSink } from './events.js'
-import { CollectionRunEvents } from './run-events.js'
 import { CollectionSession } from './session.js'
 
 function definition(): RuntimeDefinitionHandle {
@@ -137,22 +136,13 @@ function harness(options: Options = {}) {
 
   @Config()
   class TestExecutor extends Executor {
-    start(_spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
+    start(_events: RunEvents, _spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
       services.onLoading('execution worker setup')
       return Promise.resolve(testExecution)
     }
   }
 
-  const configs: ConfigClass<object>[] = [
-    TestSink,
-    TestFiles,
-    TestWarnings,
-    TestModules,
-    TestExecutor,
-    ValueComparison,
-    DirectCalls,
-    CollectionRunEvents,
-  ]
+  const configs: ConfigClass<object>[] = [TestSink, TestFiles, TestWarnings, TestModules, TestExecutor, ValueComparison]
   // 進捗と期限の通知は量が多く、収集の流れとは別に検証している。
   const flow = () => messages.filter((message) => message !== 'progress' && message !== 'deadline')
   return { configs, flow, closed, warnings }

@@ -1,14 +1,16 @@
 import { Injectable, inject } from '@zeltjs/core'
 import { AttemptExecutor } from '../../application/execution/attempt.js'
 import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
+import type { CallBinder, RunEvents } from '../../application/execution/services.js'
 import { RunTracker } from '../../application/execution/services.js'
 import type { Fields } from '../../domain/definition/runtime.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
 import { required } from '../../foundation/value.js'
 import { ModuleRuntime } from '../modules/runtime.js'
-import { CommandQueue } from './execution-session.js'
+import { CommandQueue, ChannelRunEvents } from './execution-session.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand } from './protocol.js'
+import { RuntimeCalls } from './runtime-calls.js'
 
 /** 囲んでいる最中のgroup。開いた順に積み、閉じるまで子のframeとfieldsに効く。 */
 interface ActiveGroup {
@@ -41,6 +43,8 @@ export class ExecutionServer {
   readonly #groupMiddleware: GroupMiddlewareExecutor
   readonly #runtime: ModuleRuntime
   readonly #channel: ExecutionChannel
+  readonly #events: RunEvents
+  readonly #calls: CallBinder
 
   constructor(
     commands = inject(CommandQueue),
@@ -56,6 +60,8 @@ export class ExecutionServer {
     this.#groupMiddleware = groupMiddleware
     this.#runtime = runtime
     this.#channel = channel
+    this.#events = new ChannelRunEvents(channel, tracker)
+    this.#calls = new RuntimeCalls(runtime)
   }
 
   /** 親が口を閉じるまで戻らない。 */
@@ -90,7 +96,13 @@ export class ExecutionServer {
         )
           throw new TypeError('invalid attempt job')
         this.#tracker.markPhase('middleware')
-        const result = await this.#attempts.execute(node, this.#runtime.bindCase(item), command.number)
+        const result = await this.#attempts.execute(
+          node,
+          this.#runtime.bindCase(item),
+          command.number,
+          this.#calls,
+          this.#events,
+        )
         this.#tracker.end()
         this.#channel.reply(command.id, { ...result, reason: this.#tracker.reason })
       } else if (command.type === 'group-open') {
@@ -107,6 +119,7 @@ export class ExecutionServer {
             if (closeState.command.failed) failChildren()
           },
           (stage, timeoutMs) => this.#channel.groupStage(command.path, stage, timeoutMs),
+          this.#events,
         )
         this.#channel.reply(closeState.command ? closeState.command.id : command.id, { ...result, entered: false })
       } else throw new TypeError('unknown execution command')

@@ -96,29 +96,28 @@ function finalizeAttempt(
   }
 }
 
-/** 1回のattemptを走らせる。どの節のどのcaseを何回目に走らせるかは、実行ごとの指定として引数で受け取る。 */
+/**
+ * 1回のattemptを走らせる。どの節のどのcaseを何回目に走らせるかは、実行ごとの指定として引数で受け取る。
+ * call期待の繋ぎ替えと通知の受け取り手は1回のrunに属するため、これも引数で受け取る。
+ */
 @Injectable()
 export class AttemptExecutor {
   readonly #comparison: Comparison
   readonly #tracker: RunTracker
-  readonly #events: RunEvents
-  readonly #calls: CallBinder
 
-  constructor(
-    comparison = inject(Comparison),
-    tracker = inject(RunTracker),
-    events = inject(RunEvents),
-    calls = inject(CallBinder),
-  ) {
+  constructor(comparison = inject(Comparison), tracker = inject(RunTracker)) {
     this.#comparison = comparison
     this.#tracker = tracker
-    this.#events = events
-    this.#calls = calls
   }
 
-  async execute(node: SuiteNode, item: RuntimeCase, number: number): Promise<AttemptReply> {
+  async execute(
+    node: SuiteNode,
+    item: RuntimeCase,
+    number: number,
+    calls: CallBinder,
+    events: RunEvents,
+  ): Promise<AttemptReply> {
     const tracker = this.#tracker
-    const events = this.#events
     const config = configWith(node.config, item.config)
     const started = now()
     const record: AttemptRecord = {
@@ -136,16 +135,16 @@ export class AttemptExecutor {
     const core = async (ctx: Readonly<Fields>) => {
       if (timer.expired()) return
       timer.enter('instrumentation')
-      const calls = item.calls.map((condition): ResolvedCallAssertion => {
+      const resolvedCalls = item.calls.map((condition): ResolvedCallAssertion => {
         const object = condition.object ?? objectValue(invoke(condition.objectFrom, undefined, [ctx]))
         if (condition.objectFrom && property(object, Symbol.toStringTag) === 'Module')
           throw new TypeError('call.from requires a fixture object; use call(namespace, key) for modules')
         const check = condition.check
         const resolved =
           'argsFrom' in check ? { ...check, args: arrayValue(invoke(check.argsFrom, undefined, [ctx])) } : check
-        return this.#calls.bind({ ...condition, object, check: resolved })
+        return calls.bind({ ...condition, object, check: resolved })
       })
-      const instruments = new MethodPatch(overlayMocks(node.mocks, item.mocks), calls, node.bp.target)
+      const instruments = new MethodPatch(overlayMocks(node.mocks, item.mocks), resolvedCalls, node.bp.target)
       let failed = false,
         originalError
       try {
@@ -171,7 +170,14 @@ export class AttemptExecutor {
         const outcome: TargetOutcome = { kind: outcomeKind, value: diagnostic(rawValue) }
         record.outcome = outcome
         timer.enter('expect')
-        const evaluated = evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, this.#comparison)
+        const evaluated = evaluate(
+          { ...item, calls: resolvedCalls },
+          ctx,
+          outcome,
+          rawValue,
+          instruments.records,
+          this.#comparison,
+        )
         record.failures.push(...evaluated.failures)
         record.assertions.push(...evaluated.assertions)
         if (record.failures.length) throw new CaseFailed()
