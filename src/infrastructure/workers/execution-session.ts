@@ -6,16 +6,17 @@ import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand, ExecutionIncoming } from './protocol.js'
 
 /**
- * compileを頼んだhostへの返信待ち。発番と突き合わせを1か所に閉じ込める。
+ * compileを親のportへ頼む取り寄せ口。発番と突き合わせを1か所に閉じ込める。
  * module runtimeから見ると、収集workerが自分で立てるcompilerと同じ形の取り寄せ口になる。
  */
-@Injectable()
-export class CompileRequests {
+@Config()
+export class CompileRequests extends ModuleTransport {
   readonly #waiting = new Map<number, { resolve: (value: Value) => void; reject: (error: Value) => void }>()
   readonly #channel: ExecutionChannel
   #nextId = 0
 
   constructor(channel = inject(ExecutionChannel)) {
+    super()
     this.#channel = channel
   }
 
@@ -35,21 +36,6 @@ export class CompileRequests {
     if (reply.error) entry.reject(new Error(reply.error))
     else entry.resolve(reply.result)
     return true
-  }
-}
-
-/** 親のportへ繋ぐ取り寄せ口。実行workerはこちらを選ぶ。 */
-@Config()
-export class WorkerTransport extends ModuleTransport {
-  readonly #compiles: CompileRequests
-
-  constructor(compiles = inject(CompileRequests)) {
-    super()
-    this.#compiles = compiles
-  }
-
-  invoke(name: string, args: Value[]): Promise<Value> {
-    return this.#compiles.invoke(name, args)
   }
 }
 
