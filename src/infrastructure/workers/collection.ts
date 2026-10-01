@@ -2,6 +2,7 @@ import { Config, createApp } from '@zeltjs/core'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CollectionEvents } from '../../application/collection/events.js'
+import { CollectionRunEvents } from '../../application/collection/run-events.js'
 import { DirectCalls } from '../../application/execution/services.js'
 import { errorStack } from '../../foundation/errors.js'
 import { ValueComparison } from '../comparison.js'
@@ -47,6 +48,7 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
         ValueComparison,
         StderrLog,
         CollectionChannel,
+        CollectionRunEvents,
         CompilerTransport,
         WorkerModuleToolchain,
         WorkerExecutionLauncher,

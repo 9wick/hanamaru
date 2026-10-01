@@ -17,6 +17,7 @@ import type { Config as ProjectConfig } from './config.js'
 import { recordCollectionEvent } from './current-scope.js'
 import type { CliMessage } from './events.js'
 import { CollectionSink } from './events.js'
+import { CollectionRunEvents } from './run-events.js'
 import { CollectionSession } from './session.js'
 
 function definition(): RuntimeDefinitionHandle {
@@ -150,6 +151,7 @@ function harness(options: Options = {}) {
     TestExecutor,
     ValueComparison,
     DirectCalls,
+    CollectionRunEvents,
   ]
   // 進捗と期限の通知は量が多く、収集の流れとは別に検証している。
   const flow = () => messages.filter((message) => message !== 'progress' && message !== 'deadline')

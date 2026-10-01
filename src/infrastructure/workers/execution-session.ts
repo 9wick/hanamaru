@@ -1,5 +1,6 @@
 import { Config, Injectable, inject } from '@zeltjs/core'
 import { RunEvents, RunTracker } from '../../application/execution/services.js'
+import type { Deadline, Progress } from '../../application/execution/state.js'
 import { ModuleTransport } from '../../application/ports/module-loader.js'
 import type { Value } from '../../foundation/value.js'
 import { ExecutionChannel } from './execution-channel.js'
@@ -29,6 +30,29 @@ export class CompileRequests extends ModuleTransport {
     return reply.error
       ? this.#pending.fail(reply.id, new Error(reply.error))
       : this.#pending.settle(reply.id, reply.result)
+  }
+}
+
+/**
+ * 実行workerが外へ出せる通知。進捗の組み立てと結果ツリーはhost側が持つため、
+ * workerが知らせるのはtimeoutと、そのとき見ていたphaseだけになる。
+ */
+@Config()
+export class ChannelRunEvents extends RunEvents {
+  readonly #channel: ExecutionChannel
+  readonly #tracker: RunTracker
+
+  constructor(channel = inject(ExecutionChannel), tracker = inject(RunTracker)) {
+    super()
+    this.#channel = channel
+    this.#tracker = tracker
+  }
+
+  progress(_progress: Progress): void {}
+  deadline(_deadline: Deadline): void {}
+
+  timedOut(): void {
+    this.#channel.timedOut(this.#tracker.phase ?? undefined)
   }
 }
 
@@ -62,18 +86,10 @@ export class ExecutionSession {
   readonly #commands: CommandQueue
   readonly #tracker: RunTracker
 
-  constructor(
-    compiles = inject(CompileRequests),
-    commands = inject(CommandQueue),
-    tracker = inject(RunTracker),
-    events = inject(RunEvents),
-    channel = inject(ExecutionChannel),
-  ) {
+  constructor(compiles = inject(CompileRequests), commands = inject(CommandQueue), tracker = inject(RunTracker)) {
     this.#compiles = compiles
     this.#commands = commands
     this.#tracker = tracker
-    // 進捗の組み立てと結果ツリーはhost側が持つ。workerはtimeoutの報告に要るphaseとreasonだけを追う。
-    events.listen({ onTimeout: () => channel.timedOut(tracker.phase ?? undefined) })
   }
 
   /**

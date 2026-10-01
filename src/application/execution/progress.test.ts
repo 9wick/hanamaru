@@ -5,7 +5,7 @@ import { ValueComparison } from '../../infrastructure/comparison.js'
 import { LocalExecutor } from './local.js'
 import { ProgressStore } from './progress.js'
 import type { RunListeners } from './services.js'
-import { DirectCalls, RunReporter } from './services.js'
+import { DirectCalls, listenerEvents } from './services.js'
 
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
@@ -14,8 +14,9 @@ import { RunWalker } from './runner.js'
 
 /** 手元で走らせるrunの一式。ライブラリのrunと同じscopeの組み立て。 */
 async function walkerFor(listeners: RunListeners) {
-  const scope = await createApp([]).createRuntime({ configs: [ValueComparison, LocalExecutor, DirectCalls] })
-  ;(await scope.get(RunReporter)).listen(listeners)
+  const scope = await createApp([]).createRuntime({
+    configs: [ValueComparison, LocalExecutor, DirectCalls, listenerEvents(listeners)],
+  })
   return { walker: await scope.get(RunWalker), execution: await (await scope.get(LocalExecutor)).start() }
 }
 

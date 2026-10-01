@@ -1,3 +1,4 @@
+import type { ConfigClass } from '@zeltjs/core'
 import { Config, Injectable, inject } from '@zeltjs/core'
 import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
 import type { MutableRunResult, Reason } from '../../domain/result/mutable.js'
@@ -89,33 +90,16 @@ export type RunListeners = {
   readonly onTimeout?: (result: MutableRunResult) => void
 }
 
-/** 実行の外側へ出す通知。受け取り手を持たない実行では何も起きない。 */
-@Injectable()
-export class RunEvents {
-  #onProgress: ((progress: Progress) => void) | undefined
-  #onDeadline: ((deadline: Deadline) => void) | undefined
-  #onTimeout: (() => void) | undefined
-
-  /** 受け取り手も、打ち切り時にどんな姿を渡すかも、runを始める入口が決める。 */
-  listen(handlers: {
-    onProgress?: (progress: Progress) => void
-    onDeadline?: (deadline: Deadline) => void
-    onTimeout?: () => void
-  }): void {
-    this.#onProgress = handlers.onProgress
-    this.#onDeadline = handlers.onDeadline
-    this.#onTimeout = handlers.onTimeout
-  }
-
-  progress(progress: Progress): void {
-    this.#onProgress?.(progress)
-  }
-  deadline(deadline: Deadline): void {
-    this.#onDeadline?.(deadline)
-  }
-  timedOut(): void {
-    this.#onTimeout?.()
-  }
+/**
+ * 実行の外側へ出す通知の宛名。誰が受け取るかは実行の形ごとに違うため、
+ * 繋ぎ先はscopeを立てる入口が選ぶ。
+ */
+@Config({ abstract: true })
+export abstract class RunEvents {
+  abstract progress(progress: Progress): void
+  abstract deadline(deadline: Deadline): void
+  /** 打ち切り時に外へ出す姿は受け取り手が組み立てる。内側は合図だけを出す。 */
+  abstract timedOut(): void
 }
 
 /** いま何を実行していて、なぜ打ち切るのかの持ち主。部分結果ツリーはProgressStoreが持つ。 */
@@ -158,33 +142,19 @@ export class RunTracker {
   }
 }
 
-/**
- * 外から受け取る通知の手を、打ち切り時に部分結果を組み立てる形へ繋ぐ。
- * 部分結果ツリーを持たない実行workerはRunEventsへ直に繋ぐため、この繋ぎを使わない。
- */
+/** 打ち切った実行の姿を、いまの部分結果ツリーから組み立てる手。 */
 @Injectable()
-export class RunReporter {
-  readonly #events: RunEvents
+export class RunSnapshot {
   readonly #results: ProgressStore
   readonly #tracker: RunTracker
 
-  constructor(events = inject(RunEvents), results = inject(ProgressStore), tracker = inject(RunTracker)) {
-    this.#events = events
+  constructor(results = inject(ProgressStore), tracker = inject(RunTracker)) {
     this.#results = results
     this.#tracker = tracker
   }
 
-  /** 受け取り手はrunを始める入口(ライブラリのrun・収集の実行手順)が渡す。 */
-  listen(listeners: RunListeners): void {
-    this.#events.listen({
-      onProgress: listeners.onProgress,
-      onDeadline: listeners.onDeadline,
-      onTimeout: () => listeners.onTimeout?.(this.#snapshot('timeout')),
-    })
-  }
-
   /** いまの部分結果を、与えられた理由で打ち切った結果として複製する。実行中の1件も反映する。 */
-  #snapshot(reason: Reason): MutableRunResult {
+  capture(reason: Reason): MutableRunResult {
     const partial = required(this.#results.result)
     const snapshot = new ProgressStore()
     snapshot.apply({
@@ -194,6 +164,33 @@ export class RunReporter {
     if (this.#tracker.active) snapshot.apply(this.#tracker.activeProgress(reason))
     return required(snapshot.result)
   }
+}
+
+/**
+ * 呼び出しごとに渡された受け取り手を、1回のrunのscopeへ載せる形にする。
+ * 受け取り手はrunを始める入口の引数で決まるため、scopeを立てる場所で宛名に結び付ける。
+ */
+export function listenerEvents(listeners: RunListeners): ConfigClass<RunEvents> {
+  @Config()
+  class ListenerEvents extends RunEvents {
+    readonly #snapshot: RunSnapshot
+
+    constructor(snapshot = inject(RunSnapshot)) {
+      super()
+      this.#snapshot = snapshot
+    }
+
+    progress(progress: Progress): void {
+      listeners.onProgress?.(progress)
+    }
+    deadline(deadline: Deadline): void {
+      listeners.onDeadline?.(deadline)
+    }
+    timedOut(): void {
+      listeners.onTimeout?.(this.#snapshot.capture('timeout'))
+    }
+  }
+  return ListenerEvents
 }
 
 /**

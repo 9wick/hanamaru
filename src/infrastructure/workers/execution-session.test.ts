@@ -2,9 +2,9 @@ import { Config, createApp } from '@zeltjs/core'
 import { MessageChannel } from 'node:worker_threads'
 import * as v from 'valibot'
 import { expect, test } from 'vite-plus/test'
-import { RunEvents, RunTracker } from '../../application/execution/services.js'
+import { RunTracker } from '../../application/execution/services.js'
 import { ExecutionEnvironment } from './environment.js'
-import { CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
+import { ChannelRunEvents, CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
 import type { ExecutionCommand } from './protocol.js'
 import { executionMessageSchema } from './schemas.js'
 
@@ -29,7 +29,7 @@ function wired() {
     override readonly port = port1
   }
   return {
-    scope: createApp([]).createRuntime({ configs: [TestEnvironment] }),
+    scope: createApp([]).createRuntime({ configs: [TestEnvironment, ChannelRunEvents] }),
     sent,
     until: (count: number) =>
       new Promise<void>((resolve) => {
@@ -99,12 +99,10 @@ test('a command that arrives after the taker hands it over directly', async () =
   expect((await commands.take()).id).toBe(4)
 })
 
-test('the session reports a timeout with the phase its tracker last marked', async () => {
+test('the worker reports a timeout with the phase its tracker last marked', async () => {
   const { scope, sent, until, close } = wired()
   const open = await scope
-  // 通知の繋ぎはsessionが受け持つため、sessionを組み立ててから観察する。
-  await open.get(ExecutionSession)
-  const events = await open.get(RunEvents)
+  const events = await open.get(ChannelRunEvents)
   events.timedOut()
   ;(await open.get(RunTracker)).markPhase('target')
   events.timedOut()

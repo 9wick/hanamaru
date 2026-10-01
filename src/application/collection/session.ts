@@ -3,14 +3,11 @@ import type { RuntimeBlueprint, RuntimeDefinitionHandle } from '../../domain/def
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import { positive } from '../../domain/execution/config.js'
 import type { Plan } from '../../domain/execution/model.js'
-import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { RunSettings } from '../execution/options.js'
 import { runExclusively } from '../execution/current-run.js'
 import { createPlan } from '../execution/plan.js'
 import { RunWalker } from '../execution/runner.js'
-import type { RunListeners } from '../execution/services.js'
-import { RunReporter } from '../execution/services.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { ExecutionSpec } from '../ports/executor.js'
@@ -21,6 +18,8 @@ import { collectWithin } from './current-scope.js'
 import type { Reporter } from './events.js'
 import { CollectionEvents } from './events.js'
 import type { CliOptions } from './options.js'
+import type { TestSource } from './run-events.js'
+import { RunSources } from './run-events.js'
 import { CollectionLog } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
@@ -51,15 +50,14 @@ function projectsOf(projects: string[]): string {
 interface Collected {
   definitions: RuntimeDefinitionHandle[]
   roots: RootReference[]
-  sources: { file: string; projects: string[] }[]
+  sources: TestSource[]
 }
 
-/** 組み立てた計画と、結果を外へ出すときの形。 */
+/** 組み立てた計画と、実行に渡す形。 */
 interface Planned {
   plan: Plan
   settings: RunSettings
   spec: ExecutionSpec
-  withSources: (result: MutableRunResult) => MutableRunResult
 }
 
 /**
@@ -74,7 +72,7 @@ export class CollectionSession {
   readonly #events: CollectionEvents
   readonly #executor: Executor
   readonly #walker: RunWalker
-  readonly #reporter: RunReporter
+  readonly #sources: RunSources
 
   constructor(
     files = inject(ProjectFiles),
@@ -83,7 +81,7 @@ export class CollectionSession {
     events = inject(CollectionEvents),
     executor = inject(Executor),
     walker = inject(RunWalker),
-    reporter = inject(RunReporter),
+    sources = inject(RunSources),
   ) {
     this.#files = files
     this.#modules = modules
@@ -91,7 +89,7 @@ export class CollectionSession {
     this.#events = events
     this.#executor = executor
     this.#walker = walker
-    this.#reporter = reporter
+    this.#sources = sources
   }
 
   async run(request: CollectionRequest, signal: AbortSignal): Promise<void> {
@@ -139,7 +137,7 @@ export class CollectionSession {
     const log = new CollectionLog()
     const definitions: RuntimeDefinitionHandle[] = [],
       roots: RootReference[] = [],
-      sources: { file: string; projects: string[] }[] = [],
+      sources: TestSource[] = [],
       collected = new Set<object>()
     await collectWithin(log, async () => {
       for (const { file, projects } of files) {
@@ -178,6 +176,7 @@ export class CollectionSession {
     }
     const blueprints: RuntimeBlueprint[] = validatedBlueprints(definitions)
     const plan = createPlan(blueprints, settings)
+    this.#sources.record(plan.allNodes, sources)
     return {
       plan,
       settings,
@@ -186,27 +185,10 @@ export class CollectionSession {
         preparation: this.#modules.prepare(blueprints),
         shape: JSON.stringify(this.#modules.describe(plan.allNodes)),
       },
-      withSources: (result) => ({
-        ...result,
-        tests: result.tests.map((node) => ({
-          ...node,
-          source: sources[plan.allNodes[node.path[0]].rootIndex],
-        })),
-      }),
     }
   }
 
-  /** 実行の持ち場はrunの進み具合を見ながら進むため、通知の受け取り手を繋いでから開く。 */
-  async #execute({ plan, settings, spec, withSources }: Planned, limits: CollectionLimits, signal: AbortSignal) {
-    const listeners: RunListeners = {
-      onProgress: (progress) =>
-        this.#events.progress(
-          progress.kind === 'init' ? { ...progress, result: withSources(progress.result) } : progress,
-        ),
-      onTimeout: (result) => this.#events.timedOut(withSources(result)),
-      onDeadline: (deadline) => this.#events.deadline(deadline),
-    }
-    this.#reporter.listen(listeners)
+  async #execute({ plan, settings, spec }: Planned, limits: CollectionLimits, signal: AbortSignal) {
     const execution = await this.#executor.start(spec, {
       invoke: (name, args) => this.#modules.invoke(name, args),
       signal,
@@ -220,6 +202,6 @@ export class CollectionSession {
     } finally {
       await execution.close()
     }
-    this.#events.result(withSources(result), limits.reporter)
+    this.#events.result(this.#sources.attach(result), limits.reporter)
   }
 }

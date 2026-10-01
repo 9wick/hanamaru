@@ -7,7 +7,7 @@ import { createPlan } from '../../application/execution/plan.js'
 import { LocalExecutor } from '../../application/execution/local.js'
 import { RunWalker } from '../../application/execution/runner.js'
 import type { RunListeners } from '../../application/execution/services.js'
-import { DirectCalls, RunReporter } from '../../application/execution/services.js'
+import { DirectCalls, listenerEvents } from '../../application/execution/services.js'
 import type { Comparison } from '../../application/ports/comparison.js'
 import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import type { TestDefinition } from '../../domain/definition/types.js'
@@ -42,10 +42,11 @@ export function createRun(comparison: ConfigClass<Comparison>) {
     const received: RunInput = options
     // 錠はscopeを立てるより先に取る。収集の途中で始まったrunも重なりとして弾く。
     return runExclusively(async () => {
-      const scope = await createApp([]).createRuntime({ configs: [comparison, LocalExecutor, DirectCalls] })
+      const scope = await createApp([]).createRuntime({
+        configs: [comparison, LocalExecutor, DirectCalls, listenerEvents(received)],
+      })
       try {
         const walker = await scope.get(RunWalker)
-        ;(await scope.get(RunReporter)).listen(received)
         const execution = await (await scope.get(LocalExecutor)).start()
         try {
           return finalizeRun(
