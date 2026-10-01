@@ -6,7 +6,8 @@ import { CollectionLog } from '../../application/collection/scope.js'
 import { executeAttempt } from '../../application/execution/attempt.js'
 import { executeGroupMiddleware, failChildren } from '../../application/execution/middleware.js'
 import { createPlan, indexExecutionNodes } from '../../application/execution/plan.js'
-import type { AttemptState } from '../../application/execution/state.js'
+import type { AttemptServices } from '../../application/execution/services.js'
+import { RunEvents, RunTracker } from '../../application/execution/services.js'
 import type { Fields, RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
@@ -50,12 +51,11 @@ const pending: ExecutionCommand[] = []
 
 let waiting: ((command: ExecutionCommand) => void) | null = null
 
-const state: AttemptState = {
-  comparison,
-  reason: null,
-  activeAttempt: null,
-  onTimeout: () => send({ type: 'timeout', phase: state.activeAttempt?.phase }),
-}
+const tracker = new RunTracker()
+
+const events = new RunEvents({ onTimeout: () => send({ type: 'timeout', phase: tracker.phase ?? undefined }) })
+
+const services: AttemptServices = { comparison, tracker, events }
 
 port.on('message', (input) => {
   const message = v.parse(executionIncomingSchema, input)
@@ -68,7 +68,7 @@ port.on('message', (input) => {
     return
   }
   if (message.type === 'interrupt') {
-    if (state.reason !== 'timeout') state.reason = 'interrupted'
+    tracker.interrupt()
     return
   }
   if (waiting) {
@@ -156,10 +156,10 @@ async function startExecution() {
             command.number < 1
           )
             throw new TypeError('invalid attempt job')
-          state.activeAttempt = { phase: 'middleware' }
-          const result = await executeAttempt(node, runtime.bindCase(item), command.number, state, runtime.bindCall)
-          state.activeAttempt = null
-          send({ type: 'reply', id: command.id, value: { ...result, reason: state.reason } })
+          tracker.markPhase('middleware')
+          const result = await executeAttempt(node, runtime.bindCase(item), command.number, services, runtime.bindCall)
+          tracker.end()
+          send({ type: 'reply', id: command.id, value: { ...result, reason: tracker.reason } })
         } else if (command.type === 'group-open') {
           if (node.kind !== 'group' || !node.bp.middleware) throw new TypeError('invalid group job')
           const closeState: { command?: Extract<ExecutionCommand, { type: 'group-close' }> } = {}
@@ -170,7 +170,7 @@ async function startExecution() {
               closeState.command = await serve([...groups, { path: command.path, frameCount: node.frameCount, fields }])
               if (closeState.command.failed) failChildren()
             },
-            state,
+            services,
             (stage, timeoutMs) => send({ type: 'group-stage', path: command.path, stage, timeoutMs }),
           )
           send({

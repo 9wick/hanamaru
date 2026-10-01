@@ -12,7 +12,8 @@ import { invoke, required, valueOf } from '../../foundation/value.js'
 import type { GroupReply } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
-import type { AttemptState, Stage } from './state.js'
+import type { AttemptServices } from './services.js'
+import type { Stage } from './state.js'
 
 export async function withMiddleware<T>(
   step: RuntimeMiddleware,
@@ -139,9 +140,10 @@ export function failChildren() {
 export async function executeGroupMiddleware(
   node: GroupNode,
   body: (fields: Fields) => Promise<void>,
-  state: AttemptState,
+  services: AttemptServices,
   onStage: (stage: Stage, timeoutMs: number) => void,
 ): Promise<GroupReply> {
+  const { tracker, events } = services
   const started = now()
   let middleware: MutableGroupMiddleware
   try {
@@ -150,8 +152,8 @@ export async function executeGroupMiddleware(
       Object.freeze(node.stable ?? {}),
       body,
       () => {
-        state.reason = 'timeout'
-        state.onTimeout?.()
+        tracker.abort('timeout')
+        events.timedOut()
       },
       onStage,
     )
@@ -160,7 +162,7 @@ export async function executeGroupMiddleware(
     if (error instanceof CaseFailed)
       return {
         middleware: { status: 'passed', durationMs: now() - started, failures: [], cleanup: 'complete' },
-        reason: state.reason,
+        reason: tracker.reason,
       }
     const issues = (error instanceof CleanupFault ? error.errors : [error]).filter(
       (issue) => !(issue instanceof CaseFailed),
@@ -172,9 +174,9 @@ export async function executeGroupMiddleware(
           : { kind: 'execution', phase: issue.stage, message: issue.message, cause: diagnostic(issue.cause) }
         : { kind: 'execution', phase: 'after', message: errorMessage(issue), cause: diagnostic(issue) },
     )
-    if (failures.some((x) => x.kind === 'timeout')) state.reason = 'timeout'
+    if (failures.some((x) => x.kind === 'timeout')) tracker.abort('timeout')
     else if (error instanceof CleanupFault || issues.some((x) => x instanceof MiddlewareFault && x.stage === 'after'))
-      state.reason = 'cleanup-failed'
+      tracker.abort('cleanup-failed')
     const cleanup =
       (error instanceof CleanupFault && error.incomplete) ||
       issues.some((issue) => issue instanceof MiddlewareFault && issue.stage === 'after' && issue.kind !== 'timeout')
@@ -182,5 +184,5 @@ export async function executeGroupMiddleware(
         : 'complete'
     middleware = { status: 'failed', durationMs: now() - started, failures, cleanup }
   }
-  return { middleware, reason: state.reason }
+  return { middleware, reason: tracker.reason }
 }

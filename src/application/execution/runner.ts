@@ -13,14 +13,17 @@ import type {
 import { required } from '../../foundation/value.js'
 import type { Comparison } from '../ports/comparison.js'
 import type { Executor } from '../ports/executor.js'
-import { failure } from './assertions.js'
 import { executeAttempt } from './attempt.js'
 import { now } from './clock.js'
 import { CaseFailed } from './faults.js'
 import { executeGroupMiddleware } from './middleware.js'
 import { allCases } from './plan.js'
 import { ProgressStore } from './progress.js'
-import type { InternalRunOptions, Progress, RunState } from './state.js'
+import type { AttemptServices } from './services.js'
+import { RunEvents, RunTracker } from './services.js'
+import type { InternalRunOptions } from './state.js'
+
+type RunServices = AttemptServices & { readonly executor: Executor | null }
 
 function executableMode(item: CaseBlueprint, only: boolean) {
   if (item.mode === 'todo') return 'todo'
@@ -64,8 +67,9 @@ async function runNode(
   node: ExecutionNode,
   path: number[],
   only: boolean,
-  state: RunState,
+  services: RunServices,
 ): Promise<MutableNodeResult> {
+  const { tracker, events } = services
   if (node.kind === 'test') {
     const cases: MutableCaseResult[] = []
     for (const [index, item] of node.bp.cases.entries()) {
@@ -78,44 +82,36 @@ async function runNode(
         config: configWith(node.config, item.config),
       }
       const mode = executableMode(item, only)
-      if (item.mode === 'todo' || mode || state.reason) {
+      if (item.mode === 'todo' || mode || tracker.reason) {
         const value: MutableCaseResult = { ...base, durationMs: 0, attempts: [], notRun: mode ?? 'cancelled' }
         cases.push(value)
-        recordCase(state, value)
+        recordCase(services, value)
         continue
       }
       const started = now(),
         attempts: MutableAttempt[] = []
       for (let number = 1; number <= base.config.retry + 1; number++) {
-        state.activeAttempt = {
-          path: casePath,
-          base,
-          attempts,
-          number,
-          started: now(),
-          timeoutMs: base.config.timeout,
-          phase: 'middleware',
-        }
-        state.onProgress?.(activeProgress(state, 'interrupted'))
-        state.onDeadline?.({
+        tracker.begin({ kind: 'attempt', base, attempts, number, started: now(), timeoutMs: base.config.timeout })
+        events.progress(tracker.activeProgress('interrupted'))
+        events.deadline({
           kind: 'start',
           timeoutMs: base.config.timeout,
-          progress: activeProgress(state, 'timeout'),
+          progress: tracker.activeProgress('timeout'),
         })
-        const { result, retryable } = state.executor
-          ? await state.executor.attempt(casePath, number)
-          : await executeAttempt(node, item, number, state)
-        state.onDeadline?.({ kind: 'end' })
-        state.activeAttempt = null
+        const { result, retryable } = services.executor
+          ? await services.executor.attempt(casePath, number)
+          : await executeAttempt(node, item, number, services)
+        events.deadline({ kind: 'end' })
+        tracker.end()
         attempts.push(result)
-        if (result.status === 'passed' || state.reason || !retryable) break
+        if (result.status === 'passed' || tracker.reason || !retryable) break
       }
       const value = { ...base, durationMs: now() - started, attempts }
       cases.push(value)
-      recordCase(state, value)
+      recordCase(services, value)
     }
     const value: MutableNodeResult = { kind: 'test', name: node.bp.name, path, cases }
-    recordNode(state, value)
+    recordNode(services, value)
     return value
   }
   const result: MutableGroupResult = {
@@ -133,9 +129,9 @@ async function runNode(
       const prepared = { ...child, stable, frames }
       result.children.push({
         origin: required(child.entryOrigin),
-        result: state.reason
+        result: tracker.reason
           ? cancelledTree(prepared, [...path, child.originalIndex ?? index], only)
-          : await runNode(prepared, [...path, child.originalIndex ?? index], only, state),
+          : await runNode(prepared, [...path, child.originalIndex ?? index], only, services),
       })
     }
     if (
@@ -152,10 +148,10 @@ async function runNode(
       ? { status: 'not-run', reason: 'no-runnable-cases', durationMs: 0, failures: [], cleanup: 'complete' }
       : null
     await executeChildren({})
-    recordNode(state, result)
+    recordNode(services, result)
     return result
   }
-  if (!node.bp.middleware || state.reason) {
+  if (!node.bp.middleware || tracker.reason) {
     if (node.bp.middleware)
       result.middleware = { status: 'not-run', reason: 'cancelled', durationMs: 0, failures: [], cleanup: 'complete' }
     try {
@@ -163,12 +159,12 @@ async function runNode(
     } catch (error) {
       if (!(error instanceof CaseFailed)) throw error
     }
-    recordNode(state, result)
+    recordNode(services, result)
     return result
   }
   const started = now()
-  const execution = state.executor
-    ? await state.executor.group(path, async () => {
+  const execution = services.executor
+    ? await services.executor.group(path, async () => {
         try {
           await executeChildren({})
           return false
@@ -177,24 +173,16 @@ async function runNode(
           return true
         }
       })
-    : await executeGroupMiddleware(node, executeChildren, state, (stage) => {
-        if (stage === 'inside' || stage === 'end') state.onDeadline?.({ kind: 'end' })
+    : await executeGroupMiddleware(node, executeChildren, services, (stage) => {
+        if (stage === 'inside' || stage === 'end') events.deadline({ kind: 'end' })
         else {
-          state.activeGroup = {
-            path,
-            stage,
-            started,
-            timeoutMs: required(node.bp.middleware).timeout ?? defaultMiddlewareTimeoutMs,
-          }
-          state.onDeadline?.({
-            kind: 'start',
-            timeoutMs: required(node.bp.middleware).timeout ?? defaultMiddlewareTimeoutMs,
-            progress: activeProgress(state, 'timeout'),
-          })
+          const timeoutMs = required(node.bp.middleware).timeout ?? defaultMiddlewareTimeoutMs
+          tracker.begin({ kind: 'group', path, stage, started, timeoutMs })
+          events.deadline({ kind: 'start', timeoutMs, progress: tracker.activeProgress('timeout') })
         }
       })
   result.middleware = execution.middleware
-  if (execution.reason) state.reason = execution.reason
+  if (execution.reason) tracker.abort(execution.reason)
   if (result.middleware.status === 'failed') {
     for (let index = result.children.length; index < node.children.length; index++) {
       const child = node.children[index]
@@ -204,8 +192,8 @@ async function runNode(
       })
     }
   }
-  state.activeGroup = null
-  recordNode(state, result)
+  tracker.end()
+  recordNode(services, result)
   return result
 }
 
@@ -230,111 +218,29 @@ function resultFailed(nodes: MutableNodeResult[], failOnFlaky = false): boolean 
   return false
 }
 
-function samePath(left: number[], right: number[]) {
-  return left.length === right.length && left.every((part, index) => part === right[index])
+function recordNode(services: RunServices, value: MutableNodeResult) {
+  services.tracker.recordNode(value)
+  if (value.kind === 'group')
+    services.events.progress({ kind: 'group', path: value.path, middleware: value.middleware })
 }
 
-function findNode(nodes: MutableNodeResult[], path: number[]): MutableNodeResult | null {
-  for (const node of nodes) {
-    if (samePath(node.path, path)) return node
-    if (node.kind === 'group') {
-      const found = findNode(
-        node.children.map((entry) => entry.result),
-        path,
-      )
-      if (found) return found
-    }
-  }
-  return null
+function recordCase(services: RunServices, value: MutableCaseResult) {
+  services.tracker.recordCase(value)
+  services.events.progress({ kind: 'case', result: value })
 }
 
-function recordNode(state: RunState, value: MutableNodeResult) {
-  const path = value.path
-  // state.partialは実行ツリーと同じ形で事前構築されるため、見つからないのは両者のずれを意味する
-  if (path.length === 1) {
-    const index = state.partial.findIndex((node) => samePath(node.path, path))
-    if (index < 0) throw new Error(`result node not found: ${path.join('.')}`)
-    state.partial[index] = value
-  } else {
-    const parent = findNode(state.partial, path.slice(0, -1))
-    const entry =
-      parent?.kind === 'group' ? parent.children.find((child) => samePath(child.result.path, path)) : undefined
-    if (!entry) throw new Error(`result node not found: ${path.join('.')}`)
-    entry.result = value
-  }
-  if (value.kind === 'group') state.onProgress?.({ kind: 'group', path: value.path, middleware: value.middleware })
-}
-
-function recordCase(state: RunState, value: MutableCaseResult) {
-  const parent = findNode(state.partial, value.path.slice(0, -1))
-  if (parent?.kind !== 'test') throw new Error(`result case parent not found: ${value.path.join('.')}`)
-  const index = parent.cases.findIndex((item) => samePath(item.path, value.path))
-  if (index < 0) throw new Error(`result case not found: ${value.path.join('.')}`)
-  parent.cases[index] = value
-  state.onProgress?.({ kind: 'case', result: value })
-}
-
-function activeProgress(state: RunState, reason: Reason): Progress {
-  if (state.activeAttempt) {
-    const { base, attempts, number, started, timeoutMs, phase } = state.activeAttempt
-    return {
-      kind: 'case',
-      result: {
-        ...base,
-        durationMs: now() - started,
-        attempts: [
-          ...attempts,
-          {
-            attempt: number,
-            status: reason === 'timeout' ? 'failed' : 'cancelled',
-            durationMs: now() - started,
-            outcome: null,
-            assertions: [],
-            failures:
-              reason === 'timeout'
-                ? [failure('timeout', phase, `attempt exceeded ${timeoutMs}ms`, { timeoutMs, cleanup: 'incomplete' })]
-                : [],
-            cleanup: 'incomplete',
-          },
-        ],
-      },
-    }
-  }
-  const group = required(state.activeGroup, 'no active execution for progress')
-  return {
-    kind: 'group',
-    path: group.path,
-    middleware: {
-      status: reason === 'timeout' ? 'failed' : 'cancelled',
-      durationMs: now() - group.started,
-      cleanup: 'incomplete',
-      failures:
-        reason === 'timeout'
-          ? [
-              {
-                kind: 'timeout',
-                phase: group.stage,
-                timeoutMs: group.timeoutMs,
-                message: `group middleware exceeded ${group.timeoutMs}ms`,
-              },
-            ]
-          : [],
-    },
-  }
-}
-
-function snapshotRun(state: RunState, reason: Reason): MutableRunResult {
+function snapshotRun(tracker: RunTracker, reason: Reason): MutableRunResult {
   const store = new ProgressStore()
   store.apply({
     kind: 'init',
     result: structuredClone({
       version: 1,
-      status: reason === 'timeout' ? 'failed' : resultFailed(state.partial, false) ? 'failed' : 'cancelled',
+      status: reason === 'timeout' ? 'failed' : resultFailed(tracker.results, false) ? 'failed' : 'cancelled',
       reason,
-      tests: state.partial,
+      tests: tracker.results,
     }),
   })
-  if (state.activeAttempt || state.activeGroup) store.apply(activeProgress(state, reason))
+  if (tracker.active) store.apply(tracker.activeProgress(reason))
   return required(store.result)
 }
 
@@ -359,44 +265,40 @@ export async function runActive(
   active = true
   try {
     const { nodes, only } = buildPlan()
-    const state: RunState = {
-      comparison,
-      reason: options.signal?.aborted ? 'interrupted' : null,
-      partial: [],
-      activeAttempt: null,
-      activeGroup: null,
+    const tracker = new RunTracker(
+      options.signal?.aborted ? 'interrupted' : null,
+      nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only)),
+    )
+    const events = new RunEvents({
       onProgress: options.onProgress,
       onDeadline: options.onDeadline,
-      executor,
-    }
-    state.partial = nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only))
-    state.onProgress?.({
-      kind: 'init',
-      result: { version: 1, status: 'cancelled', reason: 'interrupted', tests: state.partial },
+      onTimeout: () => options.onTimeout?.(snapshotRun(tracker, 'timeout')),
     })
-    state.onTimeout = () => options.onTimeout?.(snapshotRun(state, 'timeout'))
-    executor?.attach(state, (reason) => activeProgress(state, reason))
-    const interrupt = () => {
-      if (state.reason !== 'timeout') state.reason = 'interrupted'
-    }
+    const services: RunServices = { comparison, tracker, events, executor }
+    events.progress({
+      kind: 'init',
+      result: { version: 1, status: 'cancelled', reason: 'interrupted', tests: tracker.results },
+    })
+    executor?.attach(tracker, events)
+    const interrupt = () => tracker.interrupt()
     options.signal?.addEventListener('abort', interrupt)
     const results: MutableNodeResult[] = []
     try {
       for (const [index, node] of nodes.entries())
         results.push(
-          state.reason
+          tracker.reason
             ? cancelledTree(node, [node.originalIndex ?? index], only)
-            : await runNode(node, [node.originalIndex ?? index], only, state),
+            : await runNode(node, [node.originalIndex ?? index], only, services),
         )
     } finally {
       options.signal?.removeEventListener('abort', interrupt)
     }
     const failed =
-      resultFailed(results, options.failOnFlaky) || state.reason === 'timeout' || state.reason === 'cleanup-failed'
+      resultFailed(results, options.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
     return {
       version: 1,
-      status: failed ? 'failed' : state.reason === 'interrupted' ? 'cancelled' : 'passed',
-      reason: state.reason ?? 'completed',
+      status: failed ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
+      reason: tracker.reason ?? 'completed',
       tests: results,
     }
   } finally {

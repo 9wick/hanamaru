@@ -14,15 +14,16 @@ import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
 import { patchMethods, restoreMethods } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
-import type { AttemptState } from './state.js'
+import type { AttemptServices } from './services.js'
 
 export async function executeAttempt(
   node: SuiteNode,
   item: RuntimeCase,
   number: number,
-  state: AttemptState,
+  services: AttemptServices,
   bindCall: (call: ResolvedCallAssertion) => ResolvedCallAssertion = (call) => call,
 ): Promise<AttemptReply> {
+  const { tracker, events } = services
   const started = now()
   const config = configWith(node.config, item.config)
   const failures: Failure[] = [],
@@ -36,9 +37,9 @@ export async function executeAttempt(
   const timer = setTimeout(() => {
     timedOut = true
     timeoutPhase = activePhase
-    state.reason = 'timeout'
-    if (state.activeAttempt) state.activeAttempt.phase = activePhase
-    state.onTimeout?.()
+    tracker.markPhase(activePhase)
+    tracker.abort('timeout')
+    events.timedOut()
   }, config.timeout)
   const core = async (ctx: Readonly<Fields>) => {
     if (timedOut) return
@@ -76,7 +77,7 @@ export async function executeAttempt(
       instruments.stopRecording()
       outcome = { kind: outcomeKind, value: diagnostic(rawValue) }
       activePhase = 'expect'
-      const evaluated = evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, state.comparison)
+      const evaluated = evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, services.comparison)
       failures.push(...evaluated.failures)
       assertions.push(...evaluated.assertions)
       if (failures.length) throw new CaseFailed()
@@ -99,7 +100,7 @@ export async function executeAttempt(
         frame.steps[stepIndex],
         Object.freeze(current),
         (fields) => walkSteps(stepIndex + 1, { ...current, ...fields }),
-        state.onTimeout,
+        () => events.timedOut(),
       )
     }
     return walkSteps(0, ctx)
@@ -110,7 +111,7 @@ export async function executeAttempt(
     if (error instanceof CleanupFault) {
       retryable = false
       cleanup = error.incomplete ? 'incomplete' : 'complete'
-      state.reason = state.reason === 'timeout' ? 'timeout' : 'cleanup-failed'
+      if (tracker.reason !== 'timeout') tracker.abort('cleanup-failed')
       for (const issue of error.errors)
         if (!(issue instanceof CaseFailed)) failures.push(faultToFailure(issue, 'cleanup'))
     } else if (!(error instanceof CaseFailed)) {
@@ -118,7 +119,7 @@ export async function executeAttempt(
       if (error instanceof MiddlewareFault && error.stage === 'after' && error.kind !== 'timeout') {
         retryable = false
         cleanup = 'incomplete'
-        if (state.reason !== 'timeout') state.reason = 'cleanup-failed'
+        if (tracker.reason !== 'timeout') tracker.abort('cleanup-failed')
       }
       failures.push(faultToFailure(error, activePhase))
     }
@@ -126,7 +127,7 @@ export async function executeAttempt(
     clearTimeout(timer)
   }
   if (timedOut || now() - started > config.timeout) {
-    state.reason = 'timeout'
+    tracker.abort('timeout')
     failures.push(
       failure('timeout', timeoutPhase ?? activePhase, `attempt exceeded ${config.timeout}ms`, {
         timeoutMs: config.timeout,
@@ -134,7 +135,7 @@ export async function executeAttempt(
       }),
     )
   }
-  if (failures.some((x) => x.kind === 'timeout')) state.reason = 'timeout'
+  if (failures.some((x) => x.kind === 'timeout')) tracker.abort('timeout')
   for (const [index, condition] of item.calls.entries()) {
     if (!assertions.some((entry) => entry.assertion.source === 'expectCalls' && entry.assertion.index === index))
       assertions.push({
@@ -145,7 +146,7 @@ export async function executeAttempt(
   }
   const result: MutableAttempt = {
     attempt: number,
-    status: failures.length ? 'failed' : state.reason === 'interrupted' ? 'cancelled' : 'passed',
+    status: failures.length ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
     durationMs: now() - started,
     outcome,
     assertions,

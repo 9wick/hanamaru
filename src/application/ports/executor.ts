@@ -1,5 +1,5 @@
 import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
-import type { Progress, RunState } from '../execution/state.js'
+import type { RunEvents, RunTracker } from '../execution/services.js'
 
 export interface AttemptReply {
   result: MutableAttempt
@@ -14,7 +14,7 @@ export interface GroupReply {
 }
 
 export interface Executor {
-  attach(state: RunState, snapshot: (reason: Reason) => Progress): void
+  attach(tracker: RunTracker, events: RunEvents): void
   attempt(path: number[], number: number): Promise<AttemptReply>
   group(path: number[], body: () => Promise<boolean>): Promise<GroupReply>
   close(): Promise<void>

@@ -1,8 +1,7 @@
 import { Worker } from 'node:worker_threads'
 import * as v from 'valibot'
-import type { Progress, RunState } from '../../application/execution/state.js'
+import type { RunEvents, RunTracker } from '../../application/execution/services.js'
 import type { Executor } from '../../application/ports/executor.js'
-import type { Reason } from '../../domain/result/mutable.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
 import { required } from '../../foundation/value.js'
@@ -19,8 +18,8 @@ export async function openExecution(
   })
   const pending = new Map<number, { resolve: (value: ReplyValue) => void; reject: (error: Value) => void }>()
   let nextId = 0
-  let state: RunState | null = null
-  let snapshot: ((reason: Reason) => Progress) | null = null
+  let tracker: RunTracker | null = null
+  let events: RunEvents | null = null
   let closing = false
   let fatal: Value
   let readyResolve: (() => void) | undefined
@@ -67,24 +66,25 @@ export async function openExecution(
         return
       }
       pending.delete(message.id)
-      if ('reason' in message.value && message.value.reason && state) state.reason = message.value.reason
+      if ('reason' in message.value && message.value.reason && tracker) tracker.abort(message.value.reason)
       entry.resolve(message.value)
     } else if (message.type === 'timeout') {
-      if (!state) return fail(new Error('execution state is not attached'))
-      state.reason = 'timeout'
-      if (state.activeAttempt && message.phase) state.activeAttempt.phase = message.phase
-      state.onTimeout?.()
+      if (!tracker || !events) return fail(new Error('execution state is not attached'))
+      tracker.abort('timeout')
+      if (message.phase) tracker.markPhase(message.phase)
+      events.timedOut()
     } else if (message.type === 'group-stage') {
-      if (!state || !snapshot) return fail(new Error('execution state is not attached'))
-      if (message.stage === 'inside' || message.stage === 'end') state.onDeadline?.({ kind: 'end' })
+      if (!tracker || !events) return fail(new Error('execution state is not attached'))
+      if (message.stage === 'inside' || message.stage === 'end') events.deadline({ kind: 'end' })
       else {
-        state.activeGroup = {
+        tracker.begin({
+          kind: 'group',
           path: message.path,
           stage: message.stage,
           started: performance.now(),
           timeoutMs: message.timeoutMs,
-        }
-        state.onDeadline?.({ kind: 'start', timeoutMs: message.timeoutMs, progress: snapshot('timeout') })
+        })
+        events.deadline({ kind: 'start', timeoutMs: message.timeoutMs, progress: tracker.activeProgress('timeout') })
       }
     } else fail(new Error('unknown execution message'))
   })
@@ -109,9 +109,9 @@ export async function openExecution(
     })
   }
   return {
-    attach(runState, snapshotRun) {
-      state = runState
-      snapshot = snapshotRun
+    attach(runTracker, runEvents) {
+      tracker = runTracker
+      events = runEvents
     },
     async attempt(path, number) {
       const reply = await request({ type: 'attempt', path, number })
