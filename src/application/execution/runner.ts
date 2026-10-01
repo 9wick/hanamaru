@@ -15,6 +15,7 @@ import type { Comparison } from '../ports/comparison.js'
 import type { Executor } from '../ports/executor.js'
 import { executeAttempt } from './attempt.js'
 import { now } from './clock.js'
+import { runExclusively } from './current-run.js'
 import { CaseFailed } from './faults.js'
 import { executeGroupMiddleware } from './middleware.js'
 import { allCases } from './plan.js'
@@ -185,8 +186,6 @@ function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason
   return required(snapshot.result)
 }
 
-let active = false
-
 export async function runPlan(
   plan: Plan,
   options: InternalRunOptions,
@@ -196,57 +195,61 @@ export async function runPlan(
   return runActive(() => plan, options, comparison, executor)
 }
 
+/** 錠は計画の組み立てより先に取る。収集の途中で始まったrunも重なりとして弾く。 */
 export async function runActive(
   buildPlan: () => Plan,
   options: InternalRunOptions,
   comparison: Comparison,
   executor: Executor | null = null,
 ): Promise<MutableRunResult> {
-  if (active) throw new TypeError('a run is already active')
-  active = true
-  try {
-    const { nodes, only } = buildPlan()
-    const tracker = new RunTracker(options.signal?.aborted ? 'interrupted' : null)
-    const results = new ProgressStore()
-    const events = new RunEvents({
-      onProgress: options.onProgress,
-      onDeadline: options.onDeadline,
-      onTimeout: () => options.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
-    })
-    const services: RunServices = { comparison, tracker, events, results, executor }
-    // 実行前の結果は、全てを実行しなかった姿。ここから完了したものだけを差し替えていく。
-    publish(services, {
-      kind: 'init',
-      result: {
-        version: 1,
-        status: 'cancelled',
-        reason: 'interrupted',
-        tests: nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only)),
-      },
-    })
-    executor?.attach(tracker, services.events)
-    const interrupt = () => tracker.interrupt()
-    options.signal?.addEventListener('abort', interrupt)
-    const tests: MutableNodeResult[] = []
-    try {
-      for (const [index, node] of nodes.entries())
-        tests.push(
-          tracker.reason
-            ? cancelledTree(node, [node.originalIndex ?? index], only)
-            : await runNode(node, [node.originalIndex ?? index], only, services),
-        )
-    } finally {
-      options.signal?.removeEventListener('abort', interrupt)
-    }
-    const failed =
-      resultFailed(tests, options.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
-    return {
+  return runExclusively(() => executeRun(buildPlan, options, comparison, executor))
+}
+
+async function executeRun(
+  buildPlan: () => Plan,
+  options: InternalRunOptions,
+  comparison: Comparison,
+  executor: Executor | null,
+): Promise<MutableRunResult> {
+  const { nodes, only } = buildPlan()
+  const tracker = new RunTracker(options.signal?.aborted ? 'interrupted' : null)
+  const results = new ProgressStore()
+  const events = new RunEvents({
+    onProgress: options.onProgress,
+    onDeadline: options.onDeadline,
+    onTimeout: () => options.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
+  })
+  const services: RunServices = { comparison, tracker, events, results, executor }
+  // 実行前の結果は、全てを実行しなかった姿。ここから完了したものだけを差し替えていく。
+  publish(services, {
+    kind: 'init',
+    result: {
       version: 1,
-      status: failed ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
-      reason: tracker.reason ?? 'completed',
-      tests,
-    }
+      status: 'cancelled',
+      reason: 'interrupted',
+      tests: nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only)),
+    },
+  })
+  executor?.attach(tracker, services.events)
+  const interrupt = () => tracker.interrupt()
+  options.signal?.addEventListener('abort', interrupt)
+  const tests: MutableNodeResult[] = []
+  try {
+    for (const [index, node] of nodes.entries())
+      tests.push(
+        tracker.reason
+          ? cancelledTree(node, [node.originalIndex ?? index], only)
+          : await runNode(node, [node.originalIndex ?? index], only, services),
+      )
   } finally {
-    active = false
+    options.signal?.removeEventListener('abort', interrupt)
+  }
+  const failed =
+    resultFailed(tests, options.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
+  return {
+    version: 1,
+    status: failed ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
+    reason: tracker.reason ?? 'completed',
+    tests,
   }
 }
