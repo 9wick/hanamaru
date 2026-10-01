@@ -28,7 +28,7 @@ export async function collectAndRun(
   try {
     const initialTimeout = request.options.collectionTimeout ?? 30_000
     positive(initialTimeout, 'collectionTimeout')
-    const config = await host.readConfig(request.options, (file) =>
+    const config = await host.files.readConfig(request.options, (file) =>
       send({ type: 'loading', file, timeout: initialTimeout }),
     )
     const timeout = request.options.collectionTimeout ?? config.collectionTimeout ?? 30_000
@@ -37,11 +37,11 @@ export async function collectAndRun(
     positive(shutdownGrace, 'shutdownGrace')
     const reporter = request.options.reporter ?? config.reporter ?? 'pretty'
     if (reporter !== 'pretty' && reporter !== 'json') throw new TypeError('reporter must be pretty or json')
-    const files = selectFiles(config, request, host)
+    const files = selectFiles(config, request, host.files)
     if (!files.length) throw new TypeError('no test files matched')
     send({ type: 'loading', file: 'test runtime setup', timeout })
-    compiler = await host.createCompiler(config.vite)
-    const moduleRuntime = host.createRuntime(compiler.invoke)
+    compiler = await host.modules.createCompiler(config.vite)
+    const moduleRuntime = host.modules.createRuntime(compiler.invoke)
     runtime = moduleRuntime
     const log = new CollectionLog()
     const definitions: RuntimeDefinitionHandle[] = [],
@@ -56,25 +56,25 @@ export async function collectAndRun(
         const registered = log.registrationsIn(file)
         if (!registered.length)
           throw new TypeError(
-            `no tests registered in ${host.relative(file)}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
+            `no tests registered in ${host.files.relative(file)}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
           )
         for (const [index, entry] of registered.entries()) {
           const definition = entry.definition
           if (collected.has(definition))
             throw new TypeError(
-              `duplicate root definition: ${host.relative(file)}:${entry.origin.line}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
+              `duplicate root definition: ${host.files.relative(file)}:${entry.origin.line}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
             )
           collected.add(definition)
           definitions.push(definition)
           roots.push({ file, index, origin: entry.origin })
-          sources.push({ file: host.relative(file), projects })
+          sources.push({ file: host.files.relative(file), projects })
         }
       }
     })
     collectingFile = undefined
     for (const origin of log.unregisteredDefinitions(new Set(files.map(({ file }) => file))))
       host.warn(
-        `hanamaru: unregistered test definition: ${host.relative(origin.file)}:${origin.line}:${origin.column}\n`,
+        `hanamaru: unregistered test definition: ${host.files.relative(origin.file)}:${origin.line}:${origin.column}\n`,
       )
     let plan: Plan
     const withSources = (result: MutableRunResult): MutableRunResult => ({
@@ -104,14 +104,14 @@ export async function collectAndRun(
     }
     const blueprints = validatedBlueprints(definitions)
     plan = createPlan(blueprints, settings)
-    const execution = await host.openExecution({
-      roots,
-      preparation: host.prepare(blueprints),
-      shape: JSON.stringify(host.describe(plan.allNodes)),
-      invoke: compiler.invoke,
-      signal,
-      onLoading: (file) => send({ type: 'loading', file, timeout }),
-    })
+    const execution = await host.openExecution(
+      {
+        roots,
+        preparation: host.modules.prepare(blueprints),
+        shape: JSON.stringify(host.modules.describe(plan.allNodes)),
+      },
+      { invoke: compiler.invoke, signal, onLoading: (file) => send({ type: 'loading', file, timeout }) },
+    )
     send({ type: 'running', reporter, shutdownGrace })
     let result
     try {
@@ -127,7 +127,7 @@ export async function collectAndRun(
     send({ type: 'result', result: withSources(result), reporter })
   } catch (error) {
     const context = collectingFile
-      ? `while collecting ${host.relative(collectingFile.file)}${collectingFile.projects.length ? ` (projects: ${collectingFile.projects.join(', ')})` : ''}: `
+      ? `while collecting ${host.files.relative(collectingFile.file)}${collectingFile.projects.length ? ` (projects: ${collectingFile.projects.join(', ')})` : ''}: `
       : ''
     send({ type: 'error', message: context + errorStack(error) })
   } finally {

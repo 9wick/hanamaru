@@ -1,4 +1,4 @@
-import type { FileDiscovery } from '../ports/collection-host.js'
+import type { ProjectFiles } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { Config } from './config.js'
 export interface SelectedFile {
@@ -9,7 +9,7 @@ export interface SelectedFile {
 export function selectFiles(
   config: Config,
   request: CollectionRequest,
-  { resolve, glob }: FileDiscovery,
+  { resolve, glob }: ProjectFiles,
 ): SelectedFile[] {
   if (request.files.length)
     return [...new Set(request.files.map((file) => resolve(file)))].sort().map((file) => ({ file, projects: [] }))

@@ -26,6 +26,7 @@ import type { AttemptServices, RunListeners } from './services.js'
 import { RunEvents, RunTracker } from './services.js'
 import type { Progress } from './state.js'
 
+/** 計画を辿る間だけ使う、組み立て済みのサービス一式。外から受け取る形はRunDependencies。 */
 type RunServices = AttemptServices & { readonly results: ProgressStore; readonly executor: Executor | null }
 
 /** runが外から受け取るサービス。設定値はRunSettingsとして別に渡す。 */

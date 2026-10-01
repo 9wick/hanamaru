@@ -1,12 +1,13 @@
 import { Worker } from 'node:worker_threads'
 import * as v from 'valibot'
 import type { RunEvents, RunTracker } from '../../application/execution/services.js'
+import type { ExecutionServices, ExecutionSpec } from '../../application/ports/collection-host.js'
 import type { AttemptReply, Executor, GroupReply } from '../../application/ports/executor.js'
 import type { ModuleInvoke } from '../../application/ports/module-loader.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
 import { required } from '../../foundation/value.js'
-import type { CommandInput, ExecutionOptions, ReplyValue } from './protocol.js'
+import type { CommandInput, ReplyValue } from './protocol.js'
 import { executionMessageSchema } from './schemas.js'
 
 /** 返信待ちのcommand。idで突き合わせ、致命的な失敗では待っている全部を一度に諦めさせる。 */
@@ -65,7 +66,11 @@ class WorkerExecutor {
   #closing = false
   #fatal: Value = undefined
 
-  constructor(workerURL: URL, { roots, preparation, shape, signal, onLoading, invoke }: ExecutionOptions) {
+  constructor(
+    workerURL: URL,
+    { roots, preparation, shape }: ExecutionSpec,
+    { signal, onLoading, invoke }: ExecutionServices,
+  ) {
     this.#signal = signal
     this.#onLoading = onLoading
     this.#invoke = invoke
@@ -185,9 +190,13 @@ class WorkerExecutor {
   }
 }
 
-export async function openExecution(workerURL: URL, options: ExecutionOptions): Promise<Executor> {
-  options.onLoading('execution worker setup')
-  const executor = new WorkerExecutor(workerURL, options)
+export async function openExecution(
+  workerURL: URL,
+  spec: ExecutionSpec,
+  services: ExecutionServices,
+): Promise<Executor> {
+  services.onLoading('execution worker setup')
+  const executor = new WorkerExecutor(workerURL, spec, services)
   await executor.start()
   return executor
 }

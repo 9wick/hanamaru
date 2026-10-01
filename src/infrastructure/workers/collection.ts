@@ -32,20 +32,24 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
   })
   collectAndRun(workerData, controller.signal, send, {
     comparison,
-    resolve,
-    relative: (file) => relative(process.cwd(), file),
-    glob: (pattern) => [...globSync(pattern, { cwd: process.cwd() })],
+    files: {
+      resolve,
+      relative: (file) => relative(process.cwd(), file),
+      glob: (pattern) => [...globSync(pattern, { cwd: process.cwd() })],
+      readConfig,
+    },
+    modules: {
+      createCompiler: (vite) => createModuleCompiler(runtimeURL, vite),
+      createRuntime: (invoke) => {
+        const runtime = createModuleRuntime(registry, invoke)
+        return { import: (file) => runtime.import(pathToFileURL(file).href), close: () => runtime.close() }
+      },
+      prepare: (blueprints) => collectModulePreparation(registry, blueprints),
+      describe: (nodes) => describeExecutionPlan(registry, nodes),
+    },
     warn: (message) => {
       process.stderr.write(message)
     },
-    readConfig,
-    createCompiler: (vite) => createModuleCompiler(runtimeURL, vite),
-    createRuntime: (invoke) => {
-      const runtime = createModuleRuntime(registry, invoke)
-      return { import: (file) => runtime.import(pathToFileURL(file).href), close: () => runtime.close() }
-    },
-    prepare: (blueprints) => collectModulePreparation(registry, blueprints),
-    describe: (nodes) => describeExecutionPlan(registry, nodes),
-    openExecution: (options) => openExecution(executionWorkerURL, options),
+    openExecution: (spec, services) => openExecution(executionWorkerURL, spec, services),
   }).catch((error) => send({ type: 'error', message: errorStack(error) }))
 }
