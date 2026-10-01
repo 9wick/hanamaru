@@ -76,7 +76,9 @@ export async function executeAttempt(
       instruments.stopRecording()
       outcome = { kind: outcomeKind, value: diagnostic(rawValue) }
       activePhase = 'expect'
-      evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, failures, assertions, state.comparison)
+      const evaluated = evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, state.comparison)
+      failures.push(...evaluated.failures)
+      assertions.push(...evaluated.assertions)
       if (failures.length) throw new CaseFailed()
     } catch (error) {
       failed = true
