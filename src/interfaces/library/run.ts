@@ -1,7 +1,7 @@
 import * as v from 'valibot'
 import type { RunOptions, RunSettings } from '../../application/execution/options.js'
 import { createPlan } from '../../application/execution/plan.js'
-import { runActive } from '../../application/execution/runner.js'
+import { createRunWalker } from '../../application/execution/runner.js'
 import type { RunListeners } from '../../application/execution/services.js'
 import { createRunServices } from '../../application/execution/services.js'
 import type { Comparison } from '../../application/ports/comparison.js'
@@ -35,12 +35,9 @@ export function createRun(comparison: Comparison) {
     options: RunOptions = {},
   ): Promise<RunResult> {
     const received: RunInput = options
+    const walker = createRunWalker(createRunServices(received), comparison)
     return finalizeRun(
-      await runActive(() => createPlan(collectBlueprints(input), received), received, {
-        comparison,
-        run: createRunServices(received),
-        signal: received.signal,
-      }),
+      await walker.run(() => createPlan(collectBlueprints(input), received), received, received.signal),
     )
   }
 }

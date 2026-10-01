@@ -1,6 +1,4 @@
-import type { AttemptServices } from '../../application/execution/services.js'
 import { RunEvents, RunTracker } from '../../application/execution/services.js'
-import type { Comparison } from '../../application/ports/comparison.js'
 import type { Value } from '../../foundation/value.js'
 import type { ExecutionCommand, ExecutionMessage } from './protocol.js'
 
@@ -62,11 +60,9 @@ export class ExecutionSession {
   // 進捗の組み立てと結果ツリーはhost側が持つ。workerはtimeoutの報告に要るphaseとreasonだけを追う。
   readonly tracker = new RunTracker()
   readonly events: RunEvents
-  readonly services: AttemptServices
 
-  constructor(send: (message: ExecutionMessage) => void, comparison: Comparison) {
+  constructor(send: (message: ExecutionMessage) => void) {
     this.compiles = new CompileRequests((request) => send({ type: 'compile', ...request }))
     this.events = new RunEvents({ onTimeout: () => send({ type: 'timeout', phase: this.tracker.phase ?? undefined }) })
-    this.services = { comparison, tracker: this.tracker, events: this.events }
   }
 }

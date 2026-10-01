@@ -3,9 +3,10 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
 import { collectWithin } from '../../application/collection/current-scope.js'
 import { CollectionLog } from '../../application/collection/scope.js'
-import { executeAttempt } from '../../application/execution/attempt.js'
-import { executeGroupMiddleware, failChildren } from '../../application/execution/middleware.js'
+import { AttemptExecutor } from '../../application/execution/attempt.js'
+import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
 import { createPlan, indexExecutionNodes } from '../../application/execution/plan.js'
+import { CallBinder } from '../../application/execution/services.js'
 import type { Fields, RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
@@ -33,9 +34,9 @@ for (const method of consoleMethods)
 
 const send = (message: ExecutionMessage) => port.postMessage(message)
 
-const session = new ExecutionSession(send, comparison)
+const session = new ExecutionSession(send)
 
-const { tracker, services } = session
+const { tracker } = session
 
 // module runtimeと計画の指紋は同じnamespaceの出自を見なければ噛み合わない。
 const registry = new ModuleRegistry()
@@ -45,6 +46,11 @@ const runtime = createModuleRuntime(
   (name, args) => session.compiles.request(name, args),
   workerData.preparation,
 )
+
+// call期待の繋ぎ直しはmodule runtimeに頼るため、実行の一式はruntimeができてから組み立てる。
+const attempts = new AttemptExecutor(comparison, tracker, session.events, new CallBinder(runtime.bindCall))
+
+const groupMiddleware = new GroupMiddlewareExecutor(tracker, session.events)
 
 port.on('message', (input) => {
   const message = v.parse(executionIncomingSchema, input)
@@ -131,20 +137,19 @@ async function startExecution() {
           )
             throw new TypeError('invalid attempt job')
           tracker.markPhase('middleware')
-          const result = await executeAttempt(node, runtime.bindCase(item), command.number, services, runtime.bindCall)
+          const result = await attempts.execute(node, runtime.bindCase(item), command.number)
           tracker.end()
           send({ type: 'reply', id: command.id, value: { ...result, reason: tracker.reason } })
         } else if (command.type === 'group-open') {
           if (node.kind !== 'group' || !node.bp.middleware) throw new TypeError('invalid group job')
           const closeState: { command?: Extract<ExecutionCommand, { type: 'group-close' }> } = {}
-          const result = await executeGroupMiddleware(
+          const result = await groupMiddleware.execute(
             node,
             async (fields) => {
               send({ type: 'reply', id: command.id, value: { entered: true } })
               closeState.command = await serve([...groups, { path: command.path, frameCount: node.frameCount, fields }])
               if (closeState.command.failed) failChildren()
             },
-            services,
             (stage, timeoutMs) => send({ type: 'group-stage', path: command.path, stage, timeoutMs }),
           )
           send({

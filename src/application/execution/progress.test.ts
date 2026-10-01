@@ -7,7 +7,7 @@ import { createRunServices } from './services.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
 import { createPlan } from './plan.js'
-import { runPlan } from './runner.js'
+import { createRunWalker } from './runner.js'
 
 test('progress transfer grows linearly and reconstructs nested case results', async () => {
   async function measure(count: number) {
@@ -26,22 +26,16 @@ test('progress transfer grows linearly and reconstructs nested case results', as
       [cases],
     )
     const plan = createPlan(collectBlueprints(root))
-    const result = await runPlan(
-      plan,
-      {},
-      {
-        comparison,
-        run: createRunServices({
-          onProgress(progress) {
-            bytes += JSON.stringify(progress).length
-            store.apply(structuredClone(progress))
-          },
-          onDeadline(deadline) {
-            bytes += JSON.stringify(deadline).length
-          },
-        }),
+    const run = createRunServices({
+      onProgress(progress) {
+        bytes += JSON.stringify(progress).length
+        store.apply(structuredClone(progress))
       },
-    )
+      onDeadline(deadline) {
+        bytes += JSON.stringify(deadline).length
+      },
+    })
+    const result = await createRunWalker(run, comparison).run(() => plan, {})
     expect(store.result?.tests).toEqual(result.tests)
     return bytes
   }
@@ -68,14 +62,8 @@ test('the progress stream reconstructs nested groups, skips and retries', async 
     [flaky],
   )
   const root = new Test().group('root', [inner, steady])
-  const result = await runPlan(
-    createPlan(collectBlueprints(root)),
-    {},
-    {
-      comparison,
-      run: createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) }),
-    },
-  )
+  const run = createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) })
+  const result = await createRunWalker(run, comparison).run(() => createPlan(collectBlueprints(root)), {})
   expect(result.status).toBe('passed')
   expect(store.result?.tests).toStrictEqual(result.tests)
 })
@@ -95,14 +83,11 @@ test('the progress stream reconstructs the cancelled tree after an interrupt', a
     middleware(async (_, next) => next()),
     [active, pending],
   )
-  const result = await runPlan(
-    createPlan(collectBlueprints([root, pending])),
+  const run = createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) })
+  const result = await createRunWalker(run, comparison).run(
+    () => createPlan(collectBlueprints([root, pending])),
     {},
-    {
-      comparison,
-      run: createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) }),
-      signal: controller.signal,
-    },
+    controller.signal,
   )
   expect(result.reason).toBe('interrupted')
   expect(store.result?.tests).toStrictEqual(result.tests)

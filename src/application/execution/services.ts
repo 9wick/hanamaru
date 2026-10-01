@@ -1,7 +1,7 @@
+import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
 import type { MutableRunResult, Reason } from '../../domain/result/mutable.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
 import { required } from '../../foundation/value.js'
-import type { Comparison } from '../ports/comparison.js'
 import { now } from './clock.js'
 import { ProgressStore } from './progress.js'
 import type { ActiveExecution, Deadline, Progress } from './state.js'
@@ -190,9 +190,18 @@ export function createRunServices(listeners: RunListeners = {}): RunServices {
   return { tracker, events, results }
 }
 
-/** attemptとgroup middlewareの実行が使うサービス。データは引数で別に渡す。 */
-export type AttemptServices = {
-  readonly comparison: Comparison
-  readonly tracker: RunTracker
-  readonly events: RunEvents
+/**
+ * call期待の対象を、module runtimeが差し替えた関数へ繋ぎ直す手。
+ * 差し替えを行うruntimeを持たない実行では、対象をそのまま使う。
+ */
+export class CallBinder {
+  readonly #bind: (call: ResolvedCallAssertion) => ResolvedCallAssertion
+
+  constructor(bind: (call: ResolvedCallAssertion) => ResolvedCallAssertion = (call) => call) {
+    this.#bind = bind
+  }
+
+  bind(call: ResolvedCallAssertion): ResolvedCallAssertion {
+    return this.#bind(call)
+  }
 }

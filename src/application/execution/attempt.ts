@@ -8,6 +8,7 @@ import type { MutableAttempt, Reason } from '../../domain/result/mutable.js'
 import type { AssertionResult, ExecutionPhase, Failure, TargetOutcome } from '../../domain/result/types.js'
 import type { Value } from '../../foundation/value.js'
 import { arrayValue, invoke, objectValue, property, valueOf } from '../../foundation/value.js'
+import type { Comparison } from '../ports/comparison.js'
 import type { AttemptReply } from '../ports/executor.js'
 import { callReference, evaluate, failure, faultToFailure } from './assertions.js'
 import { now } from './clock.js'
@@ -15,7 +16,7 @@ import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
 import { MethodPatch } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
-import type { AttemptServices } from './services.js'
+import type { CallBinder, RunEvents, RunTracker } from './services.js'
 import { StageTimer } from './services.js'
 
 /** 1回のattemptが積み上げる観測結果。結果の形に変えるのは最後の1か所だけ。 */
@@ -95,118 +96,129 @@ function finalizeAttempt(
   }
 }
 
-export async function executeAttempt(
-  node: SuiteNode,
-  item: RuntimeCase,
-  number: number,
-  services: AttemptServices,
-  bindCall: (call: ResolvedCallAssertion) => ResolvedCallAssertion = (call) => call,
-): Promise<AttemptReply> {
-  const { tracker, events } = services
-  const config = configWith(node.config, item.config)
-  const started = now()
-  const record: AttemptRecord = {
-    outcome: null,
-    failures: [],
-    assertions: [],
-    cleanup: 'complete',
-    retryable: true,
+/** 1回のattemptを走らせる。どの節のどのcaseを何回目に走らせるかは、実行ごとの指定として引数で受け取る。 */
+export class AttemptExecutor {
+  readonly #comparison: Comparison
+  readonly #tracker: RunTracker
+  readonly #events: RunEvents
+  readonly #calls: CallBinder
+
+  constructor(comparison: Comparison, tracker: RunTracker, events: RunEvents, calls: CallBinder) {
+    this.#comparison = comparison
+    this.#tracker = tracker
+    this.#events = events
+    this.#calls = calls
   }
-  const timer = new StageTimer<ExecutionPhase>(config.timeout, 'middleware', (phase) => {
-    tracker.markPhase(phase)
-    tracker.abort('timeout')
-    events.timedOut()
-  })
-  const core = async (ctx: Readonly<Fields>) => {
-    if (timer.expired()) return
-    timer.enter('instrumentation')
-    const calls = item.calls.map((condition): ResolvedCallAssertion => {
-      const object = condition.object ?? objectValue(invoke(condition.objectFrom, undefined, [ctx]))
-      if (condition.objectFrom && property(object, Symbol.toStringTag) === 'Module')
-        throw new TypeError('call.from requires a fixture object; use call(namespace, key) for modules')
-      const check = condition.check
-      const resolved =
-        'argsFrom' in check ? { ...check, args: arrayValue(invoke(check.argsFrom, undefined, [ctx])) } : check
-      return bindCall({ ...condition, object, check: resolved })
-    })
-    const instruments = new MethodPatch(overlayMocks(node.mocks, item.mocks), calls, node.bp.target)
-    let failed = false,
-      originalError
-    try {
-      timer.enter('args')
-      const args = item.args.kind === 'value' ? item.args.value : arrayValue(invoke(item.args.build, undefined, [ctx]))
-      if (!Array.isArray(args)) throw new TypeError('argsFrom must return an array')
-      timer.enter('target')
-      let rawValue
-      let outcomeKind: TargetOutcome['kind'] = 'return'
-      try {
-        const target = node.bp.target
-        rawValue = valueOf(
-          await (target.kind === 'method'
-            ? invoke(methodValue(target.object, target.key), target.object, args)
-            : invoke(target.fn, undefined, args)),
-        )
-      } catch (error) {
-        rawValue = valueOf(error)
-        outcomeKind = 'throw'
-      }
-      instruments.stopRecording()
-      const outcome: TargetOutcome = { kind: outcomeKind, value: diagnostic(rawValue) }
-      record.outcome = outcome
-      timer.enter('expect')
-      const evaluated = evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, services.comparison)
-      record.failures.push(...evaluated.failures)
-      record.assertions.push(...evaluated.assertions)
-      if (record.failures.length) throw new CaseFailed()
-    } catch (error) {
-      failed = true
-      originalError = valueOf(error)
+
+  async execute(node: SuiteNode, item: RuntimeCase, number: number): Promise<AttemptReply> {
+    const tracker = this.#tracker
+    const events = this.#events
+    const config = configWith(node.config, item.config)
+    const started = now()
+    const record: AttemptRecord = {
+      outcome: null,
+      failures: [],
+      assertions: [],
+      cleanup: 'complete',
+      retryable: true,
     }
-    timer.enter('cleanup')
-    const errors = instruments.restore()
-    if (errors.length) throw new CleanupFault(failed ? [originalError, ...errors] : errors)
-    if (failed) throw originalError
-  }
-  const runFrame = async (index: number, ctx: Fields): Promise<void> => {
-    if (timer.expired()) return
-    if (index === node.frames.length) return core(Object.freeze(ctx))
-    const frame = node.frames[index]
-    const walkSteps = async (stepIndex: number, current: Fields): Promise<void> => {
-      if (stepIndex === frame.steps.length) return runFrame(index + 1, { ...current, ...frame.fields })
-      return withMiddleware(
-        frame.steps[stepIndex],
-        Object.freeze(current),
-        (fields) => walkSteps(stepIndex + 1, { ...current, ...fields }),
-        () => events.timedOut(),
+    const timer = new StageTimer<ExecutionPhase>(config.timeout, 'middleware', (phase) => {
+      tracker.markPhase(phase)
+      tracker.abort('timeout')
+      events.timedOut()
+    })
+    const core = async (ctx: Readonly<Fields>) => {
+      if (timer.expired()) return
+      timer.enter('instrumentation')
+      const calls = item.calls.map((condition): ResolvedCallAssertion => {
+        const object = condition.object ?? objectValue(invoke(condition.objectFrom, undefined, [ctx]))
+        if (condition.objectFrom && property(object, Symbol.toStringTag) === 'Module')
+          throw new TypeError('call.from requires a fixture object; use call(namespace, key) for modules')
+        const check = condition.check
+        const resolved =
+          'argsFrom' in check ? { ...check, args: arrayValue(invoke(check.argsFrom, undefined, [ctx])) } : check
+        return this.#calls.bind({ ...condition, object, check: resolved })
+      })
+      const instruments = new MethodPatch(overlayMocks(node.mocks, item.mocks), calls, node.bp.target)
+      let failed = false,
+        originalError
+      try {
+        timer.enter('args')
+        const args =
+          item.args.kind === 'value' ? item.args.value : arrayValue(invoke(item.args.build, undefined, [ctx]))
+        if (!Array.isArray(args)) throw new TypeError('argsFrom must return an array')
+        timer.enter('target')
+        let rawValue
+        let outcomeKind: TargetOutcome['kind'] = 'return'
+        try {
+          const target = node.bp.target
+          rawValue = valueOf(
+            await (target.kind === 'method'
+              ? invoke(methodValue(target.object, target.key), target.object, args)
+              : invoke(target.fn, undefined, args)),
+          )
+        } catch (error) {
+          rawValue = valueOf(error)
+          outcomeKind = 'throw'
+        }
+        instruments.stopRecording()
+        const outcome: TargetOutcome = { kind: outcomeKind, value: diagnostic(rawValue) }
+        record.outcome = outcome
+        timer.enter('expect')
+        const evaluated = evaluate({ ...item, calls }, ctx, outcome, rawValue, instruments.records, this.#comparison)
+        record.failures.push(...evaluated.failures)
+        record.assertions.push(...evaluated.assertions)
+        if (record.failures.length) throw new CaseFailed()
+      } catch (error) {
+        failed = true
+        originalError = valueOf(error)
+      }
+      timer.enter('cleanup')
+      const errors = instruments.restore()
+      if (errors.length) throw new CleanupFault(failed ? [originalError, ...errors] : errors)
+      if (failed) throw originalError
+    }
+    const runFrame = async (index: number, ctx: Fields): Promise<void> => {
+      if (timer.expired()) return
+      if (index === node.frames.length) return core(Object.freeze(ctx))
+      const frame = node.frames[index]
+      const walkSteps = async (stepIndex: number, current: Fields): Promise<void> => {
+        if (stepIndex === frame.steps.length) return runFrame(index + 1, { ...current, ...frame.fields })
+        return withMiddleware(
+          frame.steps[stepIndex],
+          Object.freeze(current),
+          (fields) => walkSteps(stepIndex + 1, { ...current, ...fields }),
+          () => events.timedOut(),
+        )
+      }
+      return walkSteps(0, ctx)
+    }
+    try {
+      await runFrame(0, {})
+    } catch (error) {
+      const fault = classifyAttemptError(valueOf(error), timer.stage)
+      record.failures.push(...fault.failures)
+      record.cleanup = fault.cleanup
+      record.retryable = fault.retryable
+      // タイムアウトはrunを打ち切る理由として強く、後処理の失敗で上書きしない。
+      if (fault.abort && tracker.reason !== 'timeout') tracker.abort(fault.abort)
+    } finally {
+      timer.clear()
+    }
+    const overdue = timer.overdue()
+    if (overdue) {
+      tracker.abort('timeout')
+      record.failures.push(
+        failure('timeout', overdue.stage, `attempt exceeded ${config.timeout}ms`, {
+          timeoutMs: config.timeout,
+          cleanup: record.cleanup,
+        }),
       )
     }
-    return walkSteps(0, ctx)
-  }
-  try {
-    await runFrame(0, {})
-  } catch (error) {
-    const fault = classifyAttemptError(valueOf(error), timer.stage)
-    record.failures.push(...fault.failures)
-    record.cleanup = fault.cleanup
-    record.retryable = fault.retryable
-    // タイムアウトはrunを打ち切る理由として強く、後処理の失敗で上書きしない。
-    if (fault.abort && tracker.reason !== 'timeout') tracker.abort(fault.abort)
-  } finally {
-    timer.clear()
-  }
-  const overdue = timer.overdue()
-  if (overdue) {
-    tracker.abort('timeout')
-    record.failures.push(
-      failure('timeout', overdue.stage, `attempt exceeded ${config.timeout}ms`, {
-        timeoutMs: config.timeout,
-        cleanup: record.cleanup,
-      }),
-    )
-  }
-  if (record.failures.some((x) => x.kind === 'timeout')) tracker.abort('timeout')
-  return {
-    result: finalizeAttempt(record, item.calls, number, now() - started, tracker.reason),
-    retryable: record.retryable,
+    if (record.failures.some((x) => x.kind === 'timeout')) tracker.abort('timeout')
+    return {
+      result: finalizeAttempt(record, item.calls, number, now() - started, tracker.reason),
+      retryable: record.retryable,
+    }
   }
 }

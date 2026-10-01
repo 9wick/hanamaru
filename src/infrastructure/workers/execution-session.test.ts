@@ -1,6 +1,5 @@
 import { expect, test } from 'vite-plus/test'
 import type { Value } from '../../foundation/value.js'
-import * as comparison from '../comparison.js'
 import { CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
 import type { ExecutionCommand, ExecutionMessage } from './protocol.js'
 
@@ -58,7 +57,7 @@ test('a command that arrives after the taker hands it over directly', async () =
 
 test('the session reports a timeout with the phase its tracker last marked', () => {
   const sent: ExecutionMessage[] = []
-  const session = new ExecutionSession((message) => sent.push(message), comparison)
+  const session = new ExecutionSession((message) => sent.push(message))
   session.events.timedOut()
   session.tracker.markPhase('target')
   session.events.timedOut()
@@ -68,16 +67,9 @@ test('the session reports a timeout with the phase its tracker last marked', () 
   ])
 })
 
-test('the session hands its tracker and events to the attempt services', () => {
-  const session = new ExecutionSession(() => {}, comparison)
-  expect(session.services.tracker).toBe(session.tracker)
-  expect(session.services.events).toBe(session.events)
-  expect(session.services.comparison).toBe(comparison)
-})
-
 test('the session asks for compilation through the worker protocol', () => {
   const sent: ExecutionMessage[] = []
-  const session = new ExecutionSession((message) => sent.push(message), comparison)
+  const session = new ExecutionSession((message) => sent.push(message))
   void session.compiles.request('getBuiltins', [])
   expect(sent).toStrictEqual([{ type: 'compile', id: 0, name: 'getBuiltins', args: [] }])
 })

@@ -12,7 +12,7 @@ import { invoke, required, valueOf } from '../../foundation/value.js'
 import type { GroupReply } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
-import type { AttemptServices } from './services.js'
+import type { RunEvents, RunTracker } from './services.js'
 import { StageTimer } from './services.js'
 import type { Stage } from './state.js'
 
@@ -201,29 +201,40 @@ function groupMiddlewareOutcome(
   return { middleware: { status: 'failed', durationMs, failures, cleanup }, abort }
 }
 
-export async function executeGroupMiddleware(
-  node: GroupNode,
-  body: (fields: Fields) => Promise<void>,
-  services: AttemptServices,
-  onStage: (stage: Stage, timeoutMs: number) => void,
-): Promise<GroupReply> {
-  const { tracker, events } = services
-  const started = now()
-  try {
-    await withMiddleware(
-      required(node.bp.middleware),
-      Object.freeze(node.stable ?? {}),
-      body,
-      () => {
-        tracker.abort('timeout')
-        events.timedOut()
-      },
-      onStage,
-    )
-    return { middleware: passedMiddleware(now() - started), reason: tracker.reason }
-  } catch (error) {
-    const outcome = groupMiddlewareOutcome(valueOf(error), now() - started)
-    if (outcome.abort) tracker.abort(outcome.abort)
-    return { middleware: outcome.middleware, reason: tracker.reason }
+/** group middlewareで子を囲む。囲む相手と、区間の変わり目を見る相手は呼び出しごとに決まるため引数で受け取る。 */
+export class GroupMiddlewareExecutor {
+  readonly #tracker: RunTracker
+  readonly #events: RunEvents
+
+  constructor(tracker: RunTracker, events: RunEvents) {
+    this.#tracker = tracker
+    this.#events = events
+  }
+
+  async execute(
+    node: GroupNode,
+    body: (fields: Fields) => Promise<void>,
+    onStage: (stage: Stage, timeoutMs: number) => void,
+  ): Promise<GroupReply> {
+    const tracker = this.#tracker
+    const events = this.#events
+    const started = now()
+    try {
+      await withMiddleware(
+        required(node.bp.middleware),
+        Object.freeze(node.stable ?? {}),
+        body,
+        () => {
+          tracker.abort('timeout')
+          events.timedOut()
+        },
+        onStage,
+      )
+      return { middleware: passedMiddleware(now() - started), reason: tracker.reason }
+    } catch (error) {
+      const outcome = groupMiddlewareOutcome(valueOf(error), now() - started)
+      if (outcome.abort) tracker.abort(outcome.abort)
+      return { middleware: outcome.middleware, reason: tracker.reason }
+    }
   }
 }

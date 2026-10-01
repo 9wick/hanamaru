@@ -6,7 +6,7 @@ import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { RunSettings } from '../execution/options.js'
 import { createPlan } from '../execution/plan.js'
-import { runPlan } from '../execution/runner.js'
+import { createRunWalker } from '../execution/runner.js'
 import type { RunListeners } from '../execution/services.js'
 import { createRunServices } from '../execution/services.js'
 import type { CollectionHost, CollectionRuntime, ModuleCompiler } from '../ports/collection-host.js'
@@ -197,7 +197,7 @@ export class CollectionSession {
     this.#send({ type: 'running', reporter: limits.reporter, shutdownGrace: limits.shutdownGrace })
     let result
     try {
-      result = await runPlan(plan, settings, { comparison: this.#host.comparison, run, executor: execution, signal })
+      result = await createRunWalker(run, this.#host.comparison, execution).run(() => plan, settings, signal)
     } finally {
       await execution.close()
     }
