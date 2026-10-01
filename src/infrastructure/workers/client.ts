@@ -1,8 +1,7 @@
 import { Worker } from 'node:worker_threads'
 import * as v from 'valibot'
-import type { RunEvents, RunTracker } from '../../application/execution/services.js'
-import type { ExecutionServices, ExecutionSpec } from '../../application/ports/collection-host.js'
-import type { AttemptReply, Executor, GroupReply } from '../../application/ports/executor.js'
+import type { RunEvents, RunServices, RunTracker } from '../../application/execution/services.js'
+import type { AttemptReply, ExecutionServices, ExecutionSpec, GroupReply } from '../../application/ports/executor.js'
 import type { ModuleInvoke } from '../../application/ports/module-loader.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
@@ -42,58 +41,64 @@ export class RequestTable {
 }
 
 /**
- * 実行workerをExecutorとして扱う。worker・返信待ち・立ち上がりの約束・畳んだかどうかを自分で持ち、
- * runの進み具合はattachで預かったtrackerとeventsへ渡す。
+ * 実行workerをExecutorとして扱う。返信待ち・立ち上がりの約束・畳んだかどうかを自分で持ち、
+ * runの進み具合は組み立て時に受け取ったtrackerとeventsへ渡す。
+ * 走らせる計画はworkerを立てるときにしか渡せないため、workerはstartで初めて起動する。
  */
-class WorkerExecutor {
+export class WorkerExecutor {
   readonly #requests = new RequestTable()
-  readonly #interrupt = () => this.#worker.postMessage({ type: 'interrupt' })
+  readonly #interrupt = () => this.#post({ type: 'interrupt' })
   /** workerが死んだ瞬間に待っている全部へ同じ失敗を渡すため、listenerへそのまま預けられる形で持つ。 */
   readonly #fail = (error: Value) => {
     this.#fatal = error
     required(this.#failReady)(error)
     this.#requests.abandon(error)
   }
-  readonly #worker: Worker
+  readonly #workerURL: URL
+  readonly #tracker: RunTracker
+  readonly #events: RunEvents
   readonly #signal: AbortSignal | undefined
   readonly #onLoading: (file: string) => void
   readonly #invoke: ModuleInvoke
-  readonly #ready: Promise<void>
+  #worker: Worker | null = null
   #openReady: (() => void) | null = null
   #failReady: ((error: Value) => void) | null = null
-  #tracker: RunTracker | null = null
-  #events: RunEvents | null = null
   #closing = false
   #fatal: Value = undefined
 
-  constructor(
-    workerURL: URL,
-    { roots, preparation, shape }: ExecutionSpec,
-    { signal, onLoading, invoke }: ExecutionServices,
-  ) {
+  constructor(workerURL: URL, { tracker, events }: RunServices, { signal, onLoading, invoke }: ExecutionServices) {
+    this.#workerURL = workerURL
+    this.#tracker = tracker
+    this.#events = events
     this.#signal = signal
     this.#onLoading = onLoading
     this.#invoke = invoke
-    this.#ready = new Promise<void>((resolve, reject) => {
-      this.#openReady = resolve
-      this.#failReady = reject
-    })
-    this.#worker = new Worker(workerURL, {
-      workerData: { role: 'execution', roots, preparation, shape },
-    })
-    signal?.addEventListener('abort', this.#interrupt)
-    if (signal?.aborted) this.#interrupt()
-    this.#worker.on('error', this.#fail)
-    this.#worker.on('exit', (code) => {
-      if (!this.#closing) this.#fail(new Error(`execution worker exited (${code})`))
-    })
-    this.#worker.on('message', (input) => this.#receive(input))
+  }
+
+  #post(message: Value): void {
+    required(this.#worker, 'execution worker is not started').postMessage(message)
   }
 
   /** 立ち上がりで落ちたworkerは残しておけない。畳んでから失敗を返す。 */
-  async start(): Promise<void> {
+  async start({ roots, preparation, shape }: ExecutionSpec): Promise<void> {
+    this.#onLoading('execution worker setup')
+    const ready = new Promise<void>((resolve, reject) => {
+      this.#openReady = resolve
+      this.#failReady = reject
+    })
+    const worker = new Worker(this.#workerURL, {
+      workerData: { role: 'execution', roots, preparation, shape },
+    })
+    this.#worker = worker
+    this.#signal?.addEventListener('abort', this.#interrupt)
+    if (this.#signal?.aborted) this.#interrupt()
+    worker.on('error', this.#fail)
+    worker.on('exit', (code) => {
+      if (!this.#closing) this.#fail(new Error(`execution worker exited (${code})`))
+    })
+    worker.on('message', (input) => this.#receive(input))
     try {
-      await this.#ready
+      await ready
     } catch (error) {
       await this.close()
       throw error
@@ -108,10 +113,10 @@ class WorkerExecutor {
       this.#invoke(message.name, message.args)
         .then(
           (result) => {
-            if (!this.#closing) this.#worker.postMessage({ type: 'compiled', id: message.id, result })
+            if (!this.#closing) this.#post({ type: 'compiled', id: message.id, result })
           },
           (error) => {
-            if (!this.#closing) this.#worker.postMessage({ type: 'compiled', id: message.id, error: errorStack(error) })
+            if (!this.#closing) this.#post({ type: 'compiled', id: message.id, error: errorStack(error) })
           },
         )
         .catch(this.#fail)
@@ -120,15 +125,13 @@ class WorkerExecutor {
     else if (message.type === 'error') this.#fail(new Error(message.message))
     else if (message.type === 'reply') {
       if (!this.#requests.has(message.id)) return this.#fail(new Error('unexpected execution reply'))
-      if ('reason' in message.value && message.value.reason) this.#tracker?.abort(message.value.reason)
+      if ('reason' in message.value && message.value.reason) this.#tracker.abort(message.value.reason)
       this.#requests.settle(message.id, message.value)
     } else if (message.type === 'timeout') {
-      if (!this.#tracker || !this.#events) return this.#fail(new Error('execution state is not attached'))
       this.#tracker.abort('timeout')
       if (message.phase) this.#tracker.markPhase(message.phase)
       this.#events.timedOut()
     } else if (message.type === 'group-stage') {
-      if (!this.#tracker || !this.#events) return this.#fail(new Error('execution state is not attached'))
       if (message.stage === 'inside' || message.stage === 'end') this.#events.deadline({ kind: 'end' })
       else {
         this.#tracker.begin({
@@ -150,12 +153,7 @@ class WorkerExecutor {
   #request(command: CommandInput): Promise<ReplyValue> {
     if (this.#fatal) return Promise.reject(this.#fatal)
     if (this.#closing) return Promise.reject(new Error('execution worker is closed'))
-    return this.#requests.open((id) => this.#worker.postMessage({ ...command, id }))
-  }
-
-  attach(tracker: RunTracker, events: RunEvents): void {
-    this.#tracker = tracker
-    this.#events = events
+    return this.#requests.open((id) => this.#post({ ...command, id }))
   }
 
   async attempt(path: number[], number: number): Promise<AttemptReply> {
@@ -186,17 +184,6 @@ class WorkerExecutor {
   async close(): Promise<void> {
     this.#closing = true
     this.#signal?.removeEventListener('abort', this.#interrupt)
-    await this.#worker.terminate()
+    await this.#worker?.terminate()
   }
-}
-
-export async function openExecution(
-  workerURL: URL,
-  spec: ExecutionSpec,
-  services: ExecutionServices,
-): Promise<Executor> {
-  services.onLoading('execution worker setup')
-  const executor = new WorkerExecutor(workerURL, spec, services)
-  await executor.start()
-  return executor
 }

@@ -8,7 +8,6 @@ import type {
   MutableNodeResult,
   MutableRunResult,
   MutableTestResult,
-  Reason,
 } from '../../domain/result/mutable.js'
 import { required } from '../../foundation/value.js'
 import type { Comparison } from '../ports/comparison.js'
@@ -19,29 +18,27 @@ import { runExclusively } from './current-run.js'
 import { CaseFailed } from './faults.js'
 import { executeGroupMiddleware } from './middleware.js'
 import { allCases } from './plan.js'
-import { ProgressStore } from './progress.js'
 import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, resultFailed } from './results.js'
 import type { RunSettings } from './options.js'
-import type { AttemptServices, RunListeners } from './services.js'
-import { RunEvents, RunTracker } from './services.js'
+import type { RunServices } from './services.js'
 import type { Progress } from './state.js'
 
 /** 計画を辿る間だけ使う、組み立て済みのサービス一式。外から受け取る形はRunDependencies。 */
-type RunServices = AttemptServices & { readonly results: ProgressStore; readonly executor: Executor | null }
+type TraversalServices = RunServices & { readonly comparison: Comparison; readonly executor: Executor | null }
 
 /** runが外から受け取るサービス。設定値はRunSettingsとして別に渡す。 */
 export type RunDependencies = {
   readonly comparison: Comparison
+  readonly run: RunServices
   readonly executor?: Executor | null
   readonly signal?: AbortSignal
-  readonly listeners?: RunListeners
 }
 
 /**
  * 確定した結果は、手元の部分結果ツリーと外向きの通知の両方に同じprogressで渡す。
  * 打ち切り時の結果は受け取り手がprogressから組み立てた木と一致していなければならないため、片方だけを更新しない。
  */
-function publish(services: RunServices, progress: Progress): void {
+function publish(services: TraversalServices, progress: Progress): void {
   services.results.apply(progress)
   services.events.progress(progress)
 }
@@ -52,7 +49,7 @@ async function runCase(
   index: number,
   path: number[],
   only: boolean,
-  services: RunServices,
+  services: TraversalServices,
 ): Promise<MutableCaseResult> {
   const { tracker, events } = services
   const base = caseBase(node.config, item, index, path)
@@ -81,7 +78,7 @@ async function runTestNode(
   node: SuiteNode,
   path: number[],
   only: boolean,
-  services: RunServices,
+  services: TraversalServices,
 ): Promise<MutableTestResult> {
   const cases: MutableCaseResult[] = []
   for (const [index, item] of node.bp.cases.entries()) {
@@ -96,7 +93,7 @@ async function runGroupNode(
   node: GroupNode,
   path: number[],
   only: boolean,
-  services: RunServices,
+  services: TraversalServices,
 ): Promise<MutableGroupResult> {
   const { tracker, events } = services
   const children: MutableGroupResult['children'] = []
@@ -175,25 +172,13 @@ async function runNode(
   node: ExecutionNode,
   path: number[],
   only: boolean,
-  services: RunServices,
+  services: TraversalServices,
 ): Promise<MutableNodeResult> {
   // testの中身はcaseごとに通知済みなので、節として追加で知らせるのはgroupのmiddlewareだけ。
   if (node.kind === 'test') return runTestNode(node, path, only, services)
   const value = await runGroupNode(node, path, only, services)
   publish(services, { kind: 'group', path, middleware: value.middleware })
   return value
-}
-
-/** いまの部分結果を、与えられた理由で打ち切った結果として複製する。実行中の1件も反映する。 */
-function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason): MutableRunResult {
-  const partial = required(results.result)
-  const snapshot = new ProgressStore()
-  snapshot.apply({
-    kind: 'init',
-    result: structuredClone({ ...partial, status: reason === 'timeout' ? 'failed' : partial.status, reason }),
-  })
-  if (tracker.active) snapshot.apply(tracker.activeProgress(reason))
-  return required(snapshot.result)
 }
 
 export async function runPlan(plan: Plan, settings: RunSettings, dependencies: RunDependencies) {
@@ -214,16 +199,12 @@ async function executeRun(
   settings: RunSettings,
   dependencies: RunDependencies,
 ): Promise<MutableRunResult> {
-  const { comparison, executor = null, signal, listeners } = dependencies
+  const { comparison, run, executor = null, signal } = dependencies
   const { nodes, only } = buildPlan()
-  const tracker = new RunTracker(signal?.aborted ? 'interrupted' : null)
-  const results = new ProgressStore()
-  const events = new RunEvents({
-    onProgress: listeners?.onProgress,
-    onDeadline: listeners?.onDeadline,
-    onTimeout: () => listeners?.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
-  })
-  const services: RunServices = { comparison, tracker, events, results, executor }
+  const { tracker } = run
+  // 走り出す前に中断されていた実行は、1件も動かさずに打ち切った姿で返す。
+  if (signal?.aborted) tracker.interrupt()
+  const services: TraversalServices = { ...run, comparison, executor }
   // 実行前の結果は、全てを実行しなかった姿。ここから完了したものだけを差し替えていく。
   publish(services, {
     kind: 'init',
@@ -234,7 +215,6 @@ async function executeRun(
       tests: nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only)),
     },
   })
-  executor?.attach(tracker, services.events)
   const interrupt = () => tracker.interrupt()
   signal?.addEventListener('abort', interrupt)
   const tests: MutableNodeResult[] = []

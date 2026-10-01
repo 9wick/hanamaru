@@ -2,6 +2,7 @@ import { expect, test } from 'vite-plus/test'
 import { Test, middleware } from '../../index.js'
 import * as comparison from '../../infrastructure/comparison.js'
 import { ProgressStore } from './progress.js'
+import { createRunServices } from './services.js'
 
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
@@ -30,7 +31,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
       {},
       {
         comparison,
-        listeners: {
+        run: createRunServices({
           onProgress(progress) {
             bytes += JSON.stringify(progress).length
             store.apply(structuredClone(progress))
@@ -38,7 +39,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
           onDeadline(deadline) {
             bytes += JSON.stringify(deadline).length
           },
-        },
+        }),
       },
     )
     expect(store.result?.tests).toEqual(result.tests)
@@ -72,7 +73,7 @@ test('the progress stream reconstructs nested groups, skips and retries', async 
     {},
     {
       comparison,
-      listeners: { onProgress: (progress) => store.apply(structuredClone(progress)) },
+      run: createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) }),
     },
   )
   expect(result.status).toBe('passed')
@@ -99,8 +100,8 @@ test('the progress stream reconstructs the cancelled tree after an interrupt', a
     {},
     {
       comparison,
+      run: createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) }),
       signal: controller.signal,
-      listeners: { onProgress: (progress) => store.apply(structuredClone(progress)) },
     },
   )
   expect(result.reason).toBe('interrupted')

@@ -13,7 +13,7 @@ import { readConfig } from '../filesystem/config.js'
 import { createModuleCompiler } from '../modules/compiler.js'
 import { ModuleRegistry, collectModulePreparation } from '../modules/reference.js'
 import { createModuleRuntime } from '../modules/runtime.js'
-import { openExecution } from './client.js'
+import { WorkerExecutor } from './client.js'
 import { describeExecutionPlan } from './plan-shape.js'
 import { cliWorkerDataSchema } from './schemas.js'
 export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void {
@@ -50,6 +50,6 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
     warn: (message) => {
       process.stderr.write(message)
     },
-    openExecution: (spec, services) => openExecution(executionWorkerURL, spec, services),
+    openExecution: (run, services) => new WorkerExecutor(executionWorkerURL, run, services),
   }).catch((error) => send({ type: 'error', message: errorStack(error) }))
 }

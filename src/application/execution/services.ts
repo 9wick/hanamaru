@@ -3,6 +3,7 @@ import type { ExecutionPhase } from '../../domain/result/types.js'
 import { required } from '../../foundation/value.js'
 import type { Comparison } from '../ports/comparison.js'
 import { now } from './clock.js'
+import { ProgressStore } from './progress.js'
 import type { ActiveExecution, Deadline, Progress } from './state.js'
 import { progressOf } from './state.js'
 
@@ -118,13 +119,9 @@ export class RunEvents {
 
 /** いま何を実行していて、なぜ打ち切るのかの持ち主。部分結果ツリーはProgressStoreが持つ。 */
 export class RunTracker {
-  #reason: Reason | null
+  #reason: Reason | null = null
   #active: ActiveExecution | null = null
   #phase: ExecutionPhase | null = null
-
-  constructor(reason: Reason | null = null) {
-    this.#reason = reason
-  }
 
   get reason(): Reason | null {
     return this.#reason
@@ -157,6 +154,40 @@ export class RunTracker {
   activeProgress(reason: Reason): Progress {
     return progressOf(required(this.#active, 'no active execution for progress'), this.#phase, reason)
   }
+}
+
+/** 1つのrunに属する可変状態の持ち主。計画の走査とexecutorが同じ物を見なければ打ち切りが噛み合わない。 */
+export type RunServices = {
+  readonly tracker: RunTracker
+  readonly events: RunEvents
+  readonly results: ProgressStore
+}
+
+/** いまの部分結果を、与えられた理由で打ち切った結果として複製する。実行中の1件も反映する。 */
+function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason): MutableRunResult {
+  const partial = required(results.result)
+  const snapshot = new ProgressStore()
+  snapshot.apply({
+    kind: 'init',
+    result: structuredClone({ ...partial, status: reason === 'timeout' ? 'failed' : partial.status, reason }),
+  })
+  if (tracker.active) snapshot.apply(tracker.activeProgress(reason))
+  return required(snapshot.result)
+}
+
+/**
+ * runの可変状態を組み立てる。executorはtrackerとeventsを組み立て時に受け取るため、
+ * 実行場所を開く前にこれを済ませておく必要がある。入口(ライブラリのrun・収集worker)だけが呼ぶ。
+ */
+export function createRunServices(listeners: RunListeners = {}): RunServices {
+  const tracker = new RunTracker()
+  const results = new ProgressStore()
+  const events = new RunEvents({
+    onProgress: listeners.onProgress,
+    onDeadline: listeners.onDeadline,
+    onTimeout: () => listeners.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
+  })
+  return { tracker, events, results }
 }
 
 /** attemptとgroup middlewareの実行が使うサービス。データは引数で別に渡す。 */

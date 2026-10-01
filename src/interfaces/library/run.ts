@@ -3,6 +3,7 @@ import type { RunOptions, RunSettings } from '../../application/execution/option
 import { createPlan } from '../../application/execution/plan.js'
 import { runActive } from '../../application/execution/runner.js'
 import type { RunListeners } from '../../application/execution/services.js'
+import { createRunServices } from '../../application/execution/services.js'
 import type { Comparison } from '../../application/ports/comparison.js'
 import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import type { TestDefinition } from '../../domain/definition/types.js'
@@ -37,8 +38,8 @@ export function createRun(comparison: Comparison) {
     return finalizeRun(
       await runActive(() => createPlan(collectBlueprints(input), received), received, {
         comparison,
+        run: createRunServices(received),
         signal: received.signal,
-        listeners: received,
       }),
     )
   }
