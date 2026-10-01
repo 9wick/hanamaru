@@ -1,5 +1,4 @@
-import type { Lifecycle } from '@zeltjs/core'
-import { Injectable, LifecycleManager, inject } from '@zeltjs/core'
+import { Injectable, inject } from '@zeltjs/core'
 import type { InlineConfig, UserConfig, ViteDevServer } from '@hanamaru/vite'
 import { createServer, mergeConfig } from '@hanamaru/vite'
 import type { FetchResult } from '@hanamaru/vite/module-runner'
@@ -41,36 +40,15 @@ export function preserveExportErrors(code: string) {
 }
 
 /**
- * 変換したコードを配るVite server。読んだpackage種別と取り寄せた結果を覚えるため、1つのscopeに1つだけ立てる。
- * vite設定は設定ファイルを読むまで決まらないため、開くのはstart。解放だけをscopeの終了に預ける。
+ * 変換の外に置くmoduleの見分け。読んだpackage種別を覚えるため、1つのcompilerに1つだけ持つ。
+ * server設定のpluginがこの見分けを呼ぶため、serverより先に組み立てる。
  */
-@Injectable()
-export class ModuleCompiler implements Lifecycle {
-  readonly #tsconfig: TsconfigResolver
+class ExternalModules {
   readonly #implementationRoot: string
-  readonly #runtimeURL: string
   readonly #packageTypes = new Map<string, string | undefined>()
-  readonly #records = new Map<string, Promise<FetchResult>>()
-  #server: ViteDevServer | undefined
-  #closing: Promise<void> | undefined
 
-  constructor(tsconfig = inject(TsconfigResolver), entry = inject(ModuleEntry), lifecycle = inject(LifecycleManager)) {
-    this.#tsconfig = tsconfig
-    this.#implementationRoot = dirname(fileURLToPath(entry.url))
-    this.#runtimeURL = entry.url.href
-    lifecycle.register(this)
-  }
-
-  /** 開く合図はstartが受け持つ。scopeの起動時にはまだvite設定が決まっていない。 */
-  startup(): void {}
-
-  shutdown(): Promise<void> {
-    return this.close()
-  }
-
-  async start(vite: UserConfig = {}): Promise<void> {
-    if (!vite || typeof vite !== 'object' || Array.isArray(vite)) throw new TypeError('vite must be a config object')
-    this.#server = await createServer(this.#serverConfig(vite))
+  constructor(implementationRoot: string) {
+    this.#implementationRoot = implementationRoot
   }
 
   #packageType(directory: string): string | undefined {
@@ -87,57 +65,27 @@ export class ModuleCompiler implements Lifecycle {
   }
 
   /** frameworkそのものとcommonjsは変換の外に置く。変換するとruntimeの同一性とrequireが壊れる。 */
-  #external(id: string): Extract<FetchResult, { externalize: string }> | undefined {
+  resolve(id: string): Extract<FetchResult, { externalize: string }> | undefined {
     const path = id.startsWith('file:') ? fileURLToPath(id) : id
     const commonjs = path.endsWith('.cjs') || (path.endsWith('.js') && this.#packageType(dirname(path)) === 'commonjs')
     if (path.startsWith(`${this.#implementationRoot}/`) || commonjs)
       return { externalize: pathToFileURL(path).href, type: commonjs ? 'commonjs' : 'module' }
   }
+}
 
-  #serverConfig(vite: UserConfig): InlineConfig {
-    const options = mergeConfig(
-      {
-        root: process.cwd(),
-        logLevel: 'silent',
-        resolve: { tsconfigPaths: true },
-        ssr: { noExternal: true },
-      },
-      vite,
-    )
-    const tsconfig = this.#tsconfig
-    return {
-      ...options,
-      configFile: false,
-      appType: 'custom',
-      clearScreen: false,
-      server: { ...vite.server, middlewareMode: true, watch: null, ws: false },
-      plugins: [
-        {
-          name: 'hanamaru-runtime',
-          enforce: 'pre',
-          resolveId: (source, importer) => {
-            if (source === 'hanamaru') return { id: this.#runtimeURL, external: true }
-            const id = source.startsWith('file:')
-              ? fileURLToPath(source)
-              : source.startsWith('.') && importer
-                ? resolve(dirname(importer), source)
-                : source
-            const found = this.#external(id)
-            if (found) return { id: found.externalize, external: true }
-          },
-        },
-        ...(vite.plugins ?? []),
-        {
-          name: 'hanamaru-js-paths',
-          enforce: 'post',
-          resolveId(source, importer) {
-            // Preserve the CLI's tsconfig paths support for JS test files, including files outside root.
-            if (!importer || !/\.[cm]?js$/.test(importer) || source.startsWith('.') || source.startsWith('/')) return
-            return tsconfig.resolve(source, pathToFileURL(importer).href)
-          },
-        },
-      ],
-    }
+/**
+ * 立ち上げたVite serverに繋がった、変換 1回ぶんの持ち場。
+ * 取り寄せた結果はこの持ち場に属し、同じ要求には同じ結果を返す。
+ */
+export class RunningCompiler {
+  readonly #server: ViteDevServer
+  readonly #externals: ExternalModules
+  readonly #records = new Map<string, Promise<FetchResult>>()
+  #closing: Promise<void> | undefined
+
+  constructor(server: ViteDevServer, externals: ExternalModules) {
+    this.#server = server
+    this.#externals = externals
   }
 
   async invoke(name: string, args: Value[]): Promise<Value> {
@@ -153,7 +101,7 @@ export class ModuleCompiler implements Lifecycle {
       args,
     )
     if (url.startsWith('file:')) {
-      const found = this.#external(url)
+      const found = this.#externals.resolve(url)
       if (found) return found
     }
     const key = JSON.stringify([url, importer, fetchOptions.startOffset])
@@ -162,10 +110,12 @@ export class ModuleCompiler implements Lifecycle {
   }
 
   async #fetch(url: string, importer: string | undefined, startOffset: number | undefined): Promise<FetchResult> {
-    const server = required(this.#server, 'module compiler was not started')
-    const result = await required(server.environments.ssr).fetchModule(url, importer, { startOffset, cached: false })
+    const result = await required(this.#server.environments.ssr).fetchModule(url, importer, {
+      startOffset,
+      cached: false,
+    })
     if ('file' in result && result.file) {
-      const found = this.#external(result.file)
+      const found = this.#externals.resolve(result.file)
       if (found) return found
     }
     return {
@@ -175,10 +125,79 @@ export class ModuleCompiler implements Lifecycle {
     }
   }
 
-  /** 二重に閉じても同じ約束を返す。開く前に畳まれたscopeでは閉じる相手がない。閉じたあとの取り寄せは受け付けない。 */
+  /** 二重に閉じても同じ約束を返す。閉じたあとの取り寄せは受け付けない。 */
   close(): Promise<void> {
-    const server = this.#server
-    this.#closing ??= server ? server.close() : Promise.resolve()
+    this.#closing ??= this.#server.close()
     return this.#closing
+  }
+}
+
+/**
+ * 変換したコードを配るVite serverを立ち上げる。
+ * vite設定は設定ファイルを読むまで決まらないため、立ち上げはstartで行い、開いた資源は返した持ち場が畳む。
+ */
+@Injectable()
+export class ModuleCompilerLauncher {
+  readonly #tsconfig: TsconfigResolver
+  readonly #implementationRoot: string
+  readonly #runtimeURL: string
+
+  constructor(tsconfig = inject(TsconfigResolver), entry = inject(ModuleEntry)) {
+    this.#tsconfig = tsconfig
+    this.#implementationRoot = dirname(fileURLToPath(entry.url))
+    this.#runtimeURL = entry.url.href
+  }
+
+  async start(vite: UserConfig = {}): Promise<RunningCompiler> {
+    if (!vite || typeof vite !== 'object' || Array.isArray(vite)) throw new TypeError('vite must be a config object')
+    const externals = new ExternalModules(this.#implementationRoot)
+    return new RunningCompiler(await createServer(this.#serverConfig(vite, externals)), externals)
+  }
+
+  #serverConfig(vite: UserConfig, externals: ExternalModules): InlineConfig {
+    const options = mergeConfig(
+      {
+        root: process.cwd(),
+        logLevel: 'silent',
+        resolve: { tsconfigPaths: true },
+        ssr: { noExternal: true },
+      },
+      vite,
+    )
+    const tsconfig = this.#tsconfig
+    const runtimeURL = this.#runtimeURL
+    return {
+      ...options,
+      configFile: false,
+      appType: 'custom',
+      clearScreen: false,
+      server: { ...vite.server, middlewareMode: true, watch: null, ws: false },
+      plugins: [
+        {
+          name: 'hanamaru-runtime',
+          enforce: 'pre',
+          resolveId: (source, importer) => {
+            if (source === 'hanamaru') return { id: runtimeURL, external: true }
+            const id = source.startsWith('file:')
+              ? fileURLToPath(source)
+              : source.startsWith('.') && importer
+                ? resolve(dirname(importer), source)
+                : source
+            const found = externals.resolve(id)
+            if (found) return { id: found.externalize, external: true }
+          },
+        },
+        ...(vite.plugins ?? []),
+        {
+          name: 'hanamaru-js-paths',
+          enforce: 'post',
+          resolveId(source, importer) {
+            // Preserve the CLI's tsconfig paths support for JS test files, including files outside root.
+            if (!importer || !/\.[cm]?js$/.test(importer) || source.startsWith('.') || source.startsWith('/')) return
+            return tsconfig.resolve(source, pathToFileURL(importer).href)
+          },
+        },
+      ],
+    }
   }
 }

@@ -7,7 +7,7 @@ import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import { ModuleFacades } from '../modules/facades.js'
 import { ModuleRegistry } from '../modules/reference.js'
-import { ModuleRuntime } from '../modules/runtime.js'
+import type { RunningRuntime } from '../modules/runtime.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionWorkerData } from './protocol.js'
 
@@ -17,27 +17,20 @@ import type { ExecutionWorkerData } from './protocol.js'
  */
 @Injectable()
 export class ExecutionLoader {
-  readonly #runtime: ModuleRuntime
   readonly #facades: ModuleFacades
   readonly #registry: ModuleRegistry
   readonly #channel: ExecutionChannel
 
-  constructor(
-    runtime = inject(ModuleRuntime),
-    facades = inject(ModuleFacades),
-    registry = inject(ModuleRegistry),
-    channel = inject(ExecutionChannel),
-  ) {
-    this.#runtime = runtime
+  constructor(facades = inject(ModuleFacades), registry = inject(ModuleRegistry), channel = inject(ExecutionChannel)) {
     this.#facades = facades
     this.#registry = registry
     this.#channel = channel
   }
 
-  async load(workerData: ExecutionWorkerData): Promise<Map<string, ExecutionNode>> {
+  async load(runtime: RunningRuntime, workerData: ExecutionWorkerData): Promise<Map<string, ExecutionNode>> {
     // 差し替える宛先は収集が決めたもの。moduleを読み込む前に台を据える。
     this.#facades.prepare(workerData.preparation)
-    const definitions = await this.#reimport(workerData)
+    const definitions = await this.#reimport(runtime, workerData)
     const plan = createPlan(validatedBlueprints(definitions))
     if (JSON.stringify(this.#registry.describe(plan.allNodes)) !== workerData.shape)
       throw new TypeError('test definitions changed between collection and execution')
@@ -45,7 +38,7 @@ export class ExecutionLoader {
   }
 
   /** 読み込みはCollectionLogを開いた間だけ記録される。収集時と同じ並び順でなければ突き合わせられない。 */
-  async #reimport(workerData: ExecutionWorkerData): Promise<RuntimeDefinitionHandle[]> {
+  async #reimport(runtime: RunningRuntime, workerData: ExecutionWorkerData): Promise<RuntimeDefinitionHandle[]> {
     const log = new CollectionLog()
     const definitions: RuntimeDefinitionHandle[] = []
     await collectWithin(log, async () => {
@@ -53,7 +46,7 @@ export class ExecutionLoader {
       for (const root of workerData.roots) {
         if (!files.has(root.file)) {
           this.#channel.loading(root.file)
-          await this.#runtime.import(root.file)
+          await runtime.import(root.file)
           files.add(root.file)
         }
         const registered = log.registrationsIn(root.file)[root.index]

@@ -6,11 +6,18 @@ import { RunTracker } from '../../application/execution/services.js'
 import type { Fields } from '../../domain/definition/runtime.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
 import { required } from '../../foundation/value.js'
-import { ModuleRuntime } from '../modules/runtime.js'
+import type { RunningRuntime } from '../modules/runtime.js'
 import { CommandQueue, ChannelRunEvents } from './execution-session.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand } from './protocol.js'
 import { RuntimeCalls } from './runtime-calls.js'
+
+/** 1回ぶんの持ち場。読み直した計画と、その計画が指すmoduleを差し替えるruntimeは同じ1回に属する。 */
+interface Serving {
+  nodes: Map<string, ExecutionNode>
+  runtime: RunningRuntime
+  calls: CallBinder
+}
 
 /** 囲んでいる最中のgroup。開いた順に積み、閉じるまで子のframeとfieldsに効く。 */
 interface ActiveGroup {
@@ -41,38 +48,30 @@ export class ExecutionServer {
   readonly #tracker: RunTracker
   readonly #attempts: AttemptExecutor
   readonly #groupMiddleware: GroupMiddlewareExecutor
-  readonly #runtime: ModuleRuntime
   readonly #channel: ExecutionChannel
   readonly #events: RunEvents
-  readonly #calls: CallBinder
 
   constructor(
     commands = inject(CommandQueue),
     tracker = inject(RunTracker),
     attempts = inject(AttemptExecutor),
     groupMiddleware = inject(GroupMiddlewareExecutor),
-    runtime = inject(ModuleRuntime),
     channel = inject(ExecutionChannel),
   ) {
     this.#commands = commands
     this.#tracker = tracker
     this.#attempts = attempts
     this.#groupMiddleware = groupMiddleware
-    this.#runtime = runtime
     this.#channel = channel
     this.#events = new ChannelRunEvents(channel, tracker)
-    this.#calls = new RuntimeCalls(runtime)
   }
 
-  /** 親が口を閉じるまで戻らない。 */
-  async serve(nodes: Map<string, ExecutionNode>): Promise<void> {
-    await this.#serve(nodes, [])
+  /** 親が口を閉じるまで戻らない。差し替える相手はこのworkerが開いたruntimeに属する。 */
+  async serve(nodes: Map<string, ExecutionNode>, runtime: RunningRuntime): Promise<void> {
+    await this.#serve({ nodes, runtime, calls: new RuntimeCalls(runtime) }, [])
   }
 
-  async #serve(
-    nodes: Map<string, ExecutionNode>,
-    groups: ActiveGroup[],
-  ): Promise<Extract<ExecutionCommand, { type: 'group-close' }>> {
+  async #serve(serving: Serving, groups: ActiveGroup[]): Promise<Extract<ExecutionCommand, { type: 'group-close' }>> {
     while (true) {
       const command = await this.#commands.take()
       if (command.type === 'group-close') {
@@ -81,9 +80,9 @@ export class ExecutionServer {
         return command
       }
       const key = JSON.stringify(command.type === 'attempt' ? command.path.slice(0, -1) : command.path)
-      const original = nodes.get(key)
+      const original = serving.nodes.get(key)
       if (!original) throw new TypeError('execution job references an unknown path')
-      const node = this.#runtime.bindNode(withGroups(original, groups))
+      const node = serving.runtime.bindNode(withGroups(original, groups))
       if (command.type === 'attempt') {
         if (node.kind !== 'test') throw new TypeError('attempt requires a test node')
         const item = node.bp.cases[required(command.path.at(-1))]
@@ -98,9 +97,9 @@ export class ExecutionServer {
         this.#tracker.markPhase('middleware')
         const result = await this.#attempts.execute(
           node,
-          this.#runtime.bindCase(item),
+          serving.runtime.bindCase(item),
           command.number,
-          this.#calls,
+          serving.calls,
           this.#events,
         )
         this.#tracker.end()
@@ -112,7 +111,7 @@ export class ExecutionServer {
           node,
           async (fields) => {
             this.#channel.reply(command.id, { entered: true })
-            closeState.command = await this.#serve(nodes, [
+            closeState.command = await this.#serve(serving, [
               ...groups,
               { path: command.path, frameCount: node.frameCount, fields },
             ])

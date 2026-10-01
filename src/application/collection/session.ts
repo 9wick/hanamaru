@@ -9,6 +9,7 @@ import { runExclusively } from '../execution/current-run.js'
 import { createPlan } from '../execution/plan.js'
 import { RunWalker } from '../execution/runner.js'
 import { RunSnapshot } from '../execution/services.js'
+import type { ModuleSession } from '../ports/collection-host.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { ExecutionSpec } from '../ports/executor.js'
@@ -64,7 +65,7 @@ interface Planned {
 
 /**
  * 1回の収集と実行を進める。test runtimeの資源は選んだファイルが決まってから開き、
- * 解放はこの一式を抱えるscopeに委ねる。
+ * 開いたあとはこの手順が畳むところまで持つ。
  */
 @Injectable()
 export class CollectionSession {
@@ -103,9 +104,14 @@ export class CollectionSession {
       const limits = collectionLimits(request.options, config)
       const files = this.#select(request, config)
       this.#events.loading('test runtime setup', limits.timeout)
-      await this.#modules.start(config.vite)
-      const collected = await this.#collect(files, limits.timeout, collecting)
-      await this.#execute(this.#plan(collected, request), limits, signal)
+      const modules = await this.#modules.open(config.vite)
+      try {
+        const collected = await this.#collect(modules, files, limits.timeout, collecting)
+        await this.#execute(modules, this.#plan(modules, collected, request), limits, signal)
+      } finally {
+        // 畳む途中の失敗も収集の失敗と同じ通り道で伝える。
+        await modules.close()
+      }
     } catch (error) {
       const context = collecting.file
         ? `while collecting ${this.#files.relative(collecting.file.file)}${projectsOf(collecting.file.projects)}: `
@@ -132,6 +138,7 @@ export class CollectionSession {
 
   /** 読み込みはCollectionLogを開いた間だけ記録される。読み込み順が登録順で、実行側もその順に突き合わせる。 */
   async #collect(
+    modules: ModuleSession,
     files: SelectedFile[],
     timeout: number,
     collecting: { file: SelectedFile | null },
@@ -145,7 +152,7 @@ export class CollectionSession {
       for (const { file, projects } of files) {
         collecting.file = { file, projects }
         this.#events.loading(file, timeout)
-        await this.#modules.import(file)
+        await modules.import(file)
         const registered = log.registrationsIn(file)
         if (!registered.length)
           throw new TypeError(`no tests registered in ${this.#files.relative(file)}${projectsOf(projects)}`)
@@ -170,7 +177,7 @@ export class CollectionSession {
     return { definitions, roots, sources }
   }
 
-  #plan({ definitions, roots, sources }: Collected, request: CollectionRequest): Planned {
+  #plan(modules: ModuleSession, { definitions, roots, sources }: Collected, request: CollectionRequest): Planned {
     const settings: RunSettings = {
       forbidOnly: request.options.ci,
       failOnFlaky: request.options.failOnFlaky,
@@ -184,17 +191,22 @@ export class CollectionSession {
       sources: nodeSources(plan.allNodes, sources),
       spec: {
         roots,
-        preparation: this.#modules.prepare(blueprints),
-        shape: JSON.stringify(this.#modules.describe(plan.allNodes)),
+        preparation: modules.prepare(blueprints),
+        shape: JSON.stringify(modules.describe(plan.allNodes)),
       },
     }
   }
 
-  async #execute({ plan, settings, spec, sources }: Planned, limits: CollectionLimits, signal: AbortSignal) {
+  async #execute(
+    modules: ModuleSession,
+    { plan, settings, spec, sources }: Planned,
+    limits: CollectionLimits,
+    signal: AbortSignal,
+  ) {
     // 1回のrunの通知は収集のprotocolへ出す。出どころを付けられるのは計画が組み上がったこの時点から。
     const events = new CollectionRunEvents(this.#events, sources, this.#snapshot)
     const execution = await this.#executor.start(events, spec, {
-      invoke: (name, args) => this.#modules.invoke(name, args),
+      invoke: (name, args) => modules.invoke(name, args),
       signal,
       onLoading: (file) => this.#events.loading(file, limits.timeout),
     })

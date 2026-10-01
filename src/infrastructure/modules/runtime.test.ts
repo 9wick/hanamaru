@@ -5,16 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, onTestFinished, test } from 'vite-plus/test'
-import type { ModulePreparation } from '../../application/ports/module-loader.js'
-import { ModuleTransport } from '../../application/ports/module-loader.js'
-import type { Value } from '../../foundation/value.js'
+import type { ModulePreparation, ModuleTransport } from '../../application/ports/module-loader.js'
 import { invoke, objectValue, property } from '../../foundation/value.js'
-import { ModuleCompiler } from './compiler.js'
+import { ModuleCompilerLauncher } from './compiler.js'
 import { ModuleEntry } from './entry.js'
 import { ModuleFacades } from './facades.js'
 import { ModuleRegistry } from './reference.js'
-import { ModuleRuntime } from './runtime.js'
-import { CompilerTransport } from './transport.js'
+import { ModuleRuntimeLauncher } from './runtime.js'
 
 @Config()
 class TestEntry extends ModuleEntry {
@@ -22,21 +19,10 @@ class TestEntry extends ModuleEntry {
 }
 
 /** 1つのscopeにつき1つのtest runtime。別のscopeは評価状態もmockの台帳も共有しない。 */
-async function scope(configs: ConfigClass<object>[]) {
+async function scope(configs: ConfigClass<object>[] = []) {
   const created = await createApp([]).createRuntime({ configs: [TestEntry, ...configs] })
   onTestFinished(() => created.shutdown())
   return created
-}
-
-/** 既にあるcompilerへ繋ぐ取り寄せ口。1つのcompilerを複数のscopeで分け合う場面で使う。 */
-function sharedTransport(source: ModuleTransport): ConfigClass<object> {
-  @Config()
-  class SharedTransport extends ModuleTransport {
-    invoke(name: string, args: Value[]): Promise<Value> {
-      return source.invoke(name, args)
-    }
-  }
-  return SharedTransport
 }
 
 /** 書き換えて読み直す場面があるため、fixtureは1件ごとに別のdirectoryへ置く。 */
@@ -52,17 +38,20 @@ function workspace() {
   }
 }
 
+/** 開いた持ち場は使い終わりに畳む。開けなかったrunには畳む相手がない。 */
 async function compiler() {
-  const created = await (await scope([CompilerTransport])).get(ModuleCompiler)
-  await created.start()
+  const created = await (await (await scope()).get(ModuleCompilerLauncher)).start()
+  onTestFinished(() => created.close())
   return created
 }
 
 /** 収集workerと同じ組み立て。差し替える宛先はmoduleを読み込む前に据える。 */
 async function runtime(transport: ModuleTransport, preparation: ModulePreparation[] = []) {
-  const open = await scope([sharedTransport(transport)])
+  const open = await scope()
   ;(await open.get(ModuleFacades)).prepare(preparation)
-  return open.get(ModuleRuntime)
+  const created = (await open.get(ModuleRuntimeLauncher)).start(transport)
+  onTestFinished(() => created.close())
+  return created
 }
 
 test('a module keeps one namespace per runtime and separate runtimes keep separate state', async () => {
@@ -81,9 +70,11 @@ test('a module keeps one namespace per runtime and separate runtimes keep separa
 
 test('the namespace of a module is registered in the registry that built it', async () => {
   const { file, url } = workspace().write('value.ts', 'export const value = 1\n')
-  const open = await scope([sharedTransport(await compiler())])
+  const transport = await compiler()
+  const open = await scope()
   const registry = await open.get(ModuleRegistry)
-  const loaded = await open.get(ModuleRuntime)
+  const loaded = (await open.get(ModuleRuntimeLauncher)).start(transport)
+  onTestFinished(() => loaded.close())
   // 台帳の見出しはViteが解決したmodule idで、import時のURLではない。準備の照合もこの見出しに従う。
   expect(registry.identify(await loaded.import(url))).toBe(file)
   expect(registry.identify(await loaded.import(file))).toBe(file)
@@ -158,11 +149,4 @@ test('closing twice keeps one shutdown and refuses later work', async () => {
   await closingCompiler
   await expect(loaded.import(url)).rejects.toThrow('module runtime is closed')
   await expect(transport.invoke('getBuiltins', [])).rejects.toThrow('module compiler is closed')
-})
-
-test('a compiler that was never started cannot fetch, and releasing it has nothing to close', async () => {
-  const { url } = workspace().write('unstarted.ts', 'export const value = 1\n')
-  const created = await (await scope([CompilerTransport])).get(ModuleCompiler)
-  await expect(created.invoke('fetchModule', [url, undefined, {}])).rejects.toThrow('was not started')
-  await expect(created.close()).resolves.toBeUndefined()
 })

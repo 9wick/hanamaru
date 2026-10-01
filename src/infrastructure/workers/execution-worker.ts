@@ -1,4 +1,6 @@
 import { Injectable, inject } from '@zeltjs/core'
+import { ModuleTransport } from '../../application/ports/module-loader.js'
+import { ModuleRuntimeLauncher } from '../modules/runtime.js'
 import { ExecutionChannel } from './execution-channel.js'
 import { ExecutionLoader } from './execution-loader.js'
 import { ExecutionServer } from './execution-server.js'
@@ -12,17 +14,23 @@ export class ExecutionWorker {
   readonly #loader: ExecutionLoader
   readonly #server: ExecutionServer
   readonly #channel: ExecutionChannel
+  readonly #runtimes: ModuleRuntimeLauncher
+  readonly #transport: ModuleTransport
 
   constructor(
     session = inject(ExecutionSession),
     loader = inject(ExecutionLoader),
     server = inject(ExecutionServer),
     channel = inject(ExecutionChannel),
+    runtimes = inject(ModuleRuntimeLauncher),
+    transport = inject(ModuleTransport),
   ) {
     this.#session = session
     this.#loader = loader
     this.#server = server
     this.#channel = channel
+    this.#runtimes = runtimes
+    this.#transport = transport
   }
 
   /** 親が口を閉じるまで戻らないため、待ち合わせずに走らせる。 */
@@ -30,11 +38,13 @@ export class ExecutionWorker {
     this.#channel.onMessage((message) => {
       if (!this.#session.receive(message)) this.#channel.fail(new Error('unexpected module compilation reply'))
     })
+    // 変換は親のportへ頼む。読み込みも差し替えもこのruntimeの中だけで起きる。
+    const runtime = this.#runtimes.start(this.#transport)
     this.#loader
-      .load(workerData)
+      .load(runtime, workerData)
       .then((nodes) => {
         this.#channel.ready()
-        this.#server.serve(nodes).catch((error: unknown) => this.#channel.fail(error))
+        this.#server.serve(nodes, runtime).catch((error: unknown) => this.#channel.fail(error))
       })
       .catch((error: unknown) => this.#channel.fail(error))
   }

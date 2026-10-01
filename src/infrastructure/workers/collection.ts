@@ -6,7 +6,6 @@ import { errorStack } from '../../foundation/errors.js'
 import { ValueComparison } from '../comparison.js'
 import { ProjectFilesystem } from '../filesystem/project-files.js'
 import { ModuleEntry } from '../modules/entry.js'
-import { CompilerTransport } from '../modules/transport.js'
 import { WorkerExecutionLauncher } from './client.js'
 import { CollectionChannel } from './collection-channel.js'
 import { CollectionWorker } from './collection-worker.js'
@@ -46,7 +45,6 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
         ValueComparison,
         StderrLog,
         CollectionChannel,
-        CompilerTransport,
         WorkerModuleToolchain,
         WorkerExecutionLauncher,
       ],
@@ -57,7 +55,7 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
       try {
         await worker.run(workerData)
       } finally {
-        // test runtimeの資源はこのscopeが持つ。畳む途中の失敗も収集の失敗と同じ通り道で伝える。
+        // scopeを畳む途中の失敗も収集の失敗と同じ通り道で伝える。
         await scope.shutdown().catch((error: unknown) => events.error(errorStack(released(error))))
       }
     })

@@ -1,30 +1,25 @@
-import type { Lifecycle } from '@zeltjs/core'
-import { Injectable, LifecycleManager, inject } from '@zeltjs/core'
+import { Injectable, inject } from '@zeltjs/core'
 import { pathToFileURL } from 'node:url'
+import type { ModuleTransport } from '../../application/ports/module-loader.js'
 import type { RuntimeCase } from '../../domain/definition/runtime.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
+import { FacadeEvaluator } from './evaluator.js'
 import { ModuleFacades } from './facades.js'
 import { FacadeRunner } from './runner.js'
 
-/** 組み立てたmodule runtime。差し替えの台帳を抱えるため、1つのscopeに1つだけ作る。 */
-@Injectable()
-export class ModuleRuntime implements Lifecycle {
+/**
+ * 組み立てたmodule runtime 1回ぶんの持ち場。
+ * 評価した状態と差し替えの台帳はこの持ち場に属するため、別の持ち場とは何も分け合わない。
+ */
+export class RunningRuntime {
   readonly #runner: FacadeRunner
   readonly #facades: ModuleFacades
   #closing: Promise<void> | undefined
 
-  constructor(runner = inject(FacadeRunner), facades = inject(ModuleFacades), lifecycle = inject(LifecycleManager)) {
+  constructor(runner: FacadeRunner, facades: ModuleFacades) {
     this.#runner = runner
     this.#facades = facades
-    // compilerより後に登録されるため、scopeの終了では runtime → compiler の順に畳まれる。
-    lifecycle.register(this)
-  }
-
-  startup(): void {}
-
-  shutdown(): Promise<void> {
-    return this.close()
   }
 
   /** 読み込む場所の表し方はpathでもURLでもよい。namespaceの見出しはViteが解決したmodule idに従う。 */
@@ -54,5 +49,24 @@ export class ModuleRuntime implements Lifecycle {
       mocks: item.mocks.map((entry) => this.#facades.bind(entry)),
       calls: item.calls.map((call) => (call.object === undefined ? call : this.#facades.bind(call))),
     }
+  }
+}
+
+/**
+ * module runtimeを組み立てる。
+ * 変換したコードの取り寄せ先は1回のrunごとに決まるため、繋ぐ相手はstartで受け取る。
+ */
+@Injectable()
+export class ModuleRuntimeLauncher {
+  readonly #facades: ModuleFacades
+  readonly #evaluator: FacadeEvaluator
+
+  constructor(facades = inject(ModuleFacades), evaluator = inject(FacadeEvaluator)) {
+    this.#facades = facades
+    this.#evaluator = evaluator
+  }
+
+  start(transport: ModuleTransport): RunningRuntime {
+    return new RunningRuntime(new FacadeRunner(this.#facades, this.#evaluator, transport), this.#facades)
   }
 }

@@ -1,5 +1,5 @@
-import type { ConfigClass, Lifecycle } from '@zeltjs/core'
-import { Config, createApp, inject, LifecycleManager } from '@zeltjs/core'
+import type { ConfigClass } from '@zeltjs/core'
+import { Config, createApp } from '@zeltjs/core'
 import { expect, test } from 'vite-plus/test'
 import { Test } from '../../index.js'
 import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
@@ -7,6 +7,7 @@ import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
 import { ValueComparison } from '../../infrastructure/comparison.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
+import type { ModuleSession } from '../ports/collection-host.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { RunEvents } from '../execution/services.js'
@@ -34,7 +35,7 @@ interface Options {
 
 /**
  * 収集の外側だけを本物にした場。資源の開閉と送った通知の順序を観察する。
- * test runtimeの資源はscopeが持つため、解放はscopeを畳んだときに記録される。
+ * test runtimeの資源は開いた持ち場が持つため、解放は収集の流れが畳んだときに記録される。
  */
 function harness(options: Options = {}) {
   const messages: string[] = []
@@ -75,36 +76,32 @@ function harness(options: Options = {}) {
     }
   }
 
-  @Config()
-  class TestModules extends ModuleToolchain implements Lifecycle {
-    #started = false
-
-    constructor(lifecycle = inject(LifecycleManager)) {
-      super()
-      lifecycle.register(this)
-    }
-    startup(): void {}
-    /** 開く前に畳まれたscopeでは閉じる相手がない。 */
-    shutdown(): void {
-      if (this.#started) closed.push('modules')
-    }
-    start(): Promise<void> {
-      this.#started = true
-      return Promise.resolve()
-    }
+  /** 開いたtest runtimeは1回ぶんの持ち場。開かなかったrunには畳む相手がない。 */
+  const testModules: ModuleSession = {
     import(file: string): Promise<Value> {
       options.importFile?.(file)
       recordCollectionEvent({ kind: 'registered', definition: definition(), origin: { file, line: 1, column: 1 } })
       return Promise.resolve(undefined)
-    }
+    },
     invoke(): Promise<Value> {
       return Promise.resolve(undefined)
-    }
+    },
     prepare(): [] {
       return []
-    }
+    },
     describe(_nodes: ExecutionNode[]): Value {
       return {}
+    },
+    close(): Promise<void> {
+      closed.push('modules')
+      return Promise.resolve()
+    },
+  }
+
+  @Config()
+  class TestModules extends ModuleToolchain {
+    open(): Promise<ModuleSession> {
+      return Promise.resolve(testModules)
     }
   }
 

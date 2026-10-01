@@ -167,11 +167,14 @@ applicationからinfrastructureへ求める契約の宛名になります。実�
 `@zeltjs/core` をimportできます（domain・foundationは引き続きValibotのみ）。
 
 scopeは1回のrunにつき1つです。CLIの親プロセスは1回の起動ごとに、収集worker・実行workerはworkerごとに、
-ライブラリの `run()` は呼び出しごとにscopeを立てて畳みます。実行の通知を受ける手(`RunEvents`)も
-結果の表示先(`ResultPresenter`)も宛名で、繋ぎ先は各起動ファイルが `configs` で選びます。公開APIの利用者がコンテナに触ることはありません。
-Vite serverやmodule runtimeの解放は `LifecycleManager` が登録の逆順で行うため、
-scopeを畳めば runtime → compiler の順に閉じます。runごとに変わる入力（収集の要求・vite設定・
-mockの準備・実行の計画）はConfigに載せず、メソッド引数として渡します。
+ライブラリの `run()` は呼び出しごとにscopeを立てて畳みます。結果の表示先(`ResultPresenter`)や
+実行の持ち場を開く口(`Executor`)は宛名で、繋ぎ先は各起動ファイルが `configs` で選びます。公開APIの利用者がコンテナに触ることはありません。
+
+runごとに変わる入力（収集の要求・vite設定・mockの準備・実行の計画・通知の受け取り手）はConfigに載せず、
+メソッド引数として渡します。1回ぶんの資源も同じで、Vite serverやmodule runtimeは
+立ち上げ役(`ModuleCompilerLauncher`・`ModuleRuntimeLauncher`・`WorkerExecutionLauncher`)が
+`start` で開いて持ち場(`RunningCompiler`・`RunningRuntime`・`RunningExecution`)を返し、
+開かせた流れが runtime → compiler の順に畳みます。開く前に終わったrunには畳む相手がありません。
 
 型・schema・unitテストは責務の所有者のそばに置きます。共通という理由だけで `shared.ts` や全体の `types/` に集めません。
 公開APIの契約を検証するテストは `src/index.ts` から読み込み、E2Eは引き続き `e2e/` に置きます。

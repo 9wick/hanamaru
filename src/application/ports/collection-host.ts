@@ -16,18 +16,22 @@ export abstract class ProjectFiles {
 }
 
 /**
- * test runtimeを立て、そこで読み込んだmoduleを見分ける一式。
+ * 開いたtest runtime一式。1回の収集ぶんの持ち場で、開いた資源は畳むところまでここが受け持つ。
  * prepareとdescribeは純粋な変換に見えるが、runtimeが組み立てたnamespaceの出自を知る台帳を見るため、
- * 資源を開く口と同じ持ち主でなければ噛み合わない。資源の解放はこの一式を抱えるscopeが受け持つ。
+ * 資源を開く口と同じ持ち主でなければ噛み合わない。
  */
+export interface ModuleSession {
+  import(file: string): Promise<Value>
+  invoke(name: string, args: Value[]): Promise<Value>
+  prepare(blueprints: RuntimeBlueprint[]): ModulePreparation[]
+  describe(nodes: ExecutionNode[]): Value
+  close(): Promise<void>
+}
+
+/** test runtimeを立てる口。vite設定は設定ファイルを読むまで決まらないため、組み立て時ではなくここで受け取る。 */
 @Config({ abstract: true })
 export abstract class ModuleToolchain {
-  /** vite設定は設定ファイルを読むまで決まらないため、組み立て時ではなくここで受け取る。 */
-  abstract start(vite: ProjectConfig['vite']): Promise<void>
-  abstract import(file: string): Promise<Value>
-  abstract invoke(name: string, args: Value[]): Promise<Value>
-  abstract prepare(blueprints: RuntimeBlueprint[]): ModulePreparation[]
-  abstract describe(nodes: ExecutionNode[]): Value
+  abstract open(vite: ProjectConfig['vite']): Promise<ModuleSession>
 }
 
 /** 人へ向けた警告の行き先。結果表示の通り道とは分ける。 */

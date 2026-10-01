@@ -1,27 +1,20 @@
-import { Injectable, inject } from '@zeltjs/core'
 import type { EvaluatedModuleNode, ResolvedResult, SSRImportMetadata } from '@hanamaru/vite/module-runner'
 import { ModuleRunner } from '@hanamaru/vite/module-runner'
 import * as v from 'valibot'
-import { ModuleTransport } from '../../application/ports/module-loader.js'
+import type { ModuleTransport } from '../../application/ports/module-loader.js'
 import { functionValue, invoke as invokeFunction, objectValue, property, valueOf } from '../../foundation/value.js'
-import { FacadeEvaluator } from './evaluator.js'
-import type { Namespace } from './facades.js'
-import { ModuleFacades } from './facades.js'
+import type { FacadeEvaluator } from './evaluator.js'
+import type { ModuleFacades, Namespace } from './facades.js'
 
 /**
  * Viteのmodule runnerを内側に持ち、読み込んだmoduleをnamespaceへ被せ替える。
  * Vite 8.3は読み込み結果を包む公開の口を持たないため、内部への接続はこのadapterの中だけに閉じる。
  */
-@Injectable()
 export class FacadeRunner {
   readonly #inner: ModuleRunner
   #closing: Promise<void> | undefined
 
-  constructor(
-    facades = inject(ModuleFacades),
-    evaluator = inject(FacadeEvaluator),
-    transport = inject(ModuleTransport),
-  ) {
+  constructor(facades: ModuleFacades, evaluator: FacadeEvaluator, transport: ModuleTransport) {
     const inner = new ModuleRunner(
       {
         hmr: false,
