@@ -6,6 +6,8 @@ const decoratorTransform = {
   include: /\/src\/.*\.ts$/,
   jsc: {
     target: 'es2022',
+    // デコレータの展開helperはファイルごとに数百行ある。取り込みにして配布物へ1つだけ入れる。
+    externalHelpers: true,
     parser: { syntax: 'typescript', decorators: true },
     transform: { decoratorVersion: '2022-03' },
   },

@@ -49,10 +49,10 @@
   },
   "dependencies": {
     "@hanamaru/vite": "npm:vite@8.3.0",
+    "@swc/helpers": "0.5.19",
     "@types/node": "22.18.0",
     "@vitest/expect": "5.0.2",
     "@zeltjs/core": "0.12.0-canary.1",
-    "@zeltjs/decorator-metadata": "0.12.0-canary.1",
     "acorn": "8.15.0",
     "valibot": "1.5.0"
   }
