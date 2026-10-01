@@ -10,7 +10,6 @@ import type { ExecutionPhase } from '../../domain/result/types.js'
 import { required } from '../../foundation/value.js'
 import { failure } from './assertions.js'
 import { now } from './clock.js'
-import type { RunOptions } from './options.js'
 
 export type Progress =
   | { kind: 'init'; result: MutableRunResult }
@@ -87,12 +86,4 @@ export function progressOf(active: ActiveExecution, phase: ExecutionPhase | null
           : [],
     },
   }
-}
-
-export interface InternalRunOptions extends RunOptions {
-  filter?: string
-  signal?: AbortSignal
-  onProgress?: (progress: Progress) => void
-  onTimeout?: (result: MutableRunResult) => void
-  onDeadline?: (deadline: Deadline) => void
 }

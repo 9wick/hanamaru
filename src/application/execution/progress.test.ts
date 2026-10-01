@@ -27,16 +27,19 @@ test('progress transfer grows linearly and reconstructs nested case results', as
     const plan = createPlan(collectBlueprints(root))
     const result = await runPlan(
       plan,
+      {},
       {
-        onProgress(progress) {
-          bytes += JSON.stringify(progress).length
-          store.apply(structuredClone(progress))
-        },
-        onDeadline(deadline) {
-          bytes += JSON.stringify(deadline).length
+        comparison,
+        listeners: {
+          onProgress(progress) {
+            bytes += JSON.stringify(progress).length
+            store.apply(structuredClone(progress))
+          },
+          onDeadline(deadline) {
+            bytes += JSON.stringify(deadline).length
+          },
         },
       },
-      comparison,
     )
     expect(store.result?.tests).toEqual(result.tests)
     return bytes
@@ -66,8 +69,11 @@ test('the progress stream reconstructs nested groups, skips and retries', async 
   const root = new Test().group('root', [inner, steady])
   const result = await runPlan(
     createPlan(collectBlueprints(root)),
-    { onProgress: (progress) => store.apply(structuredClone(progress)) },
-    comparison,
+    {},
+    {
+      comparison,
+      listeners: { onProgress: (progress) => store.apply(structuredClone(progress)) },
+    },
   )
   expect(result.status).toBe('passed')
   expect(store.result?.tests).toStrictEqual(result.tests)
@@ -90,8 +96,12 @@ test('the progress stream reconstructs the cancelled tree after an interrupt', a
   )
   const result = await runPlan(
     createPlan(collectBlueprints([root, pending])),
-    { signal: controller.signal, onProgress: (progress) => store.apply(structuredClone(progress)) },
-    comparison,
+    {},
+    {
+      comparison,
+      signal: controller.signal,
+      listeners: { onProgress: (progress) => store.apply(structuredClone(progress)) },
+    },
   )
   expect(result.reason).toBe('interrupted')
   expect(store.result?.tests).toStrictEqual(result.tests)

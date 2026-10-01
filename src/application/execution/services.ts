@@ -1,4 +1,4 @@
-import type { Reason } from '../../domain/result/mutable.js'
+import type { MutableRunResult, Reason } from '../../domain/result/mutable.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
 import { required } from '../../foundation/value.js'
 import type { Comparison } from '../ports/comparison.js'
@@ -75,6 +75,16 @@ export class StageTimer<S> {
     if (this.#startedAt !== null && now() - this.#startedAt > this.#timeoutMs) return { stage: this.#stage }
     return null
   }
+}
+
+/**
+ * 実行の外側で通知を受け取る手。タイムアウトだけは外へ出す打ち切り時の姿を必要とするため、
+ * 内側の合図(RunEvents.timedOut)とは別に、組み立てた結果を受け取る。
+ */
+export type RunListeners = {
+  readonly onProgress?: (progress: Progress) => void
+  readonly onDeadline?: (deadline: Deadline) => void
+  readonly onTimeout?: (result: MutableRunResult) => void
 }
 
 /** 実行の外側へ出す通知。受け取り手を持たない実行では何も起きない。 */

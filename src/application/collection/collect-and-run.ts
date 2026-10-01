@@ -4,9 +4,10 @@ import { positive } from '../../domain/execution/config.js'
 import type { Plan } from '../../domain/execution/model.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { errorStack } from '../../foundation/errors.js'
+import type { RunSettings } from '../execution/options.js'
 import { createPlan } from '../execution/plan.js'
 import { runPlan } from '../execution/runner.js'
-import type { InternalRunOptions } from '../execution/state.js'
+import type { RunListeners } from '../execution/services.js'
 import type { CollectionHost, CollectionRuntime, ModuleCompiler } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { RootReference } from '../ports/module-loader.js'
@@ -83,11 +84,12 @@ export async function collectAndRun(
         source: sources[plan.allNodes[node.path[0]].rootIndex],
       })),
     })
-    const options: InternalRunOptions = {
+    const settings: RunSettings = {
       forbidOnly: request.options.ci,
       failOnFlaky: request.options.failOnFlaky,
       filter: request.options.filter,
-      signal,
+    }
+    const listeners: RunListeners = {
       onProgress: (progress) =>
         send({
           type: 'progress',
@@ -101,7 +103,7 @@ export async function collectAndRun(
         }),
     }
     const blueprints = validatedBlueprints(definitions)
-    plan = createPlan(blueprints, options)
+    plan = createPlan(blueprints, settings)
     const execution = await host.openExecution({
       roots,
       preparation: host.prepare(blueprints),
@@ -113,7 +115,12 @@ export async function collectAndRun(
     send({ type: 'running', reporter, shutdownGrace })
     let result
     try {
-      result = await runPlan(plan, options, host.comparison, execution)
+      result = await runPlan(plan, settings, {
+        comparison: host.comparison,
+        executor: execution,
+        signal,
+        listeners,
+      })
     } finally {
       await execution.close()
     }

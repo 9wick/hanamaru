@@ -2,10 +2,11 @@ import { expect, test } from 'vite-plus/test'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import type { RunOptions } from '../../index.js'
 import { Test, middleware, run } from '../../index.js'
-import type { Deadline, InternalRunOptions, Progress } from './state.js'
+import type { RunInput } from '../../interfaces/library/run.js'
+import type { Deadline, Progress } from './state.js'
 
 // 進捗・期限・タイムアウトの通知は公開RunOptionsにない内部オプション。
-const internalOptions = (options: InternalRunOptions): RunOptions => options
+const internalOptions = (options: RunInput): RunOptions => options
 
 function caseProgress(progress: Progress) {
   expect.assert(progress.kind === 'case')

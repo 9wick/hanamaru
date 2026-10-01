@@ -2,7 +2,7 @@ import type { CaseBlueprint, RuntimeBlueprint, RuntimeMock } from '../../domain/
 import type { SourceLocation } from '../../domain/definition/types.js'
 import { configWith, defaultExecutionConfig } from '../../domain/execution/config.js'
 import type { ExecutionNode, Frame, Plan } from '../../domain/execution/model.js'
-import type { InternalRunOptions } from './state.js'
+import type { RunSettings } from './options.js'
 
 export function indexExecutionNodes(nodes: ExecutionNode[]) {
   const entries = new Map<string, ExecutionNode>()
@@ -88,11 +88,11 @@ function filterNodes(nodes: ExecutionNode[], text: string): ExecutionNode[] {
   })
 }
 
-export function createPlan(blueprints: RuntimeBlueprint[], options: InternalRunOptions = {}): Plan {
+export function createPlan(blueprints: RuntimeBlueprint[], settings: RunSettings = {}): Plan {
   const allNodes = blueprints.flatMap((bp, index) => expand(bp, index, defaultExecutionConfig, [], [], null))
   const unfilteredOnly = allCases(allNodes).some((item) => item.mode === 'only')
-  if (unfilteredOnly && options.forbidOnly) throw new TypeError('only is forbidden')
-  const nodes = options.filter === undefined ? allNodes : filterNodes(allNodes, options.filter)
+  if (unfilteredOnly && settings.forbidOnly) throw new TypeError('only is forbidden')
+  const nodes = settings.filter === undefined ? allNodes : filterNodes(allNodes, settings.filter)
   if (!nodes.length) throw new TypeError('filter matched no cases')
   const only = allCases(nodes).some((item) => item.mode === 'only')
   return { blueprints, allNodes, nodes, only }

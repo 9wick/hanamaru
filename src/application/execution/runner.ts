@@ -21,11 +21,20 @@ import { executeGroupMiddleware } from './middleware.js'
 import { allCases } from './plan.js'
 import { ProgressStore } from './progress.js'
 import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, resultFailed } from './results.js'
-import type { AttemptServices } from './services.js'
+import type { RunSettings } from './options.js'
+import type { AttemptServices, RunListeners } from './services.js'
 import { RunEvents, RunTracker } from './services.js'
-import type { InternalRunOptions, Progress } from './state.js'
+import type { Progress } from './state.js'
 
 type RunServices = AttemptServices & { readonly results: ProgressStore; readonly executor: Executor | null }
+
+/** runが外から受け取るサービス。設定値はRunSettingsとして別に渡す。 */
+export type RunDependencies = {
+  readonly comparison: Comparison
+  readonly executor?: Executor | null
+  readonly signal?: AbortSignal
+  readonly listeners?: RunListeners
+}
 
 /**
  * 確定した結果は、手元の部分結果ツリーと外向きの通知の両方に同じprogressで渡す。
@@ -186,38 +195,32 @@ function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason
   return required(snapshot.result)
 }
 
-export async function runPlan(
-  plan: Plan,
-  options: InternalRunOptions,
-  comparison: Comparison,
-  executor: Executor | null = null,
-) {
-  return runActive(() => plan, options, comparison, executor)
+export async function runPlan(plan: Plan, settings: RunSettings, dependencies: RunDependencies) {
+  return runActive(() => plan, settings, dependencies)
 }
 
 /** 錠は計画の組み立てより先に取る。収集の途中で始まったrunも重なりとして弾く。 */
 export async function runActive(
   buildPlan: () => Plan,
-  options: InternalRunOptions,
-  comparison: Comparison,
-  executor: Executor | null = null,
+  settings: RunSettings,
+  dependencies: RunDependencies,
 ): Promise<MutableRunResult> {
-  return runExclusively(() => executeRun(buildPlan, options, comparison, executor))
+  return runExclusively(() => executeRun(buildPlan, settings, dependencies))
 }
 
 async function executeRun(
   buildPlan: () => Plan,
-  options: InternalRunOptions,
-  comparison: Comparison,
-  executor: Executor | null,
+  settings: RunSettings,
+  dependencies: RunDependencies,
 ): Promise<MutableRunResult> {
+  const { comparison, executor = null, signal, listeners } = dependencies
   const { nodes, only } = buildPlan()
-  const tracker = new RunTracker(options.signal?.aborted ? 'interrupted' : null)
+  const tracker = new RunTracker(signal?.aborted ? 'interrupted' : null)
   const results = new ProgressStore()
   const events = new RunEvents({
-    onProgress: options.onProgress,
-    onDeadline: options.onDeadline,
-    onTimeout: () => options.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
+    onProgress: listeners?.onProgress,
+    onDeadline: listeners?.onDeadline,
+    onTimeout: () => listeners?.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
   })
   const services: RunServices = { comparison, tracker, events, results, executor }
   // 実行前の結果は、全てを実行しなかった姿。ここから完了したものだけを差し替えていく。
@@ -232,7 +235,7 @@ async function executeRun(
   })
   executor?.attach(tracker, services.events)
   const interrupt = () => tracker.interrupt()
-  options.signal?.addEventListener('abort', interrupt)
+  signal?.addEventListener('abort', interrupt)
   const tests: MutableNodeResult[] = []
   try {
     for (const [index, node] of nodes.entries())
@@ -242,10 +245,10 @@ async function executeRun(
           : await runNode(node, [node.originalIndex ?? index], only, services),
       )
   } finally {
-    options.signal?.removeEventListener('abort', interrupt)
+    signal?.removeEventListener('abort', interrupt)
   }
   const failed =
-    resultFailed(tests, options.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
+    resultFailed(tests, settings.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
   return {
     version: 1,
     status: failed ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
