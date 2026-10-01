@@ -9,38 +9,8 @@ import { CollectionEnvironment } from './environment.js'
 import type { Value } from '../../foundation/value.js'
 import { required } from '../../foundation/value.js'
 import type { CommandInput, ReplyValue } from './protocol.js'
+import { PendingReplies } from './requests.js'
 import { executionMessageSchema } from './schemas.js'
-
-/** 返信待ちのcommand。idで突き合わせ、致命的な失敗では待っている全部を一度に諦めさせる。 */
-export class RequestTable {
-  readonly #waiting = new Map<number, { resolve: (value: ReplyValue) => void; reject: (error: Value) => void }>()
-  #nextId = 0
-
-  open(post: (id: number) => void): Promise<ReplyValue> {
-    const id = this.#nextId++
-    return new Promise<ReplyValue>((resolve, reject) => {
-      this.#waiting.set(id, { resolve, reject })
-      post(id)
-    })
-  }
-
-  /** 覚えのない返信はprotocolの破れ。どう畳むかは持ち主が決めるため、見分けるだけにする。 */
-  has(id: number): boolean {
-    return this.#waiting.has(id)
-  }
-
-  settle(id: number, value: ReplyValue): void {
-    const entry = this.#waiting.get(id)
-    if (!entry) throw new TypeError('no request is waiting for this reply')
-    this.#waiting.delete(id)
-    entry.resolve(value)
-  }
-
-  abandon(error: Value): void {
-    for (const entry of this.#waiting.values()) entry.reject(error)
-    this.#waiting.clear()
-  }
-}
 
 /**
  * 実行workerをExecutorとして扱う。返信待ち・立ち上がりの約束・畳んだかどうかを自分で持ち、
@@ -49,7 +19,7 @@ export class RequestTable {
  */
 @Config()
 export class WorkerExecutor extends Executor {
-  readonly #requests = new RequestTable()
+  readonly #requests = new PendingReplies<ReplyValue>()
   readonly #interrupt = () => this.#post({ type: 'interrupt' })
   /** workerが死んだ瞬間に待っている全部へ同じ失敗を渡すため、listenerへそのまま預けられる形で持つ。 */
   readonly #fail = (error: Value) => {

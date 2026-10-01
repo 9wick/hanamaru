@@ -4,6 +4,7 @@ import { ModuleTransport } from '../../application/ports/module-loader.js'
 import type { Value } from '../../foundation/value.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand, ExecutionIncoming } from './protocol.js'
+import { PendingReplies } from './requests.js'
 
 /**
  * compileを親のportへ頼む取り寄せ口。発番と突き合わせを1か所に閉じ込める。
@@ -11,9 +12,8 @@ import type { ExecutionCommand, ExecutionIncoming } from './protocol.js'
  */
 @Config()
 export class CompileRequests extends ModuleTransport {
-  readonly #waiting = new Map<number, { resolve: (value: Value) => void; reject: (error: Value) => void }>()
+  readonly #pending = new PendingReplies<Value>()
   readonly #channel: ExecutionChannel
-  #nextId = 0
 
   constructor(channel = inject(ExecutionChannel)) {
     super()
@@ -21,21 +21,14 @@ export class CompileRequests extends ModuleTransport {
   }
 
   invoke(name: string, args: Value[]): Promise<Value> {
-    return new Promise<Value>((resolve, reject) => {
-      const id = this.#nextId++
-      this.#waiting.set(id, { resolve, reject })
-      this.#channel.compile({ id, name, args })
-    })
+    return this.#pending.open((id) => this.#channel.compile({ id, name, args }))
   }
 
   /** 覚えのない返信はprotocolの破れ。どう畳むかは入口が決めるため、ここでは伝えるだけにする。 */
   settle(reply: { id: number; result?: Value; error?: string }): boolean {
-    const entry = this.#waiting.get(reply.id)
-    if (!entry) return false
-    this.#waiting.delete(reply.id)
-    if (reply.error) entry.reject(new Error(reply.error))
-    else entry.resolve(reply.result)
-    return true
+    return reply.error
+      ? this.#pending.fail(reply.id, new Error(reply.error))
+      : this.#pending.settle(reply.id, reply.result)
   }
 }
 
