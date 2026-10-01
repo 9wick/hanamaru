@@ -1,13 +1,14 @@
 import { pathToFileURL } from 'node:url'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
-import type { CollectedDefinition } from '../../application/collection/registry.js'
-import { collectBlueprints, registrationsIn, resetRegistrations } from '../../application/collection/registry.js'
+import { collectWithin } from '../../application/collection/current-scope.js'
+import { createCollectionScope, registrationsIn } from '../../application/collection/scope.js'
 import { executeAttempt } from '../../application/execution/attempt.js'
 import { executeGroupMiddleware, failChildren } from '../../application/execution/middleware.js'
 import { createPlan, indexExecutionNodes } from '../../application/execution/plan.js'
 import type { AttemptState } from '../../application/execution/state.js'
-import type { Fields } from '../../domain/definition/runtime.js'
+import type { Fields, RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
+import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
@@ -108,25 +109,27 @@ function reportError<T>(error: T) {
 
 async function startExecution() {
   try {
-    resetRegistrations()
-    const files = new Set<string>()
-    const definitions: CollectedDefinition[] = []
-    for (const root of workerData.roots) {
-      if (!files.has(root.file)) {
-        send({ type: 'loading', file: root.file })
-        await runtime.import(pathToFileURL(root.file).href)
-        files.add(root.file)
+    const scope = createCollectionScope()
+    const definitions: RuntimeDefinitionHandle[] = []
+    await collectWithin(scope, async () => {
+      const files = new Set<string>()
+      for (const root of workerData.roots) {
+        if (!files.has(root.file)) {
+          send({ type: 'loading', file: root.file })
+          await runtime.import(pathToFileURL(root.file).href)
+          files.add(root.file)
+        }
+        const registered = registrationsIn(scope, root.file)[root.index]
+        if (!registered) throw new TypeError('test registrations changed between collection and execution')
+        if (JSON.stringify(registered.origin) !== JSON.stringify(root.origin))
+          throw new TypeError('test registrations changed between collection and execution')
+        definitions.push(registered.definition)
       }
-      const registered = registrationsIn(root.file)[root.index]
-      if (!registered) throw new TypeError('test registrations changed between collection and execution')
-      if (JSON.stringify(registered.origin) !== JSON.stringify(root.origin))
-        throw new TypeError('test registrations changed between collection and execution')
-      definitions.push(registered.definition)
-    }
-    for (const file of files)
-      if (registrationsIn(file).length !== workerData.roots.filter((root) => root.file === file).length)
-        throw new TypeError('test registrations changed between collection and execution')
-    const plan = createPlan(collectBlueprints(definitions))
+      for (const file of files)
+        if (registrationsIn(scope, file).length !== workerData.roots.filter((root) => root.file === file).length)
+          throw new TypeError('test registrations changed between collection and execution')
+    })
+    const plan = createPlan(validatedBlueprints(definitions))
     if (JSON.stringify(describeExecutionPlan(plan.allNodes)) !== workerData.shape)
       throw new TypeError('test definitions changed between collection and execution')
     const nodes = indexExecutionNodes(plan.allNodes)

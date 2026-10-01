@@ -1,3 +1,5 @@
+import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
+import { validatedBlueprints } from '../../domain/definition/validation.js'
 import { positive } from '../../domain/execution/config.js'
 import type { Plan } from '../../domain/execution/model.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
@@ -9,11 +11,10 @@ import type { CollectionHost, CollectionRuntime, ModuleCompiler } from '../ports
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { RootReference } from '../ports/module-loader.js'
 import type { CliMessage } from './events.js'
-import type { CollectedDefinition } from './registry.js'
-import { collectBlueprints, registrationsIn, resetRegistrations } from './registry.js'
+import { collectWithin } from './current-scope.js'
+import { createCollectionScope, registrationsIn, unregisteredDefinitions } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
-import { startDefinitionTracking, unregisteredDefinitions } from './tracking.js'
 export async function collectAndRun(
   request: CollectionRequest,
   signal: AbortSignal,
@@ -39,36 +40,38 @@ export async function collectAndRun(
     if (!files.length) throw new TypeError('no test files matched')
     send({ type: 'loading', file: 'test runtime setup', timeout })
     compiler = await host.createCompiler(config.vite)
-    runtime = host.createRuntime(compiler.invoke)
-    resetRegistrations()
-    startDefinitionTracking()
-    const definitions: CollectedDefinition[] = [],
+    const moduleRuntime = host.createRuntime(compiler.invoke)
+    runtime = moduleRuntime
+    const scope = createCollectionScope()
+    const definitions: RuntimeDefinitionHandle[] = [],
       roots: RootReference[] = [],
       sources: { file: string; projects: string[] }[] = [],
       collected = new Set<object>()
-    for (const { file, projects } of files) {
-      collectingFile = { file, projects }
-      send({ type: 'loading', file, timeout })
-      await runtime.import(file)
-      const registered = registrationsIn(file)
-      if (!registered.length)
-        throw new TypeError(
-          `no tests registered in ${host.relative(file)}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
-        )
-      for (const [index, entry] of registered.entries()) {
-        const definition = entry.definition
-        if (collected.has(definition))
+    await collectWithin(scope, async () => {
+      for (const { file, projects } of files) {
+        collectingFile = { file, projects }
+        send({ type: 'loading', file, timeout })
+        await moduleRuntime.import(file)
+        const registered = registrationsIn(scope, file)
+        if (!registered.length)
           throw new TypeError(
-            `duplicate root definition: ${host.relative(file)}:${entry.origin.line}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
+            `no tests registered in ${host.relative(file)}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
           )
-        collected.add(definition)
-        definitions.push(definition)
-        roots.push({ file, index, origin: entry.origin })
-        sources.push({ file: host.relative(file), projects })
+        for (const [index, entry] of registered.entries()) {
+          const definition = entry.definition
+          if (collected.has(definition))
+            throw new TypeError(
+              `duplicate root definition: ${host.relative(file)}:${entry.origin.line}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
+            )
+          collected.add(definition)
+          definitions.push(definition)
+          roots.push({ file, index, origin: entry.origin })
+          sources.push({ file: host.relative(file), projects })
+        }
       }
-    }
+    })
     collectingFile = undefined
-    for (const origin of unregisteredDefinitions(new Set(files.map(({ file }) => file)), collected))
+    for (const origin of unregisteredDefinitions(scope, new Set(files.map(({ file }) => file))))
       host.warn(
         `hanamaru: unregistered test definition: ${host.relative(origin.file)}:${origin.line}:${origin.column}\n`,
       )
@@ -97,7 +100,7 @@ export async function collectAndRun(
           ...deadline,
         }),
     }
-    const blueprints = collectBlueprints(definitions)
+    const blueprints = validatedBlueprints(definitions)
     plan = createPlan(blueprints, options)
     const execution = await host.openExecution({
       roots,

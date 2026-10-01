@@ -1,11 +1,24 @@
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import { expect, test } from 'vite-plus/test'
-import { fixture, invoke, jsonResult, workspace, workspaceRuntime } from './harness.ts'
+import { cases, fixture, invoke, jsonResult, repository, workspace, workspaceRuntime } from './harness.ts'
 
 const runtime = `import { Test, registerTest, middleware } from ${JSON.stringify(workspaceRuntime)}\n`
 const caseOf = (name: string) =>
   `new Test().target(() => 1).it('${name}', t => t.args().expect(e => [e.result.toBe(1)]))`
+
+/** fixtureは生成文字列なので行番号が決まる。列はチェーンのメソッド名の1始まりの位置になる。 */
+function locate(file: string, method: string, find: (line: string) => boolean) {
+  const lines = readFileSync(file, 'utf8').split('\n')
+  const index = lines.findIndex(find)
+  expect(index, `${method} not found in ${file}`).toBeGreaterThan(-1)
+  return { file, line: index + 1, column: lines[index].indexOf(method) + 2 }
+}
+
+function unregisteredWarning(file: string, method: string, find: (line: string) => boolean): string {
+  const at = locate(file, method, find)
+  return `hanamaru: unregistered test definition: ${relative(repository, file)}:${at.line}:${at.column}`
+}
 
 test('CLI executes registrations without exports and rejects export-only files', () => {
   const data = fixture(`registerTest(${caseOf('registered')})`)
@@ -76,6 +89,8 @@ registerTest(root)
   const result = invoke(workspace, data.file, '-r', 'json')
   expect(result.status, result.stderr).toBe(0)
   expect(result.stderr.match(/unregistered test definition/g)).toHaveLength(1)
+  // 警告されるのがorphan自身であることを位置で確かめる。childとチェーンの途中値は警告されない。
+  expect(result.stderr).toContain(unregisteredWarning(data.file, '.it(', (line) => line.startsWith('const orphan =')))
   expect(jsonResult(result, 0).tests).toHaveLength(1)
 })
 
@@ -140,4 +155,51 @@ test('invalid project configuration and unknown project are collection errors', 
   const unknown = invoke(workspace, '--config', config, '--project', 'missing')
   expect(unknown.status).toBe(2)
   expect(unknown.stderr).toContain('unknown project: missing')
+})
+
+test('the unregistered warning points at the chain call that completed the definition', () => {
+  const data = fixture(`
+const multiline = new Test()
+  .target(() => 1)
+  .it('multiline', t => t.args().expect(e => [e.result.toBe(1)]))
+
+const rows = new Test()
+  .target(n => n)
+  .each('row', [1, 2], (t, row) => t.args(row).expect(e => [e.result.toBe(row)]))
+
+registerTest(${caseOf('registered')})
+`)
+  const result = invoke(workspace, data.file, '-r', 'json')
+  expect(result.status, result.stderr).toBe(0)
+  // eachは行ごとに定義を作るが、警告は未使用の最後の1件だけで、位置はどの行も同じ.each(の呼び出し位置になる。
+  expect(result.stderr.split('\n').filter((line) => line.includes('unregistered test definition'))).toEqual([
+    unregisteredWarning(data.file, '.it(', (line) => line.includes(".it('multiline'")),
+    unregisteredWarning(data.file, '.each(', (line) => line.includes('.each(')),
+  ])
+  expect(jsonResult(result, 0).tests).toHaveLength(1)
+})
+
+test('registrations in one file keep their order and their origins', () => {
+  const data = fixture(['first', 'second', 'third'].map((name) => `registerTest(${caseOf(name)})`).join('\n'))
+  const output = jsonResult(invoke(workspace, data.file, '-r', 'json'), 0)
+  expect(
+    output.tests.map((node) => {
+      const [first] = cases(node)
+      return { name: first.name, ...first.origin }
+    }),
+  ).toEqual(
+    ['first', 'second', 'third'].map((name) => ({
+      name,
+      ...locate(data.file, '.it(', (line) => line.includes(`.it('${name}'`)),
+    })),
+  )
+})
+
+test('registering the same definition twice reports the second registration', () => {
+  const data = fixture(`const shared = ${caseOf('shared')}\nregisterTest(shared)\nregisterTest(shared)\n`)
+  const result = invoke(workspace, data.file, '-r', 'json')
+  expect(result.status).toBe(2)
+  const lines = readFileSync(data.file, 'utf8').split('\n')
+  const duplicate = lines.lastIndexOf('registerTest(shared)') + 1
+  expect(result.stderr).toContain(`duplicate root definition: ${relative(repository, data.file)}:${duplicate}`)
 })

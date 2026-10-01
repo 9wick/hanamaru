@@ -97,8 +97,9 @@ export interface RuntimeDefinition extends BlueprintBase {
 
 export type RuntimeBlueprint = RuntimeSuite | RuntimeGroup | RuntimeDefinition
 
+/** 収集した定義の契約。tagは完成した定義だけが持つが、値を検査するまで型では決まらない。 */
 export interface RuntimeDefinitionHandle {
-  readonly [definitionTag]: true
+  readonly [definitionTag]?: true
   blueprint(): RuntimeBlueprint
 }
 
