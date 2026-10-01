@@ -14,8 +14,7 @@ import type { ExecutionHandle } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed } from './faults.js'
 import { allCases } from './plan.js'
-import type { ProgressStore } from './progress.js'
-import { RunProgress } from './run-progress.js'
+import { ProgressStore } from './progress.js'
 import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, resultFailed } from './results.js'
 import type { RunSettings } from './options.js'
 import { RunEvents, RunTracker } from './services.js'
@@ -31,7 +30,7 @@ export class RunWalker {
   readonly #events: RunEvents
   readonly #tracker: RunTracker
 
-  constructor(results = inject(RunProgress), events = inject(RunEvents), tracker = inject(RunTracker)) {
+  constructor(results = inject(ProgressStore), events = inject(RunEvents), tracker = inject(RunTracker)) {
     this.#results = results
     this.#events = events
     this.#tracker = tracker
