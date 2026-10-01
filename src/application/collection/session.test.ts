@@ -9,6 +9,7 @@ import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { Config } from './config.js'
 import { recordCollectionEvent } from './current-scope.js'
 import type { CliMessage } from './events.js'
+import { CollectionEvents } from './events.js'
 import { loadConfig } from './load-config.js'
 import { CollectionSession } from './session.js'
 
@@ -93,23 +94,23 @@ function harness(options: Options = {}) {
   }
   // 進捗と期限の通知は量が多く、収集の流れとは別に検証している。
   const flow = () => messages.filter((message) => message !== 'progress' && message !== 'deadline')
-  return { host, send, flow, closed, warnings }
+  return { host, events: new CollectionEvents(send), flow, closed, warnings }
 }
 
 /** 入口と同じ順序。設定を読んでからsessionへ渡す。 */
-async function collect(host: CollectionHost, send: (event: CliMessage) => void, request: CollectionRequest) {
-  const session = new CollectionSession(host, send)
+async function collect(host: CollectionHost, events: CollectionEvents, request: CollectionRequest) {
+  const session = new CollectionSession(host, events)
   try {
-    const config = await loadConfig(request.options, host.files, send)
+    const config = await loadConfig(request.options, host.files, events)
     await session.run(request, config, new AbortController().signal)
   } catch (error) {
-    send({ type: 'error', message: errorStack(error) })
+    events.error(errorStack(error))
   }
 }
 
 test('the config load has its own timeout and the rest uses the configured one', async () => {
-  const { host, send, flow, closed } = harness({ config: { collectionTimeout: 500 } })
-  await collect(host, send, { files: ['a.test.ts'], options: {} })
+  const { host, events, flow, closed } = harness({ config: { collectionTimeout: 500 } })
+  await collect(host, events, { files: ['a.test.ts'], options: {} })
   expect(flow()).toStrictEqual([
     'loading hanamaru.config.ts @30000',
     'loading test runtime setup @500',
@@ -122,8 +123,8 @@ test('the config load has its own timeout and the rest uses the configured one',
 })
 
 test('the command line timeout wins over the configured one, including the config load', async () => {
-  const { host, send, flow } = harness({ config: { collectionTimeout: 500 } })
-  await collect(host, send, { files: ['a.test.ts'], options: { collectionTimeout: 70 } })
+  const { host, events, flow } = harness({ config: { collectionTimeout: 500 } })
+  await collect(host, events, { files: ['a.test.ts'], options: { collectionTimeout: 70 } })
   expect(flow()).toStrictEqual([
     'loading hanamaru.config.ts @70',
     'loading test runtime setup @70',
@@ -135,23 +136,23 @@ test('the command line timeout wins over the configured one, including the confi
 })
 
 test('a failure while reading a test file names the file and its projects', async () => {
-  const { host, send, flow, closed } = harness({
+  const { host, events, flow, closed } = harness({
     config: { projects: { unit: { include: ['*.test.ts'] } } },
     glob: () => ['a.test.ts'],
     importFile: () => {
       throw new TypeError('broken import')
     },
   })
-  await collect(host, send, { files: [], options: {} })
+  await collect(host, events, { files: [], options: {} })
   expect(flow().at(-1)).toContain('error while collecting rel/a.test.ts (projects: unit): TypeError: broken import')
   expect(closed).toStrictEqual(['runtime', 'compiler'])
 })
 
 test('a config that cannot be read stops before any resource is created', async () => {
-  const { host, send, flow, closed } = harness({
+  const { host, events, flow, closed } = harness({
     readConfig: () => Promise.reject(new Error('cannot load config: hanamaru.config.ts')),
   })
-  await collect(host, send, { files: ['a.test.ts'], options: {} })
+  await collect(host, events, { files: ['a.test.ts'], options: {} })
   expect(flow()).toStrictEqual([
     'loading hanamaru.config.ts @30000',
     'error Error: cannot load config: hanamaru.config.ts',
@@ -160,15 +161,15 @@ test('a config that cannot be read stops before any resource is created', async 
 })
 
 test('no matching test file stops before the test runtime is created', async () => {
-  const { host, send, flow, closed } = harness()
-  await collect(host, send, { files: [], options: {} })
+  const { host, events, flow, closed } = harness()
+  await collect(host, events, { files: [], options: {} })
   expect(flow()).toStrictEqual(['loading hanamaru.config.ts @30000', 'error TypeError: no test files matched'])
   expect(closed).toStrictEqual([])
 })
 
 test('an invalid shutdown grace is reported before the test runtime is created', async () => {
-  const { host, send, flow, closed } = harness({ config: { shutdownGrace: 0 } })
-  await collect(host, send, { files: ['a.test.ts'], options: {} })
+  const { host, events, flow, closed } = harness({ config: { shutdownGrace: 0 } })
+  await collect(host, events, { files: ['a.test.ts'], options: {} })
   expect(flow().at(-1)).toContain('shutdownGrace')
   expect(closed).toStrictEqual([])
 })

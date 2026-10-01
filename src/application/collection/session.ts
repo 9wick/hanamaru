@@ -15,7 +15,7 @@ import type { ExecutionSpec } from '../ports/executor.js'
 import type { ModuleInvoke, RootReference } from '../ports/module-loader.js'
 import type { Config } from './config.js'
 import { collectWithin } from './current-scope.js'
-import type { CliMessage, Reporter } from './events.js'
+import type { CollectionEvents, Reporter } from './events.js'
 import { CollectionLog } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
@@ -63,11 +63,11 @@ interface Planned {
  */
 export class CollectionSession {
   readonly #host: CollectionHost
-  readonly #send: (event: CliMessage) => void
+  readonly #events: CollectionEvents
 
-  constructor(host: CollectionHost, send: (event: CliMessage) => void) {
+  constructor(host: CollectionHost, events: CollectionEvents) {
     this.#host = host
-    this.#send = send
+    this.#events = events
   }
 
   async run(request: CollectionRequest, config: Config, signal: AbortSignal): Promise<void> {
@@ -78,7 +78,7 @@ export class CollectionSession {
     try {
       const limits = collectionLimits(request.options, config)
       const files = this.#select(request, config)
-      this.#send({ type: 'loading', file: 'test runtime setup', timeout: limits.timeout })
+      this.#events.loading('test runtime setup', limits.timeout)
       compiler = await this.#host.modules.createCompiler(config.vite)
       runtime = this.#host.modules.createRuntime(compiler.invoke)
       const collected = await this.#collect(files, runtime, limits.timeout, collecting)
@@ -87,7 +87,7 @@ export class CollectionSession {
       const context = collecting.file
         ? `while collecting ${this.#host.files.relative(collecting.file.file)}${projectsOf(collecting.file.projects)}: `
         : ''
-      this.#send({ type: 'error', message: context + errorStack(error) })
+      this.#events.error(context + errorStack(error))
     } finally {
       await runtime?.close()
       await compiler?.close()
@@ -115,7 +115,7 @@ export class CollectionSession {
     await collectWithin(log, async () => {
       for (const { file, projects } of files) {
         collecting.file = { file, projects }
-        this.#send({ type: 'loading', file, timeout })
+        this.#events.loading(file, timeout)
         await runtime.import(file)
         const registered = log.registrationsIn(file)
         if (!registered.length)
@@ -176,31 +176,26 @@ export class CollectionSession {
   ): Promise<void> {
     const listeners: RunListeners = {
       onProgress: (progress) =>
-        this.#send({
-          type: 'progress',
-          progress: progress.kind === 'init' ? { ...progress, result: withSources(progress.result) } : progress,
-        }),
-      onTimeout: (result) => this.#send({ type: 'timeout', result: withSources(result) }),
-      onDeadline: (deadline) =>
-        this.#send({
-          type: 'deadline',
-          ...deadline,
-        }),
+        this.#events.progress(
+          progress.kind === 'init' ? { ...progress, result: withSources(progress.result) } : progress,
+        ),
+      onTimeout: (result) => this.#events.timedOut(withSources(result)),
+      onDeadline: (deadline) => this.#events.deadline(deadline),
     }
     const run = createRunServices(listeners)
     const execution = this.#host.openExecution(run, {
       invoke,
       signal,
-      onLoading: (file) => this.#send({ type: 'loading', file, timeout: limits.timeout }),
+      onLoading: (file) => this.#events.loading(file, limits.timeout),
     })
     await execution.start(spec)
-    this.#send({ type: 'running', reporter: limits.reporter, shutdownGrace: limits.shutdownGrace })
+    this.#events.running(limits.reporter, limits.shutdownGrace)
     let result
     try {
       result = await createRunWalker(run, this.#host.comparison, execution).run(() => plan, settings, signal)
     } finally {
       await execution.close()
     }
-    this.#send({ type: 'result', result: withSources(result), reporter: limits.reporter })
+    this.#events.result(withSources(result), limits.reporter)
   }
 }
