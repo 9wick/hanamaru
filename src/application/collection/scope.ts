@@ -8,26 +8,31 @@ export type CollectionEvent =
 
 export type RegisteredTest = Extract<CollectionEvent, { kind: 'registered' }>
 
-/** events は追記のみで、追記順が登録順。execution workerの整合チェックがこの順序に依存する。 */
-export interface CollectionScope {
-  readonly events: CollectionEvent[]
+function registrationsOf(events: readonly CollectionEvent[], file: string): RegisteredTest[] {
+  return events.flatMap((event) => (event.kind === 'registered' && event.origin.file === file ? [event] : []))
 }
 
-export function createCollectionScope(): CollectionScope {
-  return { events: [] }
-}
-
-export function registrationsIn(scope: CollectionScope, file: string): RegisteredTest[] {
-  return scope.events.flatMap((event) => (event.kind === 'registered' && event.origin.file === file ? [event] : []))
-}
-
-export function unregisteredDefinitions(scope: CollectionScope, files: ReadonlySet<string>): SourceLocation[] {
+function unregisteredOf(events: readonly CollectionEvent[], files: ReadonlySet<string>): SourceLocation[] {
   const declared = new Map<object, SourceLocation>()
   const used = new Set<object>()
-  for (const event of scope.events)
+  for (const event of events)
     if (event.kind === 'declared') declared.set(event.definition, event.origin)
     else used.add(event.definition)
   return [...declared].flatMap(([definition, origin]) =>
     files.has(origin.file) && !used.has(definition) ? [origin] : [],
   )
+}
+
+/** 追記のみで、追記順が登録順。execution workerの整合チェックがこの順序に依存する。 */
+export class CollectionLog {
+  readonly #events: CollectionEvent[] = []
+  append(event: CollectionEvent): void {
+    this.#events.push(event)
+  }
+  registrationsIn(file: string): RegisteredTest[] {
+    return registrationsOf(this.#events, file)
+  }
+  unregisteredDefinitions(files: ReadonlySet<string>): SourceLocation[] {
+    return unregisteredOf(this.#events, files)
+  }
 }

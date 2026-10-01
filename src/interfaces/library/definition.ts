@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { recordCollectionEvent } from '../../application/collection/current-scope.js'
+import type { CollectionEvent } from '../../application/collection/scope.js'
 import {
   addCase,
   addGroup,
@@ -71,7 +71,7 @@ export function isDefinition<T>(value: T): boolean {
   return value instanceof DefinitionBuilder && value[definitionTag] === true
 }
 
-export function createTest(location: () => SourceLocation): TestConstructor {
+export function createTest(location: () => SourceLocation, record: (event: CollectionEvent) => void): TestConstructor {
   class Chain<R extends object = {}, C extends object = R, F extends AnyFn = AnyFn> extends DefinitionBuilder {
     readonly #data: DefinitionData
     constructor(data: DefinitionData) {
@@ -84,8 +84,8 @@ export function createTest(location: () => SourceLocation): TestConstructor {
      */
     #next(data: DefinitionData, origin: () => SourceLocation): Chain<R, C, F> {
       const next = new Chain<R, C, F>(data)
-      if (next[definitionTag] === true) recordCollectionEvent({ kind: 'declared', definition: next, origin: origin() })
-      if (this[definitionTag] === true) recordCollectionEvent({ kind: 'consumed', definition: this })
+      if (next[definitionTag] === true) record({ kind: 'declared', definition: next, origin: origin() })
+      if (this[definitionTag] === true) record({ kind: 'consumed', definition: this })
       return next
     }
     timeout(ms: number) {
@@ -186,7 +186,7 @@ export function createTest(location: () => SourceLocation): TestConstructor {
       const children = v.parse(v.array(v.instance(DefinitionBuilder)), input0)
       if (!children.length || children.some((child) => !isDefinition(child)))
         throw new TypeError('group requires completed children')
-      for (const child of children) recordCollectionEvent({ kind: 'consumed', definition: child })
+      for (const child of children) record({ kind: 'consumed', definition: child })
       const entries = children.map((child) => ({ origin, blueprint: child.blueprint() }))
       return this.#next(addGroup(this.#data, { name, origin, middleware: step, children: entries }), () => origin)
     }

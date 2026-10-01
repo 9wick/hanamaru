@@ -1,8 +1,13 @@
 import { expect, test } from 'vite-plus/test'
 import { collectWithin, recordCollectionEvent } from './current-scope.js'
-import { createCollectionScope } from './scope.js'
+import { CollectionLog } from './scope.js'
 
-const consumed = (definition: object) => ({ kind: 'consumed', definition }) as const
+const file = 'a.ts'
+const files = new Set([file])
+
+/** 記録されたかどうかは、ログの問い合わせ(未登録定義)越しに見る。 */
+const declared = (definition: object, line: number) =>
+  ({ kind: 'declared', definition, origin: { file, line, column: 1 } }) as const
 
 async function rejection(act: () => Promise<unknown>): Promise<string> {
   try {
@@ -14,20 +19,18 @@ async function rejection(act: () => Promise<unknown>): Promise<string> {
 }
 
 test('events are recorded while the scope is open and ignored once it is closed', async () => {
-  const scope = createCollectionScope()
-  const inside = {}
-  const outside = {}
-  const result = await collectWithin(scope, async () => {
-    recordCollectionEvent(consumed(inside))
+  const log = new CollectionLog()
+  const result = await collectWithin(log, async () => {
+    recordCollectionEvent(declared({}, 1))
     return 'loaded'
   })
-  recordCollectionEvent(consumed(outside))
+  recordCollectionEvent(declared({}, 2))
   expect(result).toBe('loaded')
-  expect(scope.events).toEqual([consumed(inside)])
+  expect(log.unregisteredDefinitions(files).map((origin) => origin.line)).toEqual([1])
 })
 
 test('the scope is closed when the load throws and when it rejects', async () => {
-  const thrower = createCollectionScope()
+  const thrower = new CollectionLog()
   expect(
     await rejection(() =>
       collectWithin(thrower, () => {
@@ -35,20 +38,19 @@ test('the scope is closed when the load throws and when it rejects', async () =>
       }),
     ),
   ).toBe('TypeError: import failed')
-  const rejecter = createCollectionScope()
+  const rejecter = new CollectionLog()
   expect(await rejection(() => collectWithin(rejecter, () => Promise.reject(new TypeError('load failed'))))).toBe(
     'TypeError: load failed',
   )
-  const reopened = createCollectionScope()
-  await collectWithin(reopened, async () => recordCollectionEvent(consumed(reopened)))
-  expect(reopened.events).toHaveLength(1)
+  const reopened = new CollectionLog()
+  await collectWithin(reopened, async () => recordCollectionEvent(declared({}, 3)))
+  expect(reopened.unregisteredDefinitions(files)).toHaveLength(1)
 })
 
 test('opening a second scope throws and leaves the open one recording', async () => {
-  const outer = createCollectionScope()
-  const inner = createCollectionScope()
+  const outer = new CollectionLog()
+  const inner = new CollectionLog()
   const counts = { loads: 0 }
-  const definition = {}
   await collectWithin(outer, async () => {
     expect(
       await rejection(() =>
@@ -57,9 +59,9 @@ test('opening a second scope throws and leaves the open one recording', async ()
         }),
       ),
     ).toBe('TypeError: a collection scope is already open')
-    recordCollectionEvent(consumed(definition))
+    recordCollectionEvent(declared({}, 4))
   })
   expect(counts).toEqual({ loads: 0 })
-  expect(inner.events).toEqual([])
-  expect(outer.events).toEqual([consumed(definition)])
+  expect(inner.unregisteredDefinitions(files)).toEqual([])
+  expect(outer.unregisteredDefinitions(files).map((origin) => origin.line)).toEqual([4])
 })

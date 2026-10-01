@@ -94,6 +94,7 @@ export type {
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Config } from './application/collection/config.js'
+import { recordCollectionEvent } from './application/collection/current-scope.js'
 import * as comparison from './infrastructure/comparison.js'
 import { createSourceLocation } from './infrastructure/source-location.js'
 import { createTest } from './interfaces/library/definition.js'
@@ -102,8 +103,8 @@ import { createRun } from './interfaces/library/run.js'
 import type { Test as TestType } from './interfaces/library/types.js'
 const location = createSourceLocation(dirname(fileURLToPath(import.meta.url)))
 export type Test<R extends object = {}> = TestType<R>
-export const Test = createTest(location)
-export const registerTest = createRegisterTest(location)
+export const Test = createTest(location, recordCollectionEvent)
+export const registerTest = createRegisterTest(location, recordCollectionEvent)
 export const run = createRun(comparison)
 export function defineConfig(config: Config): Config {
   return config

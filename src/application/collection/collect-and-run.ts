@@ -12,7 +12,7 @@ import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { RootReference } from '../ports/module-loader.js'
 import type { CliMessage } from './events.js'
 import { collectWithin } from './current-scope.js'
-import { createCollectionScope, registrationsIn, unregisteredDefinitions } from './scope.js'
+import { CollectionLog } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
 export async function collectAndRun(
@@ -42,17 +42,17 @@ export async function collectAndRun(
     compiler = await host.createCompiler(config.vite)
     const moduleRuntime = host.createRuntime(compiler.invoke)
     runtime = moduleRuntime
-    const scope = createCollectionScope()
+    const log = new CollectionLog()
     const definitions: RuntimeDefinitionHandle[] = [],
       roots: RootReference[] = [],
       sources: { file: string; projects: string[] }[] = [],
       collected = new Set<object>()
-    await collectWithin(scope, async () => {
+    await collectWithin(log, async () => {
       for (const { file, projects } of files) {
         collectingFile = { file, projects }
         send({ type: 'loading', file, timeout })
         await moduleRuntime.import(file)
-        const registered = registrationsIn(scope, file)
+        const registered = log.registrationsIn(file)
         if (!registered.length)
           throw new TypeError(
             `no tests registered in ${host.relative(file)}${projects.length ? ` (projects: ${projects.join(', ')})` : ''}`,
@@ -71,7 +71,7 @@ export async function collectAndRun(
       }
     })
     collectingFile = undefined
-    for (const origin of unregisteredDefinitions(scope, new Set(files.map(({ file }) => file))))
+    for (const origin of log.unregisteredDefinitions(new Set(files.map(({ file }) => file))))
       host.warn(
         `hanamaru: unregistered test definition: ${host.relative(origin.file)}:${origin.line}:${origin.column}\n`,
       )

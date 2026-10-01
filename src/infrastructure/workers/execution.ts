@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
 import { collectWithin } from '../../application/collection/current-scope.js'
-import { createCollectionScope, registrationsIn } from '../../application/collection/scope.js'
+import { CollectionLog } from '../../application/collection/scope.js'
 import { executeAttempt } from '../../application/execution/attempt.js'
 import { executeGroupMiddleware, failChildren } from '../../application/execution/middleware.js'
 import { createPlan, indexExecutionNodes } from '../../application/execution/plan.js'
@@ -109,9 +109,9 @@ function reportError<T>(error: T) {
 
 async function startExecution() {
   try {
-    const scope = createCollectionScope()
+    const log = new CollectionLog()
     const definitions: RuntimeDefinitionHandle[] = []
-    await collectWithin(scope, async () => {
+    await collectWithin(log, async () => {
       const files = new Set<string>()
       for (const root of workerData.roots) {
         if (!files.has(root.file)) {
@@ -119,14 +119,14 @@ async function startExecution() {
           await runtime.import(pathToFileURL(root.file).href)
           files.add(root.file)
         }
-        const registered = registrationsIn(scope, root.file)[root.index]
+        const registered = log.registrationsIn(root.file)[root.index]
         if (!registered) throw new TypeError('test registrations changed between collection and execution')
         if (JSON.stringify(registered.origin) !== JSON.stringify(root.origin))
           throw new TypeError('test registrations changed between collection and execution')
         definitions.push(registered.definition)
       }
       for (const file of files)
-        if (registrationsIn(scope, file).length !== workerData.roots.filter((root) => root.file === file).length)
+        if (log.registrationsIn(file).length !== workerData.roots.filter((root) => root.file === file).length)
           throw new TypeError('test registrations changed between collection and execution')
     })
     const plan = createPlan(validatedBlueprints(definitions))

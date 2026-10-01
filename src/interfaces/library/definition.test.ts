@@ -65,7 +65,7 @@ test('deriving a builder leaves the source blueprint unchanged', () => {
 // ---------------------------------------------------------------------------
 
 import { collectWithin } from '../../application/collection/current-scope.js'
-import { createCollectionScope, registrationsIn, unregisteredDefinitions } from '../../application/collection/scope.js'
+import { CollectionLog } from '../../application/collection/scope.js'
 import { middleware, registerTest } from '../../index.js'
 import type { Assertions, CallsBuilder, Expect, ItBuilder, ItDone, Middleware, MockDef } from '../../index.js'
 import { definitionTag, doneTag, middlewareTag } from '../../domain/definition/tags.js'
@@ -498,8 +498,8 @@ test('a mock definition is not reached when the stage or the target is wrong', (
 // ---------------------------------------------------------------------------
 
 test('a collection scope reports the orphan definition and keeps every registration of this file', async () => {
-  const scope = createCollectionScope()
-  const orphan = await collectWithin(scope, async () => {
+  const log = new CollectionLog()
+  const orphan = await collectWithin(log, async () => {
     const child = targeted().it('child', okBody)
     registerTest(new Test().group([child]))
     registerTest(targeted().each('row', [1, 2], (t, row) => t.args(row).expect((e) => [e.result.toBe(row * 2)])))
@@ -508,7 +508,7 @@ test('a collection scope reports the orphan definition and keeps every registrat
   const blueprint = orphan.blueprint()
   expect.assert(blueprint.kind === 'test')
   // groupの子・チェーンの途中値・eachが行ごとに作る途中値は、親に取られているので警告しない。
-  expect(unregisteredDefinitions(scope, new Set([selfFile]))).toEqual([blueprint.cases[0]?.origin])
-  expect(registrationsIn(scope, selfFile).map((entry) => entry.origin.file)).toEqual([selfFile, selfFile])
-  expect(unregisteredDefinitions(scope, new Set(['other.ts']))).toEqual([])
+  expect(log.unregisteredDefinitions(new Set([selfFile]))).toEqual([blueprint.cases[0]?.origin])
+  expect(log.registrationsIn(selfFile).map((entry) => entry.origin.file)).toEqual([selfFile, selfFile])
+  expect(log.unregisteredDefinitions(new Set(['other.ts']))).toEqual([])
 })
