@@ -73,6 +73,7 @@ export class WorkerModuleToolchain extends ModuleToolchain {
 
   async open(vite: ProjectConfig['vite']): Promise<ModuleSession> {
     const compiler = await this.#compilers.start(vite)
-    return new WorkerModuleSession(compiler, this.#runtimes.start(compiler), this.#registry)
+    // 収集は差し替えを行わない。宛先が決まるのは収集し終えた計画からで、据えるのは実行worker。
+    return new WorkerModuleSession(compiler, this.#runtimes.start(compiler, []), this.#registry)
   }
 }

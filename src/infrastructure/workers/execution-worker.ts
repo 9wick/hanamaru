@@ -38,8 +38,8 @@ export class ExecutionWorker {
     this.#channel.onMessage((message) => {
       if (!this.#session.receive(message)) this.#channel.fail(new Error('unexpected module compilation reply'))
     })
-    // 変換は親のportへ頼む。読み込みも差し替えもこのruntimeの中だけで起きる。
-    const runtime = this.#runtimes.start(this.#transport)
+    // 変換は親のportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
+    const runtime = this.#runtimes.start(this.#transport, workerData.preparation)
     this.#loader
       .load(runtime, workerData)
       .then((nodes) => {

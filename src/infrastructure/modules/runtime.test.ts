@@ -9,7 +9,6 @@ import type { ModulePreparation, ModuleTransport } from '../../application/ports
 import { invoke, objectValue, property } from '../../foundation/value.js'
 import { ModuleCompilerLauncher } from './compiler.js'
 import { ModuleEntry } from './entry.js'
-import { ModuleFacades } from './facades.js'
 import { ModuleRegistry } from './reference.js'
 import { ModuleRuntimeLauncher } from './runtime.js'
 
@@ -45,11 +44,9 @@ async function compiler() {
   return created
 }
 
-/** 収集workerと同じ組み立て。差し替える宛先はmoduleを読み込む前に据える。 */
+/** 実行workerと同じ組み立て。差し替える宛先はruntimeを組み立てるときに決まる。 */
 async function runtime(transport: ModuleTransport, preparation: ModulePreparation[] = []) {
-  const open = await scope()
-  ;(await open.get(ModuleFacades)).prepare(preparation)
-  const created = (await open.get(ModuleRuntimeLauncher)).start(transport)
+  const created = (await (await scope()).get(ModuleRuntimeLauncher)).start(transport, preparation)
   onTestFinished(() => created.close())
   return created
 }
@@ -73,7 +70,7 @@ test('the namespace of a module is registered in the registry that built it', as
   const transport = await compiler()
   const open = await scope()
   const registry = await open.get(ModuleRegistry)
-  const loaded = (await open.get(ModuleRuntimeLauncher)).start(transport)
+  const loaded = (await open.get(ModuleRuntimeLauncher)).start(transport, [])
   onTestFinished(() => loaded.close())
   // 台帳の見出しはViteが解決したmodule idで、import時のURLではない。準備の照合もこの見出しに従う。
   expect(registry.identify(await loaded.import(url))).toBe(file)

@@ -1,20 +1,18 @@
-import { Injectable, inject } from '@zeltjs/core'
 import type { EvaluatedModuleNode, ModuleEvaluator, ModuleRunnerContext } from '@hanamaru/vite/module-runner'
 import { ESModulesEvaluator, ssrModuleExportsKey } from '@hanamaru/vite/module-runner'
 import type { Value } from '../../foundation/value.js'
 import { valueOf } from '../../foundation/value.js'
-import { ModuleFacades } from './facades.js'
+import type { ModuleFacades } from './facades.js'
 
 /**
  * Viteの評価器に被せて、評価中のmoduleのexportをnamespaceへ差し替える。
  * 継承ではなく内側に持つことで、公開するのはViteが求める評価の口だけになる。
  */
-@Injectable()
 export class FacadeEvaluator implements ModuleEvaluator {
   readonly #inner = new ESModulesEvaluator()
   readonly #facades: ModuleFacades
 
-  constructor(facades = inject(ModuleFacades)) {
+  constructor(facades: ModuleFacades) {
     this.#facades = facades
   }
 

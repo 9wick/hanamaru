@@ -1,11 +1,12 @@
 import { Injectable, inject } from '@zeltjs/core'
 import { pathToFileURL } from 'node:url'
-import type { ModuleTransport } from '../../application/ports/module-loader.js'
+import type { ModulePreparation, ModuleTransport } from '../../application/ports/module-loader.js'
 import type { RuntimeCase } from '../../domain/definition/runtime.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
 import { FacadeEvaluator } from './evaluator.js'
 import { ModuleFacades } from './facades.js'
+import { ModuleRegistry } from './reference.js'
 import { FacadeRunner } from './runner.js'
 
 /**
@@ -54,19 +55,18 @@ export class RunningRuntime {
 
 /**
  * module runtimeを組み立てる。
- * 変換したコードの取り寄せ先は1回のrunごとに決まるため、繋ぐ相手はstartで受け取る。
+ * 変換したコードの取り寄せ先も差し替える宛先も1回のrunごとに決まるため、どちらもstartで受け取る。
  */
 @Injectable()
 export class ModuleRuntimeLauncher {
-  readonly #facades: ModuleFacades
-  readonly #evaluator: FacadeEvaluator
+  readonly #registry: ModuleRegistry
 
-  constructor(facades = inject(ModuleFacades), evaluator = inject(FacadeEvaluator)) {
-    this.#facades = facades
-    this.#evaluator = evaluator
+  constructor(registry = inject(ModuleRegistry)) {
+    this.#registry = registry
   }
 
-  start(transport: ModuleTransport): RunningRuntime {
-    return new RunningRuntime(new FacadeRunner(this.#facades, this.#evaluator, transport), this.#facades)
+  start(transport: ModuleTransport, preparation: readonly ModulePreparation[]): RunningRuntime {
+    const facades = new ModuleFacades(this.#registry, preparation)
+    return new RunningRuntime(new FacadeRunner(facades, new FacadeEvaluator(facades), transport), facades)
   }
 }

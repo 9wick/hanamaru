@@ -57,7 +57,7 @@ class LocalExecution implements ExecutionHandle {
     )
   }
 
-  /** 手元の実行が開いた資源はない。test runtimeの解放はこの一式を抱えるscopeが受け持つ。 */
+  /** 手元の実行が開いた資源はない。 */
   close(): Promise<void> {
     return Promise.resolve()
   }

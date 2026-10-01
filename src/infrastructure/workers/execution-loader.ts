@@ -5,7 +5,6 @@ import { indexExecutionNodes, createPlan } from '../../application/execution/pla
 import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
-import { ModuleFacades } from '../modules/facades.js'
 import { ModuleRegistry } from '../modules/reference.js'
 import type { RunningRuntime } from '../modules/runtime.js'
 import { ExecutionChannel } from './execution-channel.js'
@@ -17,19 +16,15 @@ import type { ExecutionWorkerData } from './protocol.js'
  */
 @Injectable()
 export class ExecutionLoader {
-  readonly #facades: ModuleFacades
   readonly #registry: ModuleRegistry
   readonly #channel: ExecutionChannel
 
-  constructor(facades = inject(ModuleFacades), registry = inject(ModuleRegistry), channel = inject(ExecutionChannel)) {
-    this.#facades = facades
+  constructor(registry = inject(ModuleRegistry), channel = inject(ExecutionChannel)) {
     this.#registry = registry
     this.#channel = channel
   }
 
   async load(runtime: RunningRuntime, workerData: ExecutionWorkerData): Promise<Map<string, ExecutionNode>> {
-    // 差し替える宛先は収集が決めたもの。moduleを読み込む前に台を据える。
-    this.#facades.prepare(workerData.preparation)
     const definitions = await this.#reimport(runtime, workerData)
     const plan = createPlan(validatedBlueprints(definitions))
     if (JSON.stringify(this.#registry.describe(plan.allNodes)) !== workerData.shape)

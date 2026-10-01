@@ -1,4 +1,3 @@
-import { Injectable, inject } from '@zeltjs/core'
 import type { ModulePreparation } from '../../application/ports/module-loader.js'
 import type { AnyFn } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
@@ -12,7 +11,7 @@ import {
   required,
   valueOf,
 } from '../../foundation/value.js'
-import { ModuleRegistry } from './reference.js'
+import type { ModuleRegistry } from './reference.js'
 
 /** test runtimeが読み込んだmoduleのexport一式。 */
 export type Namespace = Record<PropertyKey, Value>
@@ -27,25 +26,25 @@ interface ModuleSlot {
 /**
  * 読み込んだmoduleに被せるnamespaceを作り、差し替えの台帳を抱える。
  * 保存済みの参照からも差し替えが見えるよう、exportごとの振り分け役は1度だけ作って使い回す。
+ * 差し替える宛先は1回のrunの入力として決まるため、moduleを読み込む前に台ごと組み立てる。
  */
-@Injectable()
 export class ModuleFacades {
   readonly #registry: ModuleRegistry
-  readonly #slots = new Map<string, ModuleSlot>()
+  readonly #slots: Map<string, ModuleSlot>
   readonly #views = new WeakMap<object, Namespace>()
 
-  constructor(registry = inject(ModuleRegistry)) {
+  constructor(registry: ModuleRegistry, preparation: readonly ModulePreparation[]) {
     this.#registry = registry
-  }
-
-  /** 差し替える宛先は収集の途中で決まるため、moduleを読み込む前に台を据える。 */
-  prepare(preparation: ModulePreparation[]): void {
-    for (const { id, keys } of preparation)
-      this.#slots.set(id, {
-        keys: new Set<PropertyKey>(keys),
-        values: fieldsValue(Object.create(null)),
-        dispatchers: new Map<PropertyKey, AnyFn>(),
-      })
+    this.#slots = new Map(
+      preparation.map(({ id, keys }) => [
+        id,
+        {
+          keys: new Set<PropertyKey>(keys),
+          values: fieldsValue(Object.create(null)),
+          dispatchers: new Map<PropertyKey, AnyFn>(),
+        },
+      ]),
+    )
   }
 
   view<T>(id: string, input: T): Namespace {
