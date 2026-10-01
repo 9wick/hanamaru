@@ -44,9 +44,9 @@ export class ModuleRuntime implements Lifecycle {
     return { ...node, mocks: node.mocks.map((entry) => this.#facades.bind(entry)) }
   }
 
-  /** 期待の繋ぎ直しは関数値として渡されるため、thisを抱えたまま持ち出せる形にする。 */
-  readonly bindCall = <T extends { object: object; key: string }>(entry: T): T & { sourceObject?: object } =>
-    this.#facades.bind(entry)
+  bindCall<T extends { object: object; key: string }>(entry: T): T & { sourceObject?: object } {
+    return this.#facades.bind(entry)
+  }
 
   bindCase(item: RuntimeCase): RuntimeCase {
     return {

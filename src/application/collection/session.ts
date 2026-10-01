@@ -20,7 +20,7 @@ import type { Config } from './config.js'
 import { collectWithin } from './current-scope.js'
 import type { Reporter } from './events.js'
 import { CollectionEvents } from './events.js'
-import { loadConfig } from './load-config.js'
+import type { CliOptions } from './options.js'
 import { CollectionLog } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
@@ -99,7 +99,7 @@ export class CollectionSession {
     const collecting: { file: SelectedFile | null } = { file: null }
     try {
       // 設定はcompilerより先に要る。vite設定を知らないままtest runtimeを立てられない。
-      const config = await loadConfig(request.options, this.#files, this.#events)
+      const config = await this.#loadConfig(request.options)
       const limits = collectionLimits(request.options, config)
       const files = this.#select(request, config)
       this.#events.loading('test runtime setup', limits.timeout)
@@ -112,6 +112,16 @@ export class CollectionSession {
         : ''
       this.#events.error(context + errorStack(error))
     }
+  }
+
+  /**
+   * 設定ファイルの読み込み自体にも期限がある。設定はまだ読めていないため、引数の指定か既定値だけで測る。
+   * 設定が決まってからの期限はcollectionLimitsが測り直す。
+   */
+  #loadConfig(options: CliOptions): Promise<Config> {
+    const timeout = options.collectionTimeout ?? 30_000
+    positive(timeout, 'collectionTimeout')
+    return this.#files.readConfig(options, (file) => this.#events.loading(file, timeout))
   }
 
   #select(request: CollectionRequest, config: Config): SelectedFile[] {

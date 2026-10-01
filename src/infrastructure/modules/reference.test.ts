@@ -1,7 +1,10 @@
 import { expect, test } from 'vite-plus/test'
-import { Test } from '../../index.js'
+import type { TestDefinition } from '../../index.js'
+import { Test, middleware } from '../../index.js'
+import { createPlan } from '../../application/execution/plan.js'
+import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
-import { ModuleRegistry, collectModulePreparation } from './reference.js'
+import { ModuleRegistry } from './reference.js'
 
 const add = (a: number, b: number): number => a + b
 
@@ -36,7 +39,7 @@ test('preparation lists every mocked and observed key once per registered module
         .expect((e) => [e.result.toBe(3)]),
     )
     .todo('later')
-  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([
+  expect(registry.prepare(collectBlueprints(definition))).toStrictEqual([
     { id: '/alpha.ts', keys: ['read', 'write'] },
     { id: '/beta.ts', keys: ['load'] },
   ])
@@ -52,9 +55,7 @@ test('preparation visits group children', () => {
       .expect((e) => [e.result.toBe(3)]),
   )
   const definition = new Test().group([child])
-  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([
-    { id: '/nested.ts', keys: ['read'] },
-  ])
+  expect(registry.prepare(collectBlueprints(definition))).toStrictEqual([{ id: '/nested.ts', keys: ['read'] }])
 })
 
 test('ordinary fixture objects need no preparation', () => {
@@ -65,7 +66,7 @@ test('ordinary fixture objects need no preparation', () => {
       .args(1, 2)
       .expect((e) => [e.result.toBe(3)]),
   )
-  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([])
+  expect(registry.prepare(collectBlueprints(definition))).toStrictEqual([])
 })
 
 test('a module namespace the runtime did not load is rejected with the key that referenced it', () => {
@@ -76,7 +77,7 @@ test('a module namespace the runtime did not load is rejected with the key that 
       .args(1, 2)
       .expect((e) => [e.result.toBe(3)]),
   )
-  expect(() => collectModulePreparation(registry, collectBlueprints(definition))).toThrow(
+  expect(() => registry.prepare(collectBlueprints(definition))).toThrow(
     /module was loaded outside the test runtime: read/,
   )
 })
@@ -88,5 +89,25 @@ test('context fixtures named by call.from are resolved at execution, not during 
       .expect((e) => [e.result.toBe(3)])
       .expectCalls((call) => [call.from(() => ({ read: (n: number) => n }), 'read').notCalled()]),
   )
-  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([])
+  expect(registry.prepare(collectBlueprints(definition))).toStrictEqual([])
+})
+
+function shapeOf(definition: TestDefinition): string {
+  return JSON.stringify(new ModuleRegistry().describe(createPlan(collectBlueprints(definition)).allNodes))
+}
+
+function groupWith(options: { timeout?: number }): TestDefinition {
+  const child = new Test().target(add).it('adds', (t) => t.args(1, 2).expect((e) => [e.result.toBe(3)]))
+  return new Test().group(
+    middleware(async (_, next) => next(), options),
+    [child],
+  )
+}
+
+test('execution plan shape materializes the default middleware timeout', () => {
+  const implicit = shapeOf(groupWith({}))
+  expect(implicit).toContain(`"middleware":{"timeout":${defaultMiddlewareTimeoutMs}}`)
+  // 収集workerと実行workerはこの文字列だけで定義の同一性を判定するため、
+  // 既定値が展開されないと明示指定と暗黙指定が別物として扱われる。
+  expect(implicit).toBe(shapeOf(groupWith({ timeout: defaultMiddlewareTimeoutMs })))
 })

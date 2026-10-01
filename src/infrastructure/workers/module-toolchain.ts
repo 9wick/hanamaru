@@ -6,9 +6,8 @@ import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
 import { ModuleCompiler } from '../modules/compiler.js'
-import { collectModulePreparation, ModuleRegistry } from '../modules/reference.js'
+import { ModuleRegistry } from '../modules/reference.js'
 import { ModuleRuntime } from '../modules/runtime.js'
-import { describeExecutionPlan } from './plan-shape.js'
 
 /**
  * 収集が使うtest runtime一式。資源を開く口と準備・指紋の算出は、
@@ -40,10 +39,10 @@ export class WorkerModuleToolchain extends ModuleToolchain {
   }
 
   prepare(blueprints: RuntimeBlueprint[]): ModulePreparation[] {
-    return collectModulePreparation(this.#registry, blueprints)
+    return this.#registry.prepare(blueprints)
   }
 
   describe(nodes: ExecutionNode[]): Value {
-    return describeExecutionPlan(this.#registry, nodes)
+    return this.#registry.describe(nodes)
   }
 }

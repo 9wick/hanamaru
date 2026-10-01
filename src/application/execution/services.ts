@@ -159,18 +159,6 @@ export class RunTracker {
   }
 }
 
-/** いまの部分結果を、与えられた理由で打ち切った結果として複製する。実行中の1件も反映する。 */
-function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason): MutableRunResult {
-  const partial = required(results.result)
-  const snapshot = new ProgressStore()
-  snapshot.apply({
-    kind: 'init',
-    result: structuredClone({ ...partial, status: reason === 'timeout' ? 'failed' : partial.status, reason }),
-  })
-  if (tracker.active) snapshot.apply(tracker.activeProgress(reason))
-  return required(snapshot.result)
-}
-
 /**
  * 外から受け取る通知の手を、打ち切り時に部分結果を組み立てる形へ繋ぐ。
  * 部分結果ツリーを持たない実行workerはRunEventsへ直に繋ぐため、この繋ぎを使わない。
@@ -192,8 +180,20 @@ export class RunReporter {
     this.#events.listen({
       onProgress: listeners.onProgress,
       onDeadline: listeners.onDeadline,
-      onTimeout: () => listeners.onTimeout?.(snapshotRun(this.#results, this.#tracker, 'timeout')),
+      onTimeout: () => listeners.onTimeout?.(this.#snapshot('timeout')),
     })
+  }
+
+  /** いまの部分結果を、与えられた理由で打ち切った結果として複製する。実行中の1件も反映する。 */
+  #snapshot(reason: Reason): MutableRunResult {
+    const partial = required(this.#results.result)
+    const snapshot = new ProgressStore()
+    snapshot.apply({
+      kind: 'init',
+      result: structuredClone({ ...partial, status: reason === 'timeout' ? 'failed' : partial.status, reason }),
+    })
+    if (this.#tracker.active) snapshot.apply(this.#tracker.activeProgress(reason))
+    return required(snapshot.result)
   }
 }
 

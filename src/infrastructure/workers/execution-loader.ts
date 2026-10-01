@@ -9,7 +9,6 @@ import { ModuleFacades } from '../modules/facades.js'
 import { ModuleRegistry } from '../modules/reference.js'
 import { ModuleRuntime } from '../modules/runtime.js'
 import { ExecutionChannel } from './execution-channel.js'
-import { describeExecutionPlan } from './plan-shape.js'
 import type { ExecutionWorkerData } from './protocol.js'
 
 /**
@@ -40,7 +39,7 @@ export class ExecutionLoader {
     this.#facades.prepare(workerData.preparation)
     const definitions = await this.#reimport(workerData)
     const plan = createPlan(validatedBlueprints(definitions))
-    if (JSON.stringify(describeExecutionPlan(this.#registry, plan.allNodes)) !== workerData.shape)
+    if (JSON.stringify(this.#registry.describe(plan.allNodes)) !== workerData.shape)
       throw new TypeError('test definitions changed between collection and execution')
     return indexExecutionNodes(plan.allNodes)
   }
