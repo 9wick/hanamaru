@@ -18,7 +18,8 @@ import { now } from './clock.js'
 import { CaseFailed } from './faults.js'
 import { GroupMiddlewareExecutor } from './middleware.js'
 import { allCases } from './plan.js'
-import { ProgressStore } from './progress.js'
+import type { ProgressStore } from './progress.js'
+import { RunProgress } from './run-progress.js'
 import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, resultFailed } from './results.js'
 import type { RunSettings } from './options.js'
 import { RunEvents, RunTracker } from './services.js'
@@ -38,7 +39,7 @@ export class RunWalker {
   readonly #executor: Executor | null
 
   constructor(
-    results = inject(ProgressStore),
+    results = inject(RunProgress),
     events = inject(RunEvents),
     tracker = inject(RunTracker),
     attempts = inject(AttemptExecutor),

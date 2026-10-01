@@ -1,4 +1,3 @@
-import { Injectable } from '@zeltjs/core'
 import type {
   MutableCaseResult,
   MutableGroupResult,
@@ -50,7 +49,6 @@ function statusOf(failed: ReadonlySet<string>, reason: MutableRunResult['reason'
  * 経路で引ける部分結果ツリーの唯一の持ち主。初期ツリーを一度索引化し、完了した結果を差分で反映する。
  * 実行中のプロセスも受け取り側のプロセスも、同じprogressを同じ手順で当てて同じ木に行き着く。
  */
-@Injectable()
 export class ProgressStore {
   result: MutableRunResult | null = null
   #index: ResultIndex = { cases: new Map(), groups: new Map(), failed: new Set() }

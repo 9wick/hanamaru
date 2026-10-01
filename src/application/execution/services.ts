@@ -5,6 +5,7 @@ import type { ExecutionPhase } from '../../domain/result/types.js'
 import { required } from '../../foundation/value.js'
 import { now } from './clock.js'
 import { ProgressStore } from './progress.js'
+import { RunProgress } from './run-progress.js'
 import type { ActiveExecution, Deadline, Progress } from './state.js'
 import { progressOf } from './state.js'
 
@@ -180,7 +181,7 @@ export class RunReporter {
   readonly #results: ProgressStore
   readonly #tracker: RunTracker
 
-  constructor(events = inject(RunEvents), results = inject(ProgressStore), tracker = inject(RunTracker)) {
+  constructor(events = inject(RunEvents), results = inject(RunProgress), tracker = inject(RunTracker)) {
     this.#events = events
     this.#results = results
     this.#tracker = tracker
