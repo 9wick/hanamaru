@@ -1,3 +1,4 @@
+import { Config } from '@zeltjs/core'
 import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
 import type { ModuleInvoke, ModulePreparation, RootReference } from './module-loader.js'
 
@@ -27,10 +28,29 @@ export interface ExecutionServices {
   onLoading: (file: string) => void
 }
 
-/** attemptとgroupを別の場所で走らせる実行場所。何を走らせるかはstartで受け取る。 */
-export interface Executor {
-  start(spec: ExecutionSpec): Promise<void>
-  attempt(path: number[], number: number): Promise<AttemptReply>
-  group(path: number[], body: () => Promise<boolean>): Promise<GroupReply>
-  close(): Promise<void>
+/**
+ * attemptとgroupを別の場所で走らせる実行場所。
+ * 何を走らせるかも外との繋ぎ方も収集が終わるまで決まらないため、どちらもstartで受け取る。
+ */
+@Config({ abstract: true })
+export abstract class Executor {
+  abstract start(spec: ExecutionSpec, services: ExecutionServices): Promise<void>
+  abstract attempt(path: number[], number: number): Promise<AttemptReply>
+  abstract group(path: number[], body: () => Promise<boolean>): Promise<GroupReply>
+  abstract close(): Promise<void>
+}
+
+/**
+ * 計画を辿る側から見た実行場所の有無。
+ * ライブラリのrunは手元で走らせるため実行場所を持たず、収集workerは実行workerを指す。
+ */
+@Config({ abstract: true })
+export abstract class ExecutionPlace {
+  abstract readonly executor: Executor | null
+}
+
+/** 手元で走らせるrunの実行場所。ライブラリのrunがこれを選ぶ。 */
+@Config()
+export class LocalExecution extends ExecutionPlace {
+  readonly executor: Executor | null = null
 }

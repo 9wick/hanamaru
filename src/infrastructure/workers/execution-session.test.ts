@@ -1,7 +1,9 @@
+import { Config, createApp } from '@zeltjs/core'
 import { MessageChannel } from 'node:worker_threads'
 import * as v from 'valibot'
 import { expect, test } from 'vite-plus/test'
-import { ExecutionChannel } from './execution-channel.js'
+import { RunEvents, RunTracker } from '../../application/execution/services.js'
+import { ExecutionEnvironment } from './environment.js'
 import { CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
 import type { ExecutionCommand } from './protocol.js'
 import { executionMessageSchema } from './schemas.js'
@@ -22,8 +24,12 @@ function wired() {
     sent.push(v.parse(executionMessageSchema, message))
     notify()
   })
+  @Config()
+  class TestEnvironment extends ExecutionEnvironment {
+    override readonly port = port1
+  }
   return {
-    channel: new ExecutionChannel(port1),
+    scope: createApp([]).createRuntime({ configs: [TestEnvironment] }),
     sent,
     until: (count: number) =>
       new Promise<void>((resolve) => {
@@ -40,8 +46,8 @@ function wired() {
 }
 
 test('compile requests number their asks and resolve the matching reply', async () => {
-  const { channel, sent, until, close } = wired()
-  const compiles = new CompileRequests(channel)
+  const { scope, sent, until, close } = wired()
+  const compiles = await (await scope).get(CompileRequests)
   const first = compiles.invoke('fetchModule', ['a'])
   const second = compiles.invoke('fetchModule', ['b'])
   await until(2)
@@ -57,8 +63,8 @@ test('compile requests number their asks and resolve the matching reply', async 
 })
 
 test('a compile reply carrying an error rejects the request with that message', async () => {
-  const { channel, close } = wired()
-  const compiles = new CompileRequests(channel)
+  const { scope, close } = wired()
+  const compiles = await (await scope).get(CompileRequests)
   const request = compiles.invoke('fetchModule', [])
   expect(compiles.settle({ id: 0, error: 'transform failed' })).toBe(true)
   await expect(request).rejects.toThrow(/transform failed/)
@@ -66,8 +72,8 @@ test('a compile reply carrying an error rejects the request with that message', 
 })
 
 test('a reply for an unknown or already settled request is reported as unmatched', async () => {
-  const { channel, close } = wired()
-  const compiles = new CompileRequests(channel)
+  const { scope, close } = wired()
+  const compiles = await (await scope).get(CompileRequests)
   const request = compiles.invoke('fetchModule', [])
   expect(compiles.settle({ id: 7 })).toBe(false)
   expect(compiles.settle({ id: 0, result: 1 })).toBe(true)
@@ -94,11 +100,14 @@ test('a command that arrives after the taker hands it over directly', async () =
 })
 
 test('the session reports a timeout with the phase its tracker last marked', async () => {
-  const { channel, sent, until, close } = wired()
-  const session = new ExecutionSession(channel)
-  session.events.timedOut()
-  session.tracker.markPhase('target')
-  session.events.timedOut()
+  const { scope, sent, until, close } = wired()
+  const open = await scope
+  // 通知の繋ぎはsessionが受け持つため、sessionを組み立ててから観察する。
+  await open.get(ExecutionSession)
+  const events = await open.get(RunEvents)
+  events.timedOut()
+  ;(await open.get(RunTracker)).markPhase('target')
+  events.timedOut()
   await until(2)
   expect(sent).toStrictEqual([
     { type: 'timeout', phase: undefined },
@@ -108,21 +117,21 @@ test('the session reports a timeout with the phase its tracker last marked', asy
 })
 
 test('the session asks for compilation through the worker protocol', async () => {
-  const { channel, sent, until, close } = wired()
-  const session = new ExecutionSession(channel)
-  void session.compiles.invoke('getBuiltins', [])
+  const { scope, sent, until, close } = wired()
+  void (await (await scope).get(CompileRequests)).invoke('getBuiltins', [])
   await until(1)
   expect(sent).toStrictEqual([{ type: 'compile', id: 0, name: 'getBuiltins', args: [] }])
   close()
 })
 
 test('the session routes each incoming message to its destination', async () => {
-  const { channel, close } = wired()
-  const session = new ExecutionSession(channel)
+  const { scope, close } = wired()
+  const open = await scope
+  const session = await open.get(ExecutionSession)
   expect(session.receive({ type: 'interrupt' })).toBe(true)
-  expect(session.tracker.reason).toBe('interrupted')
+  expect((await open.get(RunTracker)).reason).toBe('interrupted')
   expect(session.receive(attempt(5))).toBe(true)
-  expect((await session.commands.take()).id).toBe(5)
+  expect((await (await open.get(CommandQueue)).take()).id).toBe(5)
   // 覚えのないcompile返信だけは入口が畳み方を決めるため、見分けた結果を返す。
   expect(session.receive({ type: 'compiled', id: 9, result: 1 })).toBe(false)
   close()

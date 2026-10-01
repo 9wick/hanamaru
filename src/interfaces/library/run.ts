@@ -1,10 +1,14 @@
+import type { ConfigClass } from '@zeltjs/core'
+import { createApp } from '@zeltjs/core'
 import * as v from 'valibot'
 import type { RunOptions, RunSettings } from '../../application/execution/options.js'
+import { runExclusively } from '../../application/execution/current-run.js'
 import { createPlan } from '../../application/execution/plan.js'
-import { createRunWalker } from '../../application/execution/runner.js'
+import { RunWalker } from '../../application/execution/runner.js'
 import type { RunListeners } from '../../application/execution/services.js'
-import { createRunServices } from '../../application/execution/services.js'
+import { DirectCalls, RunReporter } from '../../application/execution/services.js'
 import type { Comparison } from '../../application/ports/comparison.js'
+import { LocalExecution } from '../../application/ports/executor.js'
 import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import type { TestDefinition } from '../../domain/definition/types.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
@@ -29,15 +33,25 @@ export interface RunInput extends RunSettings, RunListeners {
   readonly signal?: AbortSignal
 }
 
-export function createRun(comparison: Comparison) {
-  return async function run(
-    input: TestDefinition | readonly TestDefinition[],
-    options: RunOptions = {},
-  ): Promise<RunResult> {
+/**
+ * 1回のrunぶんのscopeを立てて畳む入口。runを辿る一式はこのscopeが持つため、
+ * 利用者がcontainerを組み立てる必要はない。
+ */
+export function createRun(comparison: ConfigClass<Comparison>) {
+  return function run(input: TestDefinition | readonly TestDefinition[], options: RunOptions = {}): Promise<RunResult> {
     const received: RunInput = options
-    const walker = createRunWalker(createRunServices(received), comparison)
-    return finalizeRun(
-      await walker.run(() => createPlan(collectBlueprints(input), received), received, received.signal),
-    )
+    // 錠はscopeを立てるより先に取る。収集の途中で始まったrunも重なりとして弾く。
+    return runExclusively(async () => {
+      const scope = await createApp([]).createRuntime({ configs: [comparison, LocalExecution, DirectCalls] })
+      try {
+        const walker = await scope.get(RunWalker)
+        ;(await scope.get(RunReporter)).listen(received)
+        return finalizeRun(
+          await walker.run(() => createPlan(collectBlueprints(input), received), received, received.signal),
+        )
+      } finally {
+        await scope.shutdown()
+      }
+    })
   }
 }

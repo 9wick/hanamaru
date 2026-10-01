@@ -1,9 +1,11 @@
+import { Config, inject } from '@zeltjs/core'
 import { Worker } from 'node:worker_threads'
 import * as v from 'valibot'
-import type { RunEvents, RunServices, RunTracker } from '../../application/execution/services.js'
+import { RunEvents, RunTracker } from '../../application/execution/services.js'
 import type { AttemptReply, ExecutionServices, ExecutionSpec, GroupReply } from '../../application/ports/executor.js'
-import type { ModuleInvoke } from '../../application/ports/module-loader.js'
+import { ExecutionPlace, Executor } from '../../application/ports/executor.js'
 import { errorStack } from '../../foundation/errors.js'
+import { CollectionEnvironment } from './environment.js'
 import type { Value } from '../../foundation/value.js'
 import { required } from '../../foundation/value.js'
 import type { CommandInput, ReplyValue } from './protocol.js'
@@ -43,9 +45,10 @@ export class RequestTable {
 /**
  * 実行workerをExecutorとして扱う。返信待ち・立ち上がりの約束・畳んだかどうかを自分で持ち、
  * runの進み具合は組み立て時に受け取ったtrackerとeventsへ渡す。
- * 走らせる計画はworkerを立てるときにしか渡せないため、workerはstartで初めて起動する。
+ * 走らせる計画も外との繋ぎも収集が終わるまで決まらないため、workerはstartで初めて起動する。
  */
-export class WorkerExecutor {
+@Config()
+export class WorkerExecutor extends Executor {
   readonly #requests = new RequestTable()
   readonly #interrupt = () => this.#post({ type: 'interrupt' })
   /** workerが死んだ瞬間に待っている全部へ同じ失敗を渡すため、listenerへそのまま預けられる形で持つ。 */
@@ -57,22 +60,19 @@ export class WorkerExecutor {
   readonly #workerURL: URL
   readonly #tracker: RunTracker
   readonly #events: RunEvents
-  readonly #signal: AbortSignal | undefined
-  readonly #onLoading: (file: string) => void
-  readonly #invoke: ModuleInvoke
+  /** 外との繋ぎはstartで決まる。立ち上げる前のこの口は、まだどのrunにも属していない。 */
+  #services: ExecutionServices | null = null
   #worker: Worker | null = null
   #openReady: (() => void) | null = null
   #failReady: ((error: Value) => void) | null = null
   #closing = false
   #fatal: Value = undefined
 
-  constructor(workerURL: URL, { tracker, events }: RunServices, { signal, onLoading, invoke }: ExecutionServices) {
-    this.#workerURL = workerURL
+  constructor(environment = inject(CollectionEnvironment), tracker = inject(RunTracker), events = inject(RunEvents)) {
+    super()
+    this.#workerURL = environment.executionWorkerURL
     this.#tracker = tracker
     this.#events = events
-    this.#signal = signal
-    this.#onLoading = onLoading
-    this.#invoke = invoke
   }
 
   #post(message: Value): void {
@@ -80,8 +80,9 @@ export class WorkerExecutor {
   }
 
   /** 立ち上がりで落ちたworkerは残しておけない。畳んでから失敗を返す。 */
-  async start({ roots, preparation, shape }: ExecutionSpec): Promise<void> {
-    this.#onLoading('execution worker setup')
+  async start({ roots, preparation, shape }: ExecutionSpec, services: ExecutionServices): Promise<void> {
+    this.#services = services
+    services.onLoading('execution worker setup')
     const ready = new Promise<void>((resolve, reject) => {
       this.#openReady = resolve
       this.#failReady = reject
@@ -90,8 +91,8 @@ export class WorkerExecutor {
       workerData: { role: 'execution', roots, preparation, shape },
     })
     this.#worker = worker
-    this.#signal?.addEventListener('abort', this.#interrupt)
-    if (this.#signal?.aborted) this.#interrupt()
+    services.signal.addEventListener('abort', this.#interrupt)
+    if (services.signal.aborted) this.#interrupt()
     worker.on('error', this.#fail)
     worker.on('exit', (code) => {
       if (!this.#closing) this.#fail(new Error(`execution worker exited (${code})`))
@@ -110,7 +111,8 @@ export class WorkerExecutor {
     if (!parsed.success) return this.#fail(new Error(`invalid execution message: ${v.summarize(parsed.issues)}`))
     const message = parsed.output
     if (message.type === 'compile') {
-      this.#invoke(message.name, message.args)
+      required(this.#services)
+        .invoke(message.name, message.args)
         .then(
           (result) => {
             if (!this.#closing) this.#post({ type: 'compiled', id: message.id, result })
@@ -121,7 +123,7 @@ export class WorkerExecutor {
         )
         .catch(this.#fail)
     } else if (message.type === 'ready') required(this.#openReady)()
-    else if (message.type === 'loading') this.#onLoading(message.file)
+    else if (message.type === 'loading') required(this.#services).onLoading(message.file)
     else if (message.type === 'error') this.#fail(new Error(message.message))
     else if (message.type === 'reply') {
       if (!this.#requests.has(message.id)) return this.#fail(new Error('unexpected execution reply'))
@@ -183,7 +185,18 @@ export class WorkerExecutor {
 
   async close(): Promise<void> {
     this.#closing = true
-    this.#signal?.removeEventListener('abort', this.#interrupt)
+    this.#services?.signal.removeEventListener('abort', this.#interrupt)
     await this.#worker?.terminate()
+  }
+}
+
+/** 収集workerから見た実行場所。計画を辿る間のattemptとgroupは実行workerへ渡す。 */
+@Config()
+export class WorkerExecutionPlace extends ExecutionPlace {
+  readonly executor: Executor
+
+  constructor(executor = inject(Executor)) {
+    super()
+    this.executor = executor
   }
 }

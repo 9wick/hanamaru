@@ -1,3 +1,5 @@
+import type { Lifecycle } from '@zeltjs/core'
+import { Injectable, LifecycleManager, inject } from '@zeltjs/core'
 import type { InlineConfig, UserConfig, ViteDevServer } from '@hanamaru/vite'
 import { createServer, mergeConfig } from '@hanamaru/vite'
 import type { FetchResult } from '@hanamaru/vite/module-runner'
@@ -7,9 +9,10 @@ import { builtinModules } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as v from 'valibot'
-import type { ModuleInvoke } from '../../application/ports/module-loader.js'
+import type { Value } from '../../foundation/value.js'
 import { required } from '../../foundation/value.js'
-import type { TsconfigResolver } from './resolver.js'
+import { ModuleEntry } from './entry.js'
+import { TsconfigResolver } from './resolver.js'
 
 // Vite 8.3 guards generated export getters. Preserve TDZ errors without changing user catch blocks.
 export function preserveExportErrors(code: string) {
@@ -38,10 +41,11 @@ export function preserveExportErrors(code: string) {
 }
 
 /**
- * 変換したコードを配るVite server。読んだpackage種別と取り寄せた結果を覚えるため、
- * 1つの実行につき1つだけ立て、startで開いてcloseで畳む。
+ * 変換したコードを配るVite server。読んだpackage種別と取り寄せた結果を覚えるため、1つのscopeに1つだけ立てる。
+ * vite設定は設定ファイルを読むまで決まらないため、開くのはstart。解放だけをscopeの終了に預ける。
  */
-export class ModuleCompiler {
+@Injectable()
+export class ModuleCompiler implements Lifecycle {
   readonly #tsconfig: TsconfigResolver
   readonly #implementationRoot: string
   readonly #runtimeURL: string
@@ -50,10 +54,18 @@ export class ModuleCompiler {
   #server: ViteDevServer | undefined
   #closing: Promise<void> | undefined
 
-  constructor(tsconfig: TsconfigResolver, entryURL: URL) {
+  constructor(tsconfig = inject(TsconfigResolver), entry = inject(ModuleEntry), lifecycle = inject(LifecycleManager)) {
     this.#tsconfig = tsconfig
-    this.#implementationRoot = dirname(fileURLToPath(entryURL))
-    this.#runtimeURL = entryURL.href
+    this.#implementationRoot = dirname(fileURLToPath(entry.url))
+    this.#runtimeURL = entry.url.href
+    lifecycle.register(this)
+  }
+
+  /** 開く合図はstartが受け持つ。scopeの起動時にはまだvite設定が決まっていない。 */
+  startup(): void {}
+
+  shutdown(): Promise<void> {
+    return this.close()
   }
 
   async start(vite: UserConfig = {}): Promise<void> {
@@ -128,8 +140,7 @@ export class ModuleCompiler {
     }
   }
 
-  /** 関数値として渡されるため、thisを抱えたまま持ち出せる形にする。 */
-  readonly invoke: ModuleInvoke = async (name, args) => {
+  async invoke(name: string, args: Value[]): Promise<Value> {
     if (this.#closing) throw new Error('module compiler is closed')
     if (name === 'getBuiltins') return [...builtinModules, { type: 'regexp', source: '^node:', flags: '' }]
     if (name !== 'fetchModule') throw new Error(`unknown module request: ${name}`)
@@ -164,9 +175,10 @@ export class ModuleCompiler {
     }
   }
 
-  /** 二重に閉じても同じ約束を返す。閉じたあとの取り寄せは受け付けない。 */
+  /** 二重に閉じても同じ約束を返す。開く前に畳まれたscopeでは閉じる相手がない。閉じたあとの取り寄せは受け付けない。 */
   close(): Promise<void> {
-    this.#closing ??= required(this.#server, 'module compiler was not started').close()
+    const server = this.#server
+    this.#closing ??= server ? server.close() : Promise.resolve()
     return this.#closing
   }
 }

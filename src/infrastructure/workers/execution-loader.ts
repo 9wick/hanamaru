@@ -1,12 +1,14 @@
+import { Injectable, inject } from '@zeltjs/core'
 import { collectWithin } from '../../application/collection/current-scope.js'
 import { CollectionLog } from '../../application/collection/scope.js'
 import { indexExecutionNodes, createPlan } from '../../application/execution/plan.js'
 import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
-import type { ModuleRegistry } from '../modules/reference.js'
-import type { ModuleRuntime } from '../modules/runtime.js'
-import type { ExecutionChannel } from './execution-channel.js'
+import { ModuleFacades } from '../modules/facades.js'
+import { ModuleRegistry } from '../modules/reference.js'
+import { ModuleRuntime } from '../modules/runtime.js'
+import { ExecutionChannel } from './execution-channel.js'
 import { describeExecutionPlan } from './plan-shape.js'
 import type { ExecutionWorkerData } from './protocol.js'
 
@@ -14,18 +16,28 @@ import type { ExecutionWorkerData } from './protocol.js'
  * 実行workerが自分の持ち場を用意する手順。収集と同じファイルを読み直して計画を組み直し、
  * 収集時の指紋と一致することを確かめる。食い違えば、どのpathが何を指すかの前提が崩れている。
  */
+@Injectable()
 export class ExecutionLoader {
   readonly #runtime: ModuleRuntime
+  readonly #facades: ModuleFacades
   readonly #registry: ModuleRegistry
   readonly #channel: ExecutionChannel
 
-  constructor(runtime: ModuleRuntime, registry: ModuleRegistry, channel: ExecutionChannel) {
+  constructor(
+    runtime = inject(ModuleRuntime),
+    facades = inject(ModuleFacades),
+    registry = inject(ModuleRegistry),
+    channel = inject(ExecutionChannel),
+  ) {
     this.#runtime = runtime
+    this.#facades = facades
     this.#registry = registry
     this.#channel = channel
   }
 
   async load(workerData: ExecutionWorkerData): Promise<Map<string, ExecutionNode>> {
+    // 差し替える宛先は収集が決めたもの。moduleを読み込む前に台を据える。
+    this.#facades.prepare(workerData.preparation)
     const definitions = await this.#reimport(workerData)
     const plan = createPlan(validatedBlueprints(definitions))
     if (JSON.stringify(describeExecutionPlan(this.#registry, plan.allNodes)) !== workerData.shape)

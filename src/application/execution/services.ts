@@ -1,3 +1,4 @@
+import { Config, Injectable, inject } from '@zeltjs/core'
 import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
 import type { MutableRunResult, Reason } from '../../domain/result/mutable.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
@@ -89,18 +90,18 @@ export type RunListeners = {
 }
 
 /** 実行の外側へ出す通知。受け取り手を持たない実行では何も起きない。 */
+@Injectable()
 export class RunEvents {
-  readonly #onProgress: ((progress: Progress) => void) | undefined
-  readonly #onDeadline: ((deadline: Deadline) => void) | undefined
-  readonly #onTimeout: (() => void) | undefined
+  #onProgress: ((progress: Progress) => void) | undefined
+  #onDeadline: ((deadline: Deadline) => void) | undefined
+  #onTimeout: (() => void) | undefined
 
-  constructor(
-    handlers: {
-      onProgress?: (progress: Progress) => void
-      onDeadline?: (deadline: Deadline) => void
-      onTimeout?: () => void
-    } = {},
-  ) {
+  /** 受け取り手も、打ち切り時にどんな姿を渡すかも、runを始める入口が決める。 */
+  listen(handlers: {
+    onProgress?: (progress: Progress) => void
+    onDeadline?: (deadline: Deadline) => void
+    onTimeout?: () => void
+  }): void {
     this.#onProgress = handlers.onProgress
     this.#onDeadline = handlers.onDeadline
     this.#onTimeout = handlers.onTimeout
@@ -118,6 +119,7 @@ export class RunEvents {
 }
 
 /** いま何を実行していて、なぜ打ち切るのかの持ち主。部分結果ツリーはProgressStoreが持つ。 */
+@Injectable()
 export class RunTracker {
   #reason: Reason | null = null
   #active: ActiveExecution | null = null
@@ -156,13 +158,6 @@ export class RunTracker {
   }
 }
 
-/** 1つのrunに属する可変状態の持ち主。計画の走査とexecutorが同じ物を見なければ打ち切りが噛み合わない。 */
-export type RunServices = {
-  readonly tracker: RunTracker
-  readonly events: RunEvents
-  readonly results: ProgressStore
-}
-
 /** いまの部分結果を、与えられた理由で打ち切った結果として複製する。実行中の1件も反映する。 */
 function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason): MutableRunResult {
   const partial = required(results.result)
@@ -176,32 +171,44 @@ function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason
 }
 
 /**
- * runの可変状態を組み立てる。executorはtrackerとeventsを組み立て時に受け取るため、
- * 実行場所を開く前にこれを済ませておく必要がある。入口(ライブラリのrun・収集worker)だけが呼ぶ。
+ * 外から受け取る通知の手を、打ち切り時に部分結果を組み立てる形へ繋ぐ。
+ * 部分結果ツリーを持たない実行workerはRunEventsへ直に繋ぐため、この繋ぎを使わない。
  */
-export function createRunServices(listeners: RunListeners = {}): RunServices {
-  const tracker = new RunTracker()
-  const results = new ProgressStore()
-  const events = new RunEvents({
-    onProgress: listeners.onProgress,
-    onDeadline: listeners.onDeadline,
-    onTimeout: () => listeners.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
-  })
-  return { tracker, events, results }
+@Injectable()
+export class RunReporter {
+  readonly #events: RunEvents
+  readonly #results: ProgressStore
+  readonly #tracker: RunTracker
+
+  constructor(events = inject(RunEvents), results = inject(ProgressStore), tracker = inject(RunTracker)) {
+    this.#events = events
+    this.#results = results
+    this.#tracker = tracker
+  }
+
+  /** 受け取り手はrunを始める入口(ライブラリのrun・収集の実行手順)が渡す。 */
+  listen(listeners: RunListeners): void {
+    this.#events.listen({
+      onProgress: listeners.onProgress,
+      onDeadline: listeners.onDeadline,
+      onTimeout: () => listeners.onTimeout?.(snapshotRun(this.#results, this.#tracker, 'timeout')),
+    })
+  }
 }
 
 /**
  * call期待の対象を、module runtimeが差し替えた関数へ繋ぎ直す手。
- * 差し替えを行うruntimeを持たない実行では、対象をそのまま使う。
+ * 差し替えを行うruntimeを持つ実行workerだけが繋ぎ直し、host側は対象をそのまま使う。
  */
-export class CallBinder {
-  readonly #bind: (call: ResolvedCallAssertion) => ResolvedCallAssertion
+@Config({ abstract: true })
+export abstract class CallBinder {
+  abstract bind(call: ResolvedCallAssertion): ResolvedCallAssertion
+}
 
-  constructor(bind: (call: ResolvedCallAssertion) => ResolvedCallAssertion = (call) => call) {
-    this.#bind = bind
-  }
-
+/** 差し替えを行うruntimeを持たない実行の繋ぎ方。対象をそのまま使う。 */
+@Config()
+export class DirectCalls extends CallBinder {
   bind(call: ResolvedCallAssertion): ResolvedCallAssertion {
-    return this.#bind(call)
+    return call
   }
 }

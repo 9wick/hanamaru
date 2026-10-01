@@ -1,3 +1,4 @@
+import { Injectable, inject } from '@zeltjs/core'
 import type { CaseBlueprint, Fields } from '../../domain/definition/runtime.js'
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import type { ExecutionNode, GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
@@ -10,25 +11,24 @@ import type {
   MutableTestResult,
 } from '../../domain/result/mutable.js'
 import { required } from '../../foundation/value.js'
-import type { Comparison } from '../ports/comparison.js'
 import type { Executor } from '../ports/executor.js'
+import { ExecutionPlace } from '../ports/executor.js'
 import { AttemptExecutor } from './attempt.js'
 import { now } from './clock.js'
-import { runExclusively } from './current-run.js'
 import { CaseFailed } from './faults.js'
 import { GroupMiddlewareExecutor } from './middleware.js'
 import { allCases } from './plan.js'
-import type { ProgressStore } from './progress.js'
+import { ProgressStore } from './progress.js'
 import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, resultFailed } from './results.js'
 import type { RunSettings } from './options.js'
-import type { RunEvents, RunServices, RunTracker } from './services.js'
-import { CallBinder } from './services.js'
+import { RunEvents, RunTracker } from './services.js'
 import type { Progress } from './state.js'
 
 /**
  * 計画を辿って1回のrunを進める。何を辿るか・設定・中断の合図は実行ごとに決まるため引数で受け取る。
  * 実行場所を持つrunはattemptとgroupをそこへ渡し、持たないrunは手元の実行サービスで走らせる。
  */
+@Injectable()
 export class RunWalker {
   readonly #results: ProgressStore
   readonly #events: RunEvents
@@ -38,24 +38,19 @@ export class RunWalker {
   readonly #executor: Executor | null
 
   constructor(
-    results: ProgressStore,
-    events: RunEvents,
-    tracker: RunTracker,
-    attempts: AttemptExecutor,
-    groups: GroupMiddlewareExecutor,
-    executor: Executor | null,
+    results = inject(ProgressStore),
+    events = inject(RunEvents),
+    tracker = inject(RunTracker),
+    attempts = inject(AttemptExecutor),
+    groups = inject(GroupMiddlewareExecutor),
+    place = inject(ExecutionPlace),
   ) {
     this.#results = results
     this.#events = events
     this.#tracker = tracker
     this.#attempts = attempts
     this.#groups = groups
-    this.#executor = executor
-  }
-
-  /** 錠は計画の組み立てより先に取る。収集の途中で始まったrunも重なりとして弾く。 */
-  async run(buildPlan: () => Plan, settings: RunSettings, signal?: AbortSignal): Promise<MutableRunResult> {
-    return runExclusively(() => this.#execute(buildPlan, settings, signal))
+    this.#executor = place.executor
   }
 
   /**
@@ -67,7 +62,8 @@ export class RunWalker {
     this.#events.progress(progress)
   }
 
-  async #execute(buildPlan: () => Plan, settings: RunSettings, signal?: AbortSignal): Promise<MutableRunResult> {
+  /** 重なりの錠は入口が持つ。この走査が始まる時点で錠は取られている。 */
+  async run(buildPlan: () => Plan, settings: RunSettings, signal?: AbortSignal): Promise<MutableRunResult> {
     const { nodes, only } = buildPlan()
     const tracker = this.#tracker
     // 走り出す前に中断されていた実行は、1件も動かさずに打ち切った姿で返す。
@@ -228,21 +224,4 @@ export class RunWalker {
     }
     return { ...base, durationMs: now() - started, attempts }
   }
-}
-
-/**
- * runを辿る一式を組み立てる。入口(ライブラリのrun・収集の実行手順)だけが呼ぶ。
- * 実行場所を渡したrunも手元で走らせる構えは備えるが、辿る間はそちらを呼ばない。
- */
-export function createRunWalker(run: RunServices, comparison: Comparison, executor: Executor | null = null): RunWalker {
-  // callの対象をmoduleの差し替え先へ繋ぎ直すのは実行worker側の仕事で、host側は対象をそのまま使う。
-  const attempts = new AttemptExecutor(comparison, run.tracker, run.events, new CallBinder())
-  return new RunWalker(
-    run.results,
-    run.events,
-    run.tracker,
-    attempts,
-    new GroupMiddlewareExecutor(run.tracker, run.events),
-    executor,
-  )
 }

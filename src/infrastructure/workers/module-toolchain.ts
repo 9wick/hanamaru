@@ -1,41 +1,42 @@
-import type { Config } from '../../application/collection/config.js'
-import type { ModuleToolchain } from '../../application/ports/collection-host.js'
-import type { ModulePreparation, ModuleTransport } from '../../application/ports/module-loader.js'
+import { Config, inject } from '@zeltjs/core'
+import type { Config as ProjectConfig } from '../../application/collection/config.js'
+import { ModuleToolchain } from '../../application/ports/collection-host.js'
+import type { ModulePreparation } from '../../application/ports/module-loader.js'
 import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
 import { ModuleCompiler } from '../modules/compiler.js'
-import { FacadeEvaluator } from '../modules/evaluator.js'
-import { ModuleFacades } from '../modules/facades.js'
 import { collectModulePreparation, ModuleRegistry } from '../modules/reference.js'
-import { FacadeRunner } from '../modules/runner.js'
-import { TsconfigResolver } from '../modules/resolver.js'
 import { ModuleRuntime } from '../modules/runtime.js'
 import { describeExecutionPlan } from './plan-shape.js'
 
 /**
- * 収集が使うtest runtime一式。資源を作る口と準備・指紋の算出は、
+ * 収集が使うtest runtime一式。資源を開く口と準備・指紋の算出は、
  * runtimeが組み立てたnamespaceの出自を覚える同じ台帳を見なければ噛み合わないため、1つの持ち主にまとめる。
- * 資源は選んだファイルが決まってからでなければ立てられないため、組み立てはここが受け持つ。
  */
-export class WorkerModuleToolchain implements ModuleToolchain {
-  readonly #runtimeURL: URL
+@Config()
+export class WorkerModuleToolchain extends ModuleToolchain {
+  readonly #compiler: ModuleCompiler
+  readonly #runtime: ModuleRuntime
   readonly #registry: ModuleRegistry
 
-  constructor(runtimeURL: URL, registry: ModuleRegistry) {
-    this.#runtimeURL = runtimeURL
+  constructor(compiler = inject(ModuleCompiler), runtime = inject(ModuleRuntime), registry = inject(ModuleRegistry)) {
+    super()
+    this.#compiler = compiler
+    this.#runtime = runtime
     this.#registry = registry
   }
 
-  async createCompiler(vite: Config['vite']): Promise<ModuleCompiler> {
-    const compiler = new ModuleCompiler(new TsconfigResolver(), this.#runtimeURL)
-    await compiler.start(vite)
-    return compiler
+  start(vite: ProjectConfig['vite']): Promise<void> {
+    return this.#compiler.start(vite)
   }
 
-  createRuntime(transport: ModuleTransport): ModuleRuntime {
-    const facades = new ModuleFacades(this.#registry)
-    return new ModuleRuntime(new FacadeRunner(facades, new FacadeEvaluator(facades), transport), facades)
+  import(file: string): Promise<Value> {
+    return this.#runtime.import(file)
+  }
+
+  invoke(name: string, args: Value[]): Promise<Value> {
+    return this.#compiler.invoke(name, args)
   }
 
   prepare(blueprints: RuntimeBlueprint[]): ModulePreparation[] {

@@ -1,3 +1,4 @@
+import { Injectable } from '@zeltjs/core'
 import type { ModulePreparation } from '../../application/ports/module-loader.js'
 import type { RuntimeCallAssertion } from '../../domain/assertion/runtime.js'
 import type { RuntimeBlueprint, RuntimeMock } from '../../domain/definition/runtime.js'
@@ -7,6 +8,7 @@ import type { RuntimeBlueprint, RuntimeMock } from '../../domain/definition/runt
  * 同じ台帳を見ている範囲だけが「test runtimeが読み込んだmodule」を見分けられるため、
  * runtimeを組み立てるworkerの入口が1つ持ち、準備の収集と計画の指紋へ渡す。
  */
+@Injectable()
 export class ModuleRegistry {
   readonly #identities = new WeakMap<object, string>()
 

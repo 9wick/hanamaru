@@ -1,3 +1,4 @@
+import { Config, Injectable, inject } from '@zeltjs/core'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import type { Deadline, Progress } from '../execution/state.js'
 export type Reporter = 'pretty' | 'json'
@@ -11,15 +12,26 @@ export type CliMessage =
   | { type: 'result'; result: MutableRunResult; reporter: Reporter }
   | { type: 'error'; message: string }
 
-/**
- * 収集の進み具合をCLIへ知らせる手。送り先そのものは実行環境ごとに違うため入口が渡し、
- * protocolの形(CliMessage)を組み立てる責任だけをここに閉じ込める。
- */
-export class CollectionEvents {
-  readonly #send: (event: CliMessage) => void
+/** 組み立てたprotocolの形を外へ流す通り道。実行環境ごとに違うため、infrastructureが用意する。 */
+@Config({ abstract: true })
+export abstract class CollectionSink {
+  abstract post(event: CliMessage): void
+}
 
-  constructor(send: (event: CliMessage) => void) {
-    this.#send = send
+/**
+ * 収集の進み具合をCLIへ知らせる手。
+ * protocolの形(CliMessage)を組み立てる責任だけをここに閉じ込め、送り先は通り道に委ねる。
+ */
+@Injectable()
+export class CollectionEvents {
+  readonly #sink: CollectionSink
+
+  constructor(sink = inject(CollectionSink)) {
+    this.#sink = sink
+  }
+
+  #send(event: CliMessage): void {
+    this.#sink.post(event)
   }
 
   loading(file: string, timeout: number): void {

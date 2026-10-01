@@ -1,41 +1,68 @@
+import { Config, createApp } from '@zeltjs/core'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CollectionEvents } from '../../application/collection/events.js'
-import { loadConfig } from '../../application/collection/load-config.js'
-import { CollectionSession } from '../../application/collection/session.js'
+import { DirectCalls } from '../../application/execution/services.js'
 import { errorStack } from '../../foundation/errors.js'
-import * as comparison from '../comparison.js'
+import { ValueComparison } from '../comparison.js'
 import { ProjectFilesystem } from '../filesystem/project-files.js'
-import { ModuleRegistry } from '../modules/reference.js'
-import { WorkerExecutor } from './client.js'
+import { ModuleEntry } from '../modules/entry.js'
+import { CompilerTransport } from '../modules/transport.js'
+import { WorkerExecutionPlace, WorkerExecutor } from './client.js'
 import { CollectionChannel } from './collection-channel.js'
+import { CollectionWorker } from './collection-worker.js'
+import { CollectionEnvironment } from './environment.js'
 import { WorkerModuleToolchain } from './module-toolchain.js'
 import { cliWorkerDataSchema } from './schemas.js'
-import { StderrLog } from './stderr-log.js'
+import { captureConsole, StderrLog } from './stderr-log.js'
+
+/** zeltはscopeの解放で起きた失敗をまとめて包む。失敗が1つだけなら、元の失敗をそのまま見せる。 */
+function released(error: unknown): unknown {
+  return error instanceof AggregateError && error.errors.length === 1 ? error.errors[0] : error
+}
 
 export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void {
   if (!parentPort) throw new Error('collection requires a worker thread')
-  const log = new StderrLog()
-  log.captureConsole()
-  const channel = new CollectionChannel(parentPort)
-  const events = new CollectionEvents((event) => channel.post(event))
+  captureConsole()
+  const port = parentPort
+
+  @Config()
+  class WorkerEnvironment extends CollectionEnvironment {
+    override readonly port = port
+    override readonly executionWorkerURL = executionWorkerURL
+  }
+
+  @Config()
+  class PublicEntry extends ModuleEntry {
+    override readonly url = runtimeURL
+  }
+
   const workerData = v.parse(cliWorkerDataSchema, rawWorkerData)
-  const files = new ProjectFilesystem()
-  const controller = new AbortController()
-  channel.onInterrupt(() => controller.abort())
-  const session = new CollectionSession(
-    {
-      comparison,
-      files,
-      modules: new WorkerModuleToolchain(runtimeURL, new ModuleRegistry()),
-      warn: (message) => log.warn(message),
-      // 実行場所はrunのtrackerとeventsを見ながら進むため、runごとにしか組み立てられない。
-      openExecution: (run, services) => new WorkerExecutor(executionWorkerURL, run, services),
-    },
-    events,
-  )
-  // 設定はcompilerより先に要る。vite設定を知らないままtest runtimeを立てられない。
-  loadConfig(workerData.options, files, events)
-    .then((config) => session.run(workerData, config, controller.signal))
-    .catch((error) => events.error(errorStack(error)))
+  createApp([])
+    .createRuntime({
+      configs: [
+        WorkerEnvironment,
+        PublicEntry,
+        ProjectFilesystem,
+        ValueComparison,
+        StderrLog,
+        CollectionChannel,
+        CompilerTransport,
+        WorkerModuleToolchain,
+        WorkerExecutor,
+        WorkerExecutionPlace,
+        DirectCalls,
+      ],
+    })
+    .then(async (scope) => {
+      const events = await scope.get(CollectionEvents)
+      const worker = await scope.get(CollectionWorker)
+      try {
+        await worker.run(workerData)
+      } finally {
+        // test runtimeの資源はこのscopeが持つ。畳む途中の失敗も収集の失敗と同じ通り道で伝える。
+        await scope.shutdown().catch((error: unknown) => events.error(errorStack(released(error))))
+      }
+    })
+    .catch((error: unknown) => process.stderr.write(`${errorStack(error)}\n`))
 }

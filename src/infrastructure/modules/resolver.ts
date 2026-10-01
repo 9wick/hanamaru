@@ -1,3 +1,4 @@
+import { Injectable } from '@zeltjs/core'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, extname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -95,6 +96,7 @@ function extensions(file: string) {
  * tsconfigのpathsでJSの指定子を解決する。読み込んだtsconfigは覚えたまま再利用するため、
  * 探索の結果が1つのcompilerの寿命の中で揺れない。
  */
+@Injectable()
 export class TsconfigResolver {
   readonly #configs = new Map<string, ConfigEntry | null>()
 

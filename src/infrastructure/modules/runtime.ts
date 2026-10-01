@@ -1,19 +1,30 @@
+import type { Lifecycle } from '@zeltjs/core'
+import { Injectable, LifecycleManager, inject } from '@zeltjs/core'
 import { pathToFileURL } from 'node:url'
 import type { RuntimeCase } from '../../domain/definition/runtime.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
-import type { ModuleFacades } from './facades.js'
-import type { FacadeRunner } from './runner.js'
+import { ModuleFacades } from './facades.js'
+import { FacadeRunner } from './runner.js'
 
-/** 組み立てたmodule runtime。差し替えの台帳を抱えるため、1つの実行につき1つだけ作る。 */
-export class ModuleRuntime {
+/** 組み立てたmodule runtime。差し替えの台帳を抱えるため、1つのscopeに1つだけ作る。 */
+@Injectable()
+export class ModuleRuntime implements Lifecycle {
   readonly #runner: FacadeRunner
   readonly #facades: ModuleFacades
   #closing: Promise<void> | undefined
 
-  constructor(runner: FacadeRunner, facades: ModuleFacades) {
+  constructor(runner = inject(FacadeRunner), facades = inject(ModuleFacades), lifecycle = inject(LifecycleManager)) {
     this.#runner = runner
     this.#facades = facades
+    // compilerより後に登録されるため、scopeの終了では runtime → compiler の順に畳まれる。
+    lifecycle.register(this)
+  }
+
+  startup(): void {}
+
+  shutdown(): Promise<void> {
+    return this.close()
   }
 
   /** 読み込む場所の表し方はpathでもURLでもよい。namespaceの見出しはViteが解決したmodule idに従う。 */

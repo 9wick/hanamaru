@@ -1,3 +1,4 @@
+import { Injectable, inject } from '@zeltjs/core'
 import { plainFields } from '../../domain/definition/operations.js'
 import type { Fields, RuntimeMiddleware, RuntimeMiddlewareResult } from '../../domain/definition/runtime.js'
 import { resultTag } from '../../domain/definition/tags.js'
@@ -12,8 +13,7 @@ import { invoke, required, valueOf } from '../../foundation/value.js'
 import type { GroupReply } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
-import type { RunEvents, RunTracker } from './services.js'
-import { StageTimer } from './services.js'
+import { RunEvents, RunTracker, StageTimer } from './services.js'
 import type { Stage } from './state.js'
 
 /** nextを呼ぶまでがbefore、下流の実行中がinside、下流が終わってからがafter。 */
@@ -202,11 +202,12 @@ function groupMiddlewareOutcome(
 }
 
 /** group middlewareで子を囲む。囲む相手と、区間の変わり目を見る相手は呼び出しごとに決まるため引数で受け取る。 */
+@Injectable()
 export class GroupMiddlewareExecutor {
   readonly #tracker: RunTracker
   readonly #events: RunEvents
 
-  constructor(tracker: RunTracker, events: RunEvents) {
+  constructor(tracker = inject(RunTracker), events = inject(RunEvents)) {
     this.#tracker = tracker
     this.#events = events
   }

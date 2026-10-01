@@ -1,3 +1,4 @@
+import { Injectable, inject } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
 import type { Stage } from '../../application/execution/state.js'
@@ -5,14 +6,16 @@ import type { ExecutionPhase } from '../../domain/result/types.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
 import type { ExecutionIncoming, ExecutionMessage, ReplyValue } from './protocol.js'
+import { ExecutionEnvironment } from './environment.js'
 import { executionIncomingSchema } from './schemas.js'
 
 /** 実行workerと親を繋ぐMessagePort。protocolの形を組み立てて送受信するのはここだけにする。 */
+@Injectable()
 export class ExecutionChannel {
   readonly #port: MessagePort
 
-  constructor(port: MessagePort) {
-    this.#port = port
+  constructor(environment = inject(ExecutionEnvironment)) {
+    this.#port = environment.port
   }
 
   #post(message: ExecutionMessage): void {

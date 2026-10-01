@@ -1,13 +1,23 @@
+import { createApp } from '@zeltjs/core'
 import { expect, test } from 'vite-plus/test'
 import { Test, middleware } from '../../index.js'
-import * as comparison from '../../infrastructure/comparison.js'
+import { ValueComparison } from '../../infrastructure/comparison.js'
+import { LocalExecution } from '../ports/executor.js'
 import { ProgressStore } from './progress.js'
-import { createRunServices } from './services.js'
+import type { RunListeners } from './services.js'
+import { DirectCalls, RunReporter } from './services.js'
 
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
 import { createPlan } from './plan.js'
-import { createRunWalker } from './runner.js'
+import { RunWalker } from './runner.js'
+
+/** 実行場所を持たないrunの一式。ライブラリのrunと同じscopeの組み立て。 */
+async function walkerFor(listeners: RunListeners) {
+  const scope = await createApp([]).createRuntime({ configs: [ValueComparison, LocalExecution, DirectCalls] })
+  ;(await scope.get(RunReporter)).listen(listeners)
+  return scope.get(RunWalker)
+}
 
 test('progress transfer grows linearly and reconstructs nested case results', async () => {
   async function measure(count: number) {
@@ -26,7 +36,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
       [cases],
     )
     const plan = createPlan(collectBlueprints(root))
-    const run = createRunServices({
+    const walker = await walkerFor({
       onProgress(progress) {
         bytes += JSON.stringify(progress).length
         store.apply(structuredClone(progress))
@@ -35,7 +45,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
         bytes += JSON.stringify(deadline).length
       },
     })
-    const result = await createRunWalker(run, comparison).run(() => plan, {})
+    const result = await walker.run(() => plan, {})
     expect(store.result?.tests).toEqual(result.tests)
     return bytes
   }
@@ -62,8 +72,8 @@ test('the progress stream reconstructs nested groups, skips and retries', async 
     [flaky],
   )
   const root = new Test().group('root', [inner, steady])
-  const run = createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) })
-  const result = await createRunWalker(run, comparison).run(() => createPlan(collectBlueprints(root)), {})
+  const walker = await walkerFor({ onProgress: (progress) => store.apply(structuredClone(progress)) })
+  const result = await walker.run(() => createPlan(collectBlueprints(root)), {})
   expect(result.status).toBe('passed')
   expect(store.result?.tests).toStrictEqual(result.tests)
 })
@@ -83,12 +93,8 @@ test('the progress stream reconstructs the cancelled tree after an interrupt', a
     middleware(async (_, next) => next()),
     [active, pending],
   )
-  const run = createRunServices({ onProgress: (progress) => store.apply(structuredClone(progress)) })
-  const result = await createRunWalker(run, comparison).run(
-    () => createPlan(collectBlueprints([root, pending])),
-    {},
-    controller.signal,
-  )
+  const walker = await walkerFor({ onProgress: (progress) => store.apply(structuredClone(progress)) })
+  const result = await walker.run(() => createPlan(collectBlueprints([root, pending])), {}, controller.signal)
   expect(result.reason).toBe('interrupted')
   expect(store.result?.tests).toStrictEqual(result.tests)
 })

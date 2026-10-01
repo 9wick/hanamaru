@@ -1,3 +1,4 @@
+import { Injectable, inject } from '@zeltjs/core'
 import type { ResolvedCallAssertion, RuntimeCallAssertion } from '../../domain/assertion/runtime.js'
 import { methodValue } from '../../domain/definition/operations.js'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
@@ -8,7 +9,7 @@ import type { MutableAttempt, Reason } from '../../domain/result/mutable.js'
 import type { AssertionResult, ExecutionPhase, Failure, TargetOutcome } from '../../domain/result/types.js'
 import type { Value } from '../../foundation/value.js'
 import { arrayValue, invoke, objectValue, property, valueOf } from '../../foundation/value.js'
-import type { Comparison } from '../ports/comparison.js'
+import { Comparison } from '../ports/comparison.js'
 import type { AttemptReply } from '../ports/executor.js'
 import { callReference, evaluate, failure, faultToFailure } from './assertions.js'
 import { now } from './clock.js'
@@ -16,8 +17,7 @@ import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
 import { MethodPatch } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
-import type { CallBinder, RunEvents, RunTracker } from './services.js'
-import { StageTimer } from './services.js'
+import { CallBinder, RunEvents, RunTracker, StageTimer } from './services.js'
 
 /** 1回のattemptが積み上げる観測結果。結果の形に変えるのは最後の1か所だけ。 */
 type AttemptRecord = {
@@ -97,13 +97,19 @@ function finalizeAttempt(
 }
 
 /** 1回のattemptを走らせる。どの節のどのcaseを何回目に走らせるかは、実行ごとの指定として引数で受け取る。 */
+@Injectable()
 export class AttemptExecutor {
   readonly #comparison: Comparison
   readonly #tracker: RunTracker
   readonly #events: RunEvents
   readonly #calls: CallBinder
 
-  constructor(comparison: Comparison, tracker: RunTracker, events: RunEvents, calls: CallBinder) {
+  constructor(
+    comparison = inject(Comparison),
+    tracker = inject(RunTracker),
+    events = inject(RunEvents),
+    calls = inject(CallBinder),
+  ) {
     this.#comparison = comparison
     this.#tracker = tracker
     this.#events = events

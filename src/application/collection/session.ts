@@ -1,3 +1,4 @@
+import { Injectable, inject } from '@zeltjs/core'
 import type { RuntimeBlueprint, RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import { positive } from '../../domain/execution/config.js'
@@ -5,17 +6,21 @@ import type { Plan } from '../../domain/execution/model.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { RunSettings } from '../execution/options.js'
+import { runExclusively } from '../execution/current-run.js'
 import { createPlan } from '../execution/plan.js'
-import { createRunWalker } from '../execution/runner.js'
+import { RunWalker } from '../execution/runner.js'
 import type { RunListeners } from '../execution/services.js'
-import { createRunServices } from '../execution/services.js'
-import type { CollectionHost, CollectionRuntime, ModuleCompiler } from '../ports/collection-host.js'
+import { RunReporter } from '../execution/services.js'
+import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { ExecutionSpec } from '../ports/executor.js'
-import type { ModuleInvoke, RootReference } from '../ports/module-loader.js'
+import { Executor } from '../ports/executor.js'
+import type { RootReference } from '../ports/module-loader.js'
 import type { Config } from './config.js'
 import { collectWithin } from './current-scope.js'
-import type { CollectionEvents, Reporter } from './events.js'
+import type { Reporter } from './events.js'
+import { CollectionEvents } from './events.js'
+import { loadConfig } from './load-config.js'
 import { CollectionLog } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
@@ -58,44 +63,59 @@ interface Planned {
 }
 
 /**
- * 1回の収集と実行を進める。設定は読み込み済みのものを受け取り、
- * test runtimeの資源(compiler・module runtime)だけは選んだファイルが決まってから作って自分で閉じる。
+ * 1回の収集と実行を進める。test runtimeの資源は選んだファイルが決まってから開き、
+ * 解放はこの一式を抱えるscopeに委ねる。
  */
+@Injectable()
 export class CollectionSession {
-  readonly #host: CollectionHost
+  readonly #files: ProjectFiles
+  readonly #modules: ModuleToolchain
+  readonly #warnings: Warnings
   readonly #events: CollectionEvents
+  readonly #executor: Executor
+  readonly #walker: RunWalker
+  readonly #reporter: RunReporter
 
-  constructor(host: CollectionHost, events: CollectionEvents) {
-    this.#host = host
+  constructor(
+    files = inject(ProjectFiles),
+    modules = inject(ModuleToolchain),
+    warnings = inject(Warnings),
+    events = inject(CollectionEvents),
+    executor = inject(Executor),
+    walker = inject(RunWalker),
+    reporter = inject(RunReporter),
+  ) {
+    this.#files = files
+    this.#modules = modules
+    this.#warnings = warnings
     this.#events = events
+    this.#executor = executor
+    this.#walker = walker
+    this.#reporter = reporter
   }
 
-  async run(request: CollectionRequest, config: Config, signal: AbortSignal): Promise<void> {
-    let compiler: ModuleCompiler | undefined
-    let runtime: CollectionRuntime | undefined
+  async run(request: CollectionRequest, signal: AbortSignal): Promise<void> {
     // どのファイルを読んでいる途中で落ちたかは、失敗の文脈として外側のcatchから見えなければならない。
     const collecting: { file: SelectedFile | null } = { file: null }
     try {
+      // 設定はcompilerより先に要る。vite設定を知らないままtest runtimeを立てられない。
+      const config = await loadConfig(request.options, this.#files, this.#events)
       const limits = collectionLimits(request.options, config)
       const files = this.#select(request, config)
       this.#events.loading('test runtime setup', limits.timeout)
-      compiler = await this.#host.modules.createCompiler(config.vite)
-      runtime = this.#host.modules.createRuntime(compiler)
-      const collected = await this.#collect(files, runtime, limits.timeout, collecting)
-      await this.#execute(this.#plan(collected, request), limits, compiler.invoke, signal)
+      await this.#modules.start(config.vite)
+      const collected = await this.#collect(files, limits.timeout, collecting)
+      await this.#execute(this.#plan(collected, request), limits, signal)
     } catch (error) {
       const context = collecting.file
-        ? `while collecting ${this.#host.files.relative(collecting.file.file)}${projectsOf(collecting.file.projects)}: `
+        ? `while collecting ${this.#files.relative(collecting.file.file)}${projectsOf(collecting.file.projects)}: `
         : ''
       this.#events.error(context + errorStack(error))
-    } finally {
-      await runtime?.close()
-      await compiler?.close()
     }
   }
 
   #select(request: CollectionRequest, config: Config): SelectedFile[] {
-    const files = selectFiles(config, request, this.#host.files)
+    const files = selectFiles(config, request, this.#files)
     if (!files.length) throw new TypeError('no test files matched')
     return files
   }
@@ -103,7 +123,6 @@ export class CollectionSession {
   /** 読み込みはCollectionLogを開いた間だけ記録される。読み込み順が登録順で、実行側もその順に突き合わせる。 */
   async #collect(
     files: SelectedFile[],
-    runtime: CollectionRuntime,
     timeout: number,
     collecting: { file: SelectedFile | null },
   ): Promise<Collected> {
@@ -116,27 +135,27 @@ export class CollectionSession {
       for (const { file, projects } of files) {
         collecting.file = { file, projects }
         this.#events.loading(file, timeout)
-        await runtime.import(file)
+        await this.#modules.import(file)
         const registered = log.registrationsIn(file)
         if (!registered.length)
-          throw new TypeError(`no tests registered in ${this.#host.files.relative(file)}${projectsOf(projects)}`)
+          throw new TypeError(`no tests registered in ${this.#files.relative(file)}${projectsOf(projects)}`)
         for (const [index, entry] of registered.entries()) {
           const definition = entry.definition
           if (collected.has(definition))
             throw new TypeError(
-              `duplicate root definition: ${this.#host.files.relative(file)}:${entry.origin.line}${projectsOf(projects)}`,
+              `duplicate root definition: ${this.#files.relative(file)}:${entry.origin.line}${projectsOf(projects)}`,
             )
           collected.add(definition)
           definitions.push(definition)
           roots.push({ file, index, origin: entry.origin })
-          sources.push({ file: this.#host.files.relative(file), projects })
+          sources.push({ file: this.#files.relative(file), projects })
         }
       }
     })
     collecting.file = null
     for (const origin of log.unregisteredDefinitions(new Set(files.map(({ file }) => file))))
-      this.#host.warn(
-        `hanamaru: unregistered test definition: ${this.#host.files.relative(origin.file)}:${origin.line}:${origin.column}\n`,
+      this.#warnings.warn(
+        `hanamaru: unregistered test definition: ${this.#files.relative(origin.file)}:${origin.line}:${origin.column}\n`,
       )
     return { definitions, roots, sources }
   }
@@ -154,8 +173,8 @@ export class CollectionSession {
       settings,
       spec: {
         roots,
-        preparation: this.#host.modules.prepare(blueprints),
-        shape: JSON.stringify(this.#host.modules.describe(plan.allNodes)),
+        preparation: this.#modules.prepare(blueprints),
+        shape: JSON.stringify(this.#modules.describe(plan.allNodes)),
       },
       withSources: (result) => ({
         ...result,
@@ -167,13 +186,8 @@ export class CollectionSession {
     }
   }
 
-  /** 実行場所はrunのサービスを見ながら進むため、サービスを組み立ててから開く。 */
-  async #execute(
-    { plan, settings, spec, withSources }: Planned,
-    limits: CollectionLimits,
-    invoke: ModuleInvoke,
-    signal: AbortSignal,
-  ): Promise<void> {
+  /** 実行場所はrunの進み具合を見ながら進むため、通知の受け取り手を繋いでから開く。 */
+  async #execute({ plan, settings, spec, withSources }: Planned, limits: CollectionLimits, signal: AbortSignal) {
     const listeners: RunListeners = {
       onProgress: (progress) =>
         this.#events.progress(
@@ -182,19 +196,19 @@ export class CollectionSession {
       onTimeout: (result) => this.#events.timedOut(withSources(result)),
       onDeadline: (deadline) => this.#events.deadline(deadline),
     }
-    const run = createRunServices(listeners)
-    const execution = this.#host.openExecution(run, {
-      invoke,
+    this.#reporter.listen(listeners)
+    await this.#executor.start(spec, {
+      invoke: (name, args) => this.#modules.invoke(name, args),
       signal,
       onLoading: (file) => this.#events.loading(file, limits.timeout),
     })
-    await execution.start(spec)
     this.#events.running(limits.reporter, limits.shutdownGrace)
     let result
     try {
-      result = await createRunWalker(run, this.#host.comparison, execution).run(() => plan, settings, signal)
+      // 重なりの錠は走査より先に取る。読み込んだテストファイルから始まったrunも重なりとして弾く。
+      result = await runExclusively(() => this.#walker.run(() => plan, settings, signal))
     } finally {
-      await execution.close()
+      await this.#executor.close()
     }
     this.#events.result(withSources(result), limits.reporter)
   }

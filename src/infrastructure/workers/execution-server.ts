@@ -1,12 +1,13 @@
-import type { AttemptExecutor } from '../../application/execution/attempt.js'
-import { failChildren, type GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
-import type { RunTracker } from '../../application/execution/services.js'
+import { Injectable, inject } from '@zeltjs/core'
+import { AttemptExecutor } from '../../application/execution/attempt.js'
+import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
+import { RunTracker } from '../../application/execution/services.js'
 import type { Fields } from '../../domain/definition/runtime.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
 import { required } from '../../foundation/value.js'
-import type { ModuleRuntime } from '../modules/runtime.js'
-import type { CommandQueue } from './execution-session.js'
-import type { ExecutionChannel } from './execution-channel.js'
+import { ModuleRuntime } from '../modules/runtime.js'
+import { CommandQueue } from './execution-session.js'
+import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand } from './protocol.js'
 
 /** 囲んでいる最中のgroup。開いた順に積み、閉じるまで子のframeとfieldsに効く。 */
@@ -32,6 +33,7 @@ function withGroups<N extends ExecutionNode>(node: N, groups: ActiveGroup[]): N 
  * 親から届くcommandを1件ずつ処理する実行worker側の受け口。
  * group-openは、閉じるまでの間だけ入れ子でcommandを受け続ける。この入れ子が囲みの寿命そのものになる。
  */
+@Injectable()
 export class ExecutionServer {
   readonly #commands: CommandQueue
   readonly #tracker: RunTracker
@@ -41,12 +43,12 @@ export class ExecutionServer {
   readonly #channel: ExecutionChannel
 
   constructor(
-    commands: CommandQueue,
-    tracker: RunTracker,
-    attempts: AttemptExecutor,
-    groupMiddleware: GroupMiddlewareExecutor,
-    runtime: ModuleRuntime,
-    channel: ExecutionChannel,
+    commands = inject(CommandQueue),
+    tracker = inject(RunTracker),
+    attempts = inject(AttemptExecutor),
+    groupMiddleware = inject(GroupMiddlewareExecutor),
+    runtime = inject(ModuleRuntime),
+    channel = inject(ExecutionChannel),
   ) {
     this.#commands = commands
     this.#tracker = tracker
