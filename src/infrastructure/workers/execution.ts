@@ -51,6 +51,7 @@ const pending: ExecutionCommand[] = []
 
 let waiting: ((command: ExecutionCommand) => void) | null = null
 
+// 進捗の組み立てと結果ツリーはhost側が持つ。workerはtimeoutの報告に要るphaseとreasonだけを追う。
 const tracker = new RunTracker()
 
 const events = new RunEvents({ onTimeout: () => send({ type: 'timeout', phase: tracker.phase ?? undefined }) })
