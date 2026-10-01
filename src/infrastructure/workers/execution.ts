@@ -6,8 +6,6 @@ import { CollectionLog } from '../../application/collection/scope.js'
 import { executeAttempt } from '../../application/execution/attempt.js'
 import { executeGroupMiddleware, failChildren } from '../../application/execution/middleware.js'
 import { createPlan, indexExecutionNodes } from '../../application/execution/plan.js'
-import type { AttemptServices } from '../../application/execution/services.js'
-import { RunEvents, RunTracker } from '../../application/execution/services.js'
 import type { Fields, RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
@@ -17,6 +15,7 @@ import { required } from '../../foundation/value.js'
 import * as comparison from '../comparison.js'
 import { ModuleRegistry } from '../modules/reference.js'
 import { createModuleRuntime } from '../modules/runtime.js'
+import { ExecutionSession } from './execution-session.js'
 import { describeExecutionPlan } from './plan-shape.js'
 import type { ExecutionCommand, ExecutionMessage } from './protocol.js'
 import { executionIncomingSchema, executionWorkerDataSchema } from './schemas.js'
@@ -34,62 +33,31 @@ for (const method of consoleMethods)
 
 const send = (message: ExecutionMessage) => port.postMessage(message)
 
-const compiling = new Map<number, { resolve: (value: Value) => void; reject: (error: Value) => void }>()
+const session = new ExecutionSession(send, comparison)
 
-let nextCompileId = 0
+const { tracker, services } = session
 
 // module runtimeと計画の指紋は同じnamespaceの出自を見なければ噛み合わない。
 const registry = new ModuleRegistry()
 
 const runtime = createModuleRuntime(
   registry,
-  (name, args) =>
-    new Promise<Value>((resolve, reject) => {
-      const id = nextCompileId++
-      compiling.set(id, { resolve, reject })
-      send({ type: 'compile', id, name, args })
-    }),
+  (name, args) => session.compiles.request(name, args),
   workerData.preparation,
 )
-
-const pending: ExecutionCommand[] = []
-
-let waiting: ((command: ExecutionCommand) => void) | null = null
-
-// 進捗の組み立てと結果ツリーはhost側が持つ。workerはtimeoutの報告に要るphaseとreasonだけを追う。
-const tracker = new RunTracker()
-
-const events = new RunEvents({ onTimeout: () => send({ type: 'timeout', phase: tracker.phase ?? undefined }) })
-
-const services: AttemptServices = { comparison, tracker, events }
 
 port.on('message', (input) => {
   const message = v.parse(executionIncomingSchema, input)
   if (message.type === 'compiled') {
-    const entry = compiling.get(message.id)
-    if (!entry) return reportError(new Error('unexpected module compilation reply'))
-    compiling.delete(message.id)
-    if (message.error) entry.reject(new Error(message.error))
-    else entry.resolve(message.result)
+    if (!session.compiles.settle(message)) reportError(new Error('unexpected module compilation reply'))
     return
   }
   if (message.type === 'interrupt') {
     tracker.interrupt()
     return
   }
-  if (waiting) {
-    const resolve = waiting
-    waiting = null
-    resolve(message)
-  } else pending.push(message)
+  session.commands.push(message)
 })
-
-function take(): Promise<ExecutionCommand> {
-  if (pending.length) return Promise.resolve(required(pending.shift()))
-  return new Promise<ExecutionCommand>((resolve) => {
-    waiting = resolve
-  })
-}
 
 interface ActiveGroup {
   path: number[]
@@ -141,7 +109,7 @@ async function startExecution() {
     const nodes = indexExecutionNodes(plan.allNodes)
     async function serve(groups: ActiveGroup[] = []): Promise<Extract<ExecutionCommand, { type: 'group-close' }>> {
       while (true) {
-        const command = await take()
+        const command = await session.commands.take()
         if (command.type === 'group-close') {
           if (!groups.length || JSON.stringify(command.path) !== JSON.stringify(required(groups.at(-1)).path))
             throw new TypeError('group close does not match the active group')
