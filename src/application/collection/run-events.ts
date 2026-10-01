@@ -1,4 +1,3 @@
-import { Injectable } from '@zeltjs/core'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import type { RunSnapshot } from '../execution/services.js'
@@ -12,22 +11,14 @@ export interface TestSource {
   projects: string[]
 }
 
-/**
- * 計画の根ごとの出どころ。収集した並びと計画が揃ってはじめて引けるため、
- * 収集の手順が組み上がった時点で記録する。
- */
-@Injectable()
-export class RunSources {
-  #byNode: readonly TestSource[] = []
+/** 計画の節ごとの出どころ。収集した並びと計画が揃ってはじめて引けるため、計画が組み上がった時点で引く。 */
+export function nodeSources(nodes: readonly ExecutionNode[], sources: readonly TestSource[]): readonly TestSource[] {
+  return nodes.map((node) => sources[node.rootIndex])
+}
 
-  record(nodes: readonly ExecutionNode[], sources: readonly TestSource[]): void {
-    this.#byNode = nodes.map((node) => sources[node.rootIndex])
-  }
-
-  /** 木の根へ出どころを付けた複製を返す。 */
-  attach(result: MutableRunResult): MutableRunResult {
-    return { ...result, tests: result.tests.map((node) => ({ ...node, source: this.#byNode[node.path[0]] })) }
-  }
+/** 木の根へ出どころを付けた複製を返す。 */
+export function withSources(result: MutableRunResult, byNode: readonly TestSource[]): MutableRunResult {
+  return { ...result, tests: result.tests.map((node) => ({ ...node, source: byNode[node.path[0]] })) }
 }
 
 /**
@@ -37,10 +28,10 @@ export class RunSources {
  */
 export class CollectionRunEvents extends RunEvents {
   readonly #events: CollectionEvents
-  readonly #sources: RunSources
+  readonly #sources: readonly TestSource[]
   readonly #snapshot: RunSnapshot
 
-  constructor(events: CollectionEvents, sources: RunSources, snapshot: RunSnapshot) {
+  constructor(events: CollectionEvents, sources: readonly TestSource[], snapshot: RunSnapshot) {
     super()
     this.#events = events
     this.#sources = sources
@@ -49,7 +40,7 @@ export class CollectionRunEvents extends RunEvents {
 
   progress(progress: Progress): void {
     this.#events.progress(
-      progress.kind === 'init' ? { ...progress, result: this.#sources.attach(progress.result) } : progress,
+      progress.kind === 'init' ? { ...progress, result: withSources(progress.result, this.#sources) } : progress,
     )
   }
 
@@ -58,6 +49,6 @@ export class CollectionRunEvents extends RunEvents {
   }
 
   timedOut(): void {
-    this.#events.timedOut(this.#sources.attach(this.#snapshot.capture('timeout')))
+    this.#events.timedOut(withSources(this.#snapshot.capture('timeout'), this.#sources))
   }
 }
