@@ -1,13 +1,13 @@
 import type { CaseBlueprint, Fields } from '../../domain/definition/runtime.js'
-import { configWith, defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
-import type { ExecutionNode, Plan } from '../../domain/execution/model.js'
-import { diagnostic } from '../../domain/result/diagnostic.js'
+import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
+import type { ExecutionNode, GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
 import type {
   MutableAttempt,
   MutableCaseResult,
   MutableGroupResult,
   MutableNodeResult,
   MutableRunResult,
+  MutableTestResult,
   Reason,
 } from '../../domain/result/mutable.js'
 import { required } from '../../foundation/value.js'
@@ -19,148 +19,113 @@ import { CaseFailed } from './faults.js'
 import { executeGroupMiddleware } from './middleware.js'
 import { allCases } from './plan.js'
 import { ProgressStore } from './progress.js'
+import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, resultFailed } from './results.js'
 import type { AttemptServices } from './services.js'
 import { RunEvents, RunTracker } from './services.js'
-import type { InternalRunOptions } from './state.js'
+import type { InternalRunOptions, Progress } from './state.js'
 
-type RunServices = AttemptServices & { readonly executor: Executor | null }
+type RunServices = AttemptServices & { readonly results: ProgressStore; readonly executor: Executor | null }
 
-function executableMode(item: CaseBlueprint, only: boolean) {
-  if (item.mode === 'todo') return 'todo'
-  if (item.mode === 'skip' || (only && item.mode !== 'only')) return 'skipped'
-  return null
+/**
+ * 確定した結果は、手元の部分結果ツリーと外向きの通知の両方に同じprogressで渡す。
+ * 打ち切り時の結果は受け取り手がprogressから組み立てた木と一致していなければならないため、片方だけを更新しない。
+ */
+function publish(services: RunServices, progress: Progress): void {
+  services.results.apply(progress)
+  services.events.progress(progress)
 }
 
-function cancelledTree(node: ExecutionNode, path: number[], only: boolean): MutableNodeResult {
-  if (node.kind === 'test')
-    return {
-      kind: 'test',
-      name: node.bp.name,
-      path,
-      cases: node.bp.cases.map((item, index) => ({
-        name: item.name,
-        origin: item.origin,
-        path: [...path, item.originalIndex ?? index],
-        row: item.row ? { index: item.row.index, value: diagnostic(item.row.value) } : null,
-        config: configWith(node.config, item.config),
-        durationMs: 0,
-        attempts: [],
-        notRun: executableMode(item, only) ?? 'cancelled',
-      })),
-    }
-  return {
-    kind: 'group',
-    name: node.bp.name,
-    origin: node.bp.origin,
-    middleware: node.bp.middleware
-      ? { status: 'not-run', reason: 'cancelled', durationMs: 0, failures: [], cleanup: 'complete' }
-      : null,
-    path,
-    children: node.children.map((child, index) => ({
-      origin: required(child.entryOrigin),
-      result: cancelledTree(child, [...path, child.originalIndex ?? index], only),
-    })),
-  }
-}
-
-async function runNode(
-  node: ExecutionNode,
+async function runCase(
+  node: SuiteNode,
+  item: CaseBlueprint,
+  index: number,
   path: number[],
   only: boolean,
   services: RunServices,
-): Promise<MutableNodeResult> {
+): Promise<MutableCaseResult> {
   const { tracker, events } = services
-  if (node.kind === 'test') {
-    const cases: MutableCaseResult[] = []
-    for (const [index, item] of node.bp.cases.entries()) {
-      const casePath = [...path, item.originalIndex ?? index]
-      const base = {
-        name: item.name,
-        origin: item.origin,
-        path: casePath,
-        row: item.row ? { index: item.row.index, value: diagnostic(item.row.value) } : null,
-        config: configWith(node.config, item.config),
-      }
-      const mode = executableMode(item, only)
-      if (item.mode === 'todo' || mode || tracker.reason) {
-        const value: MutableCaseResult = { ...base, durationMs: 0, attempts: [], notRun: mode ?? 'cancelled' }
-        cases.push(value)
-        recordCase(services, value)
-        continue
-      }
-      const started = now(),
-        attempts: MutableAttempt[] = []
-      for (let number = 1; number <= base.config.retry + 1; number++) {
-        tracker.begin({ kind: 'attempt', base, attempts, number, started: now(), timeoutMs: base.config.timeout })
-        events.progress(tracker.activeProgress('interrupted'))
-        events.deadline({
-          kind: 'start',
-          timeoutMs: base.config.timeout,
-          progress: tracker.activeProgress('timeout'),
-        })
-        const { result, retryable } = services.executor
-          ? await services.executor.attempt(casePath, number)
-          : await executeAttempt(node, item, number, services)
-        events.deadline({ kind: 'end' })
-        tracker.end()
-        attempts.push(result)
-        if (result.status === 'passed' || tracker.reason || !retryable) break
-      }
-      const value = { ...base, durationMs: now() - started, attempts }
-      cases.push(value)
-      recordCase(services, value)
-    }
-    const value: MutableNodeResult = { kind: 'test', name: node.bp.name, path, cases }
-    recordNode(services, value)
-    return value
+  const base = caseBase(node.config, item, index, path)
+  const mode = executableMode(item, only)
+  // todoを先に外すことで、以降のitemが実行に必要な定義を備えたcaseだと型でも決まる。
+  if (item.mode === 'todo' || mode || tracker.reason) return notRunCase(base, mode ?? 'cancelled')
+  const started = now(),
+    attempts: MutableAttempt[] = []
+  for (let number = 1; number <= base.config.retry + 1; number++) {
+    tracker.begin({ kind: 'attempt', base, attempts, number, started: now(), timeoutMs: base.config.timeout })
+    // 走り出す前に、いま中断されたらどう見えるかを知らせる。確定した結果ではないので手元には残さない。
+    events.progress(tracker.activeProgress('interrupted'))
+    events.deadline({ kind: 'start', timeoutMs: base.config.timeout, progress: tracker.activeProgress('timeout') })
+    const { result, retryable } = services.executor
+      ? await services.executor.attempt(base.path, number)
+      : await executeAttempt(node, item, number, services)
+    events.deadline({ kind: 'end' })
+    tracker.end()
+    attempts.push(result)
+    if (result.status === 'passed' || tracker.reason || !retryable) break
   }
-  const result: MutableGroupResult = {
+  return { ...base, durationMs: now() - started, attempts }
+}
+
+async function runTestNode(
+  node: SuiteNode,
+  path: number[],
+  only: boolean,
+  services: RunServices,
+): Promise<MutableTestResult> {
+  const cases: MutableCaseResult[] = []
+  for (const [index, item] of node.bp.cases.entries()) {
+    const value = await runCase(node, item, index, path, only, services)
+    cases.push(value)
+    publish(services, { kind: 'case', result: value })
+  }
+  return { kind: 'test', name: node.bp.name, path, cases }
+}
+
+async function runGroupNode(
+  node: GroupNode,
+  path: number[],
+  only: boolean,
+  services: RunServices,
+): Promise<MutableGroupResult> {
+  const { tracker, events } = services
+  const children: MutableGroupResult['children'] = []
+  const childPath = (child: ExecutionNode, index: number) => [...path, child.originalIndex ?? index]
+  const group = (middleware: MutableGroupResult['middleware']): MutableGroupResult => ({
     kind: 'group',
     name: node.bp.name,
     origin: node.bp.origin,
-    middleware: null,
+    middleware,
     path,
-    children: [],
-  }
+    children,
+  })
   const executeChildren = async (fields: Fields) => {
     const stable = { ...node.stable, ...fields }
     for (const [index, child] of node.children.entries()) {
       const frames = [...node.frames, { steps: [], fields }, ...child.frames.slice(node.frameCount)]
       const prepared = { ...child, stable, frames }
-      result.children.push({
+      children.push({
         origin: required(child.entryOrigin),
         result: tracker.reason
-          ? cancelledTree(prepared, [...path, child.originalIndex ?? index], only)
-          : await runNode(prepared, [...path, child.originalIndex ?? index], only, services),
+          ? cancelledTree(prepared, childPath(child, index), only)
+          : await runNode(prepared, childPath(child, index), only, services),
       })
     }
-    if (
-      resultFailed(
-        result.children.map((entry) => entry.result),
-        false,
-      )
-    )
-      throw new CaseFailed()
+    if (resultFailed(children.map((entry) => entry.result))) throw new CaseFailed()
   }
   const runnable = allCases([node]).some((item) => !executableMode(item, only))
   if (!runnable) {
-    result.middleware = node.bp.middleware
-      ? { status: 'not-run', reason: 'no-runnable-cases', durationMs: 0, failures: [], cleanup: 'complete' }
-      : null
+    const middleware = node.bp.middleware ? notRunMiddleware('no-runnable-cases') : null
     await executeChildren({})
-    recordNode(services, result)
-    return result
+    return group(middleware)
   }
   if (!node.bp.middleware || tracker.reason) {
-    if (node.bp.middleware)
-      result.middleware = { status: 'not-run', reason: 'cancelled', durationMs: 0, failures: [], cleanup: 'complete' }
+    const middleware = node.bp.middleware ? notRunMiddleware('cancelled') : null
     try {
       await executeChildren({})
     } catch (error) {
       if (!(error instanceof CaseFailed)) throw error
     }
-    recordNode(services, result)
-    return result
+    return group(middleware)
   }
   const started = now()
   const execution = services.executor
@@ -181,67 +146,43 @@ async function runNode(
           events.deadline({ kind: 'start', timeoutMs, progress: tracker.activeProgress('timeout') })
         }
       })
-  result.middleware = execution.middleware
   if (execution.reason) tracker.abort(execution.reason)
-  if (result.middleware.status === 'failed') {
-    for (let index = result.children.length; index < node.children.length; index++) {
+  // middlewareが落ちた時点で残りの子は動かないため、実行しなかった姿で埋める。
+  if (execution.middleware.status === 'failed')
+    for (let index = children.length; index < node.children.length; index++) {
       const child = node.children[index]
-      result.children.push({
+      children.push({
         origin: required(child.entryOrigin),
-        result: cancelledTree(child, [...path, child.originalIndex ?? index], only),
+        result: cancelledTree(child, childPath(child, index), only),
       })
     }
-  }
   tracker.end()
-  recordNode(services, result)
-  return result
+  return group(execution.middleware)
 }
 
-function resultFailed(nodes: MutableNodeResult[], failOnFlaky = false): boolean {
-  for (const node of nodes) {
-    if (node.kind === 'group') {
-      if (
-        node.middleware?.status === 'failed' ||
-        resultFailed(
-          node.children.map((x) => x.result),
-          failOnFlaky,
-        )
-      )
-        return true
-    } else
-      for (const item of node.cases) {
-        const last = item.attempts.at(-1)
-        if (last?.status === 'failed' || (failOnFlaky && last?.status === 'passed' && item.attempts.length > 1))
-          return true
-      }
-  }
-  return false
+async function runNode(
+  node: ExecutionNode,
+  path: number[],
+  only: boolean,
+  services: RunServices,
+): Promise<MutableNodeResult> {
+  // testの中身はcaseごとに通知済みなので、節として追加で知らせるのはgroupのmiddlewareだけ。
+  if (node.kind === 'test') return runTestNode(node, path, only, services)
+  const value = await runGroupNode(node, path, only, services)
+  publish(services, { kind: 'group', path, middleware: value.middleware })
+  return value
 }
 
-function recordNode(services: RunServices, value: MutableNodeResult) {
-  services.tracker.recordNode(value)
-  if (value.kind === 'group')
-    services.events.progress({ kind: 'group', path: value.path, middleware: value.middleware })
-}
-
-function recordCase(services: RunServices, value: MutableCaseResult) {
-  services.tracker.recordCase(value)
-  services.events.progress({ kind: 'case', result: value })
-}
-
-function snapshotRun(tracker: RunTracker, reason: Reason): MutableRunResult {
-  const store = new ProgressStore()
-  store.apply({
+/** いまの部分結果を、与えられた理由で打ち切った結果として複製する。実行中の1件も反映する。 */
+function snapshotRun(results: ProgressStore, tracker: RunTracker, reason: Reason): MutableRunResult {
+  const partial = required(results.result)
+  const snapshot = new ProgressStore()
+  snapshot.apply({
     kind: 'init',
-    result: structuredClone({
-      version: 1,
-      status: reason === 'timeout' ? 'failed' : resultFailed(tracker.results, false) ? 'failed' : 'cancelled',
-      reason,
-      tests: tracker.results,
-    }),
+    result: structuredClone({ ...partial, status: reason === 'timeout' ? 'failed' : partial.status, reason }),
   })
-  if (tracker.active) store.apply(tracker.activeProgress(reason))
-  return required(store.result)
+  if (tracker.active) snapshot.apply(tracker.activeProgress(reason))
+  return required(snapshot.result)
 }
 
 let active = false
@@ -265,27 +206,31 @@ export async function runActive(
   active = true
   try {
     const { nodes, only } = buildPlan()
-    const tracker = new RunTracker(
-      options.signal?.aborted ? 'interrupted' : null,
-      nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only)),
-    )
+    const tracker = new RunTracker(options.signal?.aborted ? 'interrupted' : null)
+    const results = new ProgressStore()
     const events = new RunEvents({
       onProgress: options.onProgress,
       onDeadline: options.onDeadline,
-      onTimeout: () => options.onTimeout?.(snapshotRun(tracker, 'timeout')),
+      onTimeout: () => options.onTimeout?.(snapshotRun(results, tracker, 'timeout')),
     })
-    const services: RunServices = { comparison, tracker, events, executor }
-    events.progress({
+    const services: RunServices = { comparison, tracker, events, results, executor }
+    // 実行前の結果は、全てを実行しなかった姿。ここから完了したものだけを差し替えていく。
+    publish(services, {
       kind: 'init',
-      result: { version: 1, status: 'cancelled', reason: 'interrupted', tests: tracker.results },
+      result: {
+        version: 1,
+        status: 'cancelled',
+        reason: 'interrupted',
+        tests: nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only)),
+      },
     })
-    executor?.attach(tracker, events)
+    executor?.attach(tracker, services.events)
     const interrupt = () => tracker.interrupt()
     options.signal?.addEventListener('abort', interrupt)
-    const results: MutableNodeResult[] = []
+    const tests: MutableNodeResult[] = []
     try {
       for (const [index, node] of nodes.entries())
-        results.push(
+        tests.push(
           tracker.reason
             ? cancelledTree(node, [node.originalIndex ?? index], only)
             : await runNode(node, [node.originalIndex ?? index], only, services),
@@ -294,12 +239,12 @@ export async function runActive(
       options.signal?.removeEventListener('abort', interrupt)
     }
     const failed =
-      resultFailed(results, options.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
+      resultFailed(tests, options.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
     return {
       version: 1,
       status: failed ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
       reason: tracker.reason ?? 'completed',
-      tests: results,
+      tests,
     }
   } finally {
     active = false
