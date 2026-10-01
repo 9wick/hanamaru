@@ -1,4 +1,15 @@
+import swc from 'unplugin-swc'
 import { defineConfig } from 'vite-plus'
+
+// 標準デコレータはOxcの変換を素通りして配布JSに残るため、DIのdecoratorを使うsrcだけSWCに通す。
+const decoratorTransform = {
+  include: /\/src\/.*\.ts$/,
+  jsc: {
+    target: 'es2022',
+    parser: { syntax: 'typescript', decorators: true },
+    transform: { decoratorVersion: '2022-03' },
+  },
+} as const
 
 export default defineConfig({
   lint: {
@@ -13,6 +24,8 @@ export default defineConfig({
   test: {
     projects: [
       {
+        plugins: [swc.vite({ ...decoratorTransform, include: /\.ts$/ })],
+        oxc: false,
         test: {
           name: 'unit',
           include: ['src/**/*.test.ts', 'scripts/**/*.test.ts', 'eslint.config.test.ts'],
@@ -37,7 +50,8 @@ export default defineConfig({
     ],
   },
   pack: {
-    deps: { neverBundle: ['@hanamaru/vite', '@hanamaru/vite/module-runner', 'acorn'] },
+    plugins: [swc.rolldown(decoratorTransform)],
+    deps: { neverBundle: ['@zeltjs/core', '@hanamaru/vite', '@hanamaru/vite/module-runner', 'acorn'] },
     entry: ['src/index.ts', 'src/cli.ts', 'src/cli-worker.ts', 'src/execution-worker.ts'],
     dts: false,
     fixedExtension: false,

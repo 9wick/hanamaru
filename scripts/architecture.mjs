@@ -39,7 +39,9 @@ export const architecturePlugin = {
               filename === resolve(sourceRoot, 'application/collection/config.ts') &&
               node.type === 'TSImportType' &&
               specifier === '@hanamaru/vite'
-            if (specifier !== 'valibot' && !publicConfigType)
+            // DIの道具は実行環境を選ばない。applicationが外部実装へ求める契約の宛名に使う。
+            const injectionToken = from === 'application' && specifier === '@zeltjs/core'
+            if (specifier !== 'valibot' && !publicConfigType && !injectionToken)
               context.report({ node: source, messageId: 'external', data: { layer: from, source: specifier } })
           }
         }
