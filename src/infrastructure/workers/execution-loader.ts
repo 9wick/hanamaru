@@ -1,4 +1,3 @@
-import { pathToFileURL } from 'node:url'
 import { collectWithin } from '../../application/collection/current-scope.js'
 import { CollectionLog } from '../../application/collection/scope.js'
 import { indexExecutionNodes, createPlan } from '../../application/execution/plan.js'
@@ -43,7 +42,7 @@ export class ExecutionLoader {
       for (const root of workerData.roots) {
         if (!files.has(root.file)) {
           this.#channel.loading(root.file)
-          await this.#runtime.import(pathToFileURL(root.file).href)
+          await this.#runtime.import(root.file)
           files.add(root.file)
         }
         const registered = log.registrationsIn(root.file)[root.index]

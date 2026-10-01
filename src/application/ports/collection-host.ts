@@ -6,7 +6,7 @@ import type { CliOptions } from '../collection/options.js'
 import type { RunServices } from '../execution/services.js'
 import type { Comparison } from './comparison.js'
 import type { ExecutionServices, Executor } from './executor.js'
-import type { ModuleInvoke, ModulePreparation } from './module-loader.js'
+import type { ModulePreparation, ModuleTransport } from './module-loader.js'
 
 /** 実行場所を基準にしたファイルの読み取り。探索・設定・表示名のどれも同じ基準に従う。 */
 export interface ProjectFiles {
@@ -17,8 +17,7 @@ export interface ProjectFiles {
 }
 
 /** 変換したコードを配る資源。 */
-export interface ModuleCompiler {
-  invoke: ModuleInvoke
+export interface ModuleCompiler extends ModuleTransport {
   close(): Promise<void>
 }
 
@@ -35,7 +34,7 @@ export interface CollectionRuntime {
  */
 export interface ModuleToolchain {
   createCompiler(vite: Config['vite']): Promise<ModuleCompiler>
-  createRuntime(invoke: ModuleInvoke): CollectionRuntime
+  createRuntime(transport: ModuleTransport): CollectionRuntime
   prepare(blueprints: RuntimeBlueprint[]): ModulePreparation[]
   describe(nodes: ExecutionNode[]): Value
 }

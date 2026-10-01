@@ -4,8 +4,11 @@ import { AttemptExecutor } from '../../application/execution/attempt.js'
 import { GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
 import { CallBinder } from '../../application/execution/services.js'
 import * as comparison from '../comparison.js'
+import { FacadeEvaluator } from '../modules/evaluator.js'
+import { ModuleFacades } from '../modules/facades.js'
 import { ModuleRegistry } from '../modules/reference.js'
-import { createModuleRuntime } from '../modules/runtime.js'
+import { FacadeRunner } from '../modules/runner.js'
+import { ModuleRuntime } from '../modules/runtime.js'
 import { ExecutionChannel } from './execution-channel.js'
 import { ExecutionLoader } from './execution-loader.js'
 import { ExecutionServer } from './execution-server.js'
@@ -26,11 +29,9 @@ const session = new ExecutionSession(channel)
 // module runtimeと計画の指紋は同じnamespaceの出自を見なければ噛み合わない。
 const registry = new ModuleRegistry()
 
-const runtime = createModuleRuntime(
-  registry,
-  (name, args) => session.compiles.request(name, args),
-  workerData.preparation,
-)
+const facades = new ModuleFacades(registry, workerData.preparation)
+
+const runtime = new ModuleRuntime(new FacadeRunner(facades, new FacadeEvaluator(facades), session.compiles), facades)
 
 // call期待の繋ぎ直しはmodule runtimeに頼るため、実行の一式はruntimeができてから組み立てる。
 const attempts = new AttemptExecutor(comparison, session.tracker, session.events, new CallBinder(runtime.bindCall))

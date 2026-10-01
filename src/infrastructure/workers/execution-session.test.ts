@@ -42,8 +42,8 @@ function wired() {
 test('compile requests number their asks and resolve the matching reply', async () => {
   const { channel, sent, until, close } = wired()
   const compiles = new CompileRequests(channel)
-  const first = compiles.request('fetchModule', ['a'])
-  const second = compiles.request('fetchModule', ['b'])
+  const first = compiles.invoke('fetchModule', ['a'])
+  const second = compiles.invoke('fetchModule', ['b'])
   await until(2)
   expect(sent).toStrictEqual([
     { type: 'compile', id: 0, name: 'fetchModule', args: ['a'] },
@@ -59,7 +59,7 @@ test('compile requests number their asks and resolve the matching reply', async 
 test('a compile reply carrying an error rejects the request with that message', async () => {
   const { channel, close } = wired()
   const compiles = new CompileRequests(channel)
-  const request = compiles.request('fetchModule', [])
+  const request = compiles.invoke('fetchModule', [])
   expect(compiles.settle({ id: 0, error: 'transform failed' })).toBe(true)
   await expect(request).rejects.toThrow(/transform failed/)
   close()
@@ -68,7 +68,7 @@ test('a compile reply carrying an error rejects the request with that message', 
 test('a reply for an unknown or already settled request is reported as unmatched', async () => {
   const { channel, close } = wired()
   const compiles = new CompileRequests(channel)
-  const request = compiles.request('fetchModule', [])
+  const request = compiles.invoke('fetchModule', [])
   expect(compiles.settle({ id: 7 })).toBe(false)
   expect(compiles.settle({ id: 0, result: 1 })).toBe(true)
   expect(compiles.settle({ id: 0, result: 1 })).toBe(false)
@@ -110,7 +110,7 @@ test('the session reports a timeout with the phase its tracker last marked', asy
 test('the session asks for compilation through the worker protocol', async () => {
   const { channel, sent, until, close } = wired()
   const session = new ExecutionSession(channel)
-  void session.compiles.request('getBuiltins', [])
+  void session.compiles.invoke('getBuiltins', [])
   await until(1)
   expect(sent).toStrictEqual([{ type: 'compile', id: 0, name: 'getBuiltins', args: [] }])
   close()

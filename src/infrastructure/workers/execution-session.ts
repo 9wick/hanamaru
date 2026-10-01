@@ -1,9 +1,13 @@
 import { RunEvents, RunTracker } from '../../application/execution/services.js'
+import type { ModuleInvoke } from '../../application/ports/module-loader.js'
 import type { Value } from '../../foundation/value.js'
 import type { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand, ExecutionIncoming } from './protocol.js'
 
-/** compileを頼んだhostへの返信待ち。発番と突き合わせを1か所に閉じ込める。 */
+/**
+ * compileを頼んだhostへの返信待ち。発番と突き合わせを1か所に閉じ込める。
+ * module runtimeから見ると、収集workerが自分で立てるcompilerと同じ形の取り寄せ口になる。
+ */
 export class CompileRequests {
   readonly #waiting = new Map<number, { resolve: (value: Value) => void; reject: (error: Value) => void }>()
   readonly #channel: ExecutionChannel
@@ -13,13 +17,13 @@ export class CompileRequests {
     this.#channel = channel
   }
 
-  request(name: string, args: Value[]): Promise<Value> {
-    return new Promise<Value>((resolve, reject) => {
+  /** 関数値として渡されるため、thisを抱えたまま持ち出せる形にする。 */
+  readonly invoke: ModuleInvoke = (name, args) =>
+    new Promise<Value>((resolve, reject) => {
       const id = this.#nextId++
       this.#waiting.set(id, { resolve, reject })
       this.#channel.compile({ id, name, args })
     })
-  }
 
   /** 覚えのない返信はprotocolの破れ。どう畳むかは入口が決めるため、ここでは伝えるだけにする。 */
   settle(reply: { id: number; result?: Value; error?: string }): boolean {

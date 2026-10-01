@@ -80,7 +80,7 @@ export class CollectionSession {
       const files = this.#select(request, config)
       this.#events.loading('test runtime setup', limits.timeout)
       compiler = await this.#host.modules.createCompiler(config.vite)
-      runtime = this.#host.modules.createRuntime(compiler.invoke)
+      runtime = this.#host.modules.createRuntime(compiler)
       const collected = await this.#collect(files, runtime, limits.timeout, collecting)
       await this.#execute(this.#plan(collected, request), limits, compiler.invoke, signal)
     } catch (error) {

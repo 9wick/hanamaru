@@ -1,4 +1,4 @@
-import type { UserConfig } from '@hanamaru/vite'
+import type { InlineConfig, UserConfig, ViteDevServer } from '@hanamaru/vite'
 import { createServer, mergeConfig } from '@hanamaru/vite'
 import type { FetchResult } from '@hanamaru/vite/module-runner'
 import { parse } from 'acorn'
@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as v from 'valibot'
 import type { ModuleInvoke } from '../../application/ports/module-loader.js'
 import { required } from '../../foundation/value.js'
-import { TsconfigResolver } from './resolver.js'
+import type { TsconfigResolver } from './resolver.js'
 
 // Vite 8.3 guards generated export getters. Preserve TDZ errors without changing user catch blocks.
 export function preserveExportErrors(code: string) {
@@ -37,75 +37,100 @@ export function preserveExportErrors(code: string) {
   return code
 }
 
-export async function createModuleCompiler(entryURL: URL, vite: UserConfig = {}) {
-  if (!vite || typeof vite !== 'object' || Array.isArray(vite)) throw new TypeError('vite must be a config object')
-  const tsconfig = new TsconfigResolver()
-  const implementationRoot = dirname(fileURLToPath(entryURL))
-  const runtimeURL = entryURL.href
-  const isFramework = (id: string) => id.startsWith(`${implementationRoot}/`)
-  const packageTypes = new Map<string, string | undefined>()
-  function packageType(directory: string): string | undefined {
-    if (packageTypes.has(directory)) return packageTypes.get(directory)
+/**
+ * 変換したコードを配るVite server。読んだpackage種別と取り寄せた結果を覚えるため、
+ * 1つの実行につき1つだけ立て、startで開いてcloseで畳む。
+ */
+export class ModuleCompiler {
+  readonly #tsconfig: TsconfigResolver
+  readonly #implementationRoot: string
+  readonly #runtimeURL: string
+  readonly #packageTypes = new Map<string, string | undefined>()
+  readonly #records = new Map<string, Promise<FetchResult>>()
+  #server: ViteDevServer | undefined
+  #closing: Promise<void> | undefined
+
+  constructor(tsconfig: TsconfigResolver, entryURL: URL) {
+    this.#tsconfig = tsconfig
+    this.#implementationRoot = dirname(fileURLToPath(entryURL))
+    this.#runtimeURL = entryURL.href
+  }
+
+  async start(vite: UserConfig = {}): Promise<void> {
+    if (!vite || typeof vite !== 'object' || Array.isArray(vite)) throw new TypeError('vite must be a config object')
+    this.#server = await createServer(this.#serverConfig(vite))
+  }
+
+  #packageType(directory: string): string | undefined {
+    if (this.#packageTypes.has(directory)) return this.#packageTypes.get(directory)
     const manifest = resolve(directory, 'package.json')
     const parent = dirname(directory)
     const type = existsSync(manifest)
       ? v.parse(v.object({ type: v.optional(v.string(), 'commonjs') }), JSON.parse(readFileSync(manifest, 'utf8'))).type
       : parent === directory || directory.endsWith('/node_modules')
         ? undefined
-        : packageType(parent)
-    packageTypes.set(directory, type)
+        : this.#packageType(parent)
+    this.#packageTypes.set(directory, type)
     return type
   }
-  const external = (id: string): Extract<FetchResult, { externalize: string }> | undefined => {
+
+  /** frameworkそのものとcommonjsは変換の外に置く。変換するとruntimeの同一性とrequireが壊れる。 */
+  #external(id: string): Extract<FetchResult, { externalize: string }> | undefined {
     const path = id.startsWith('file:') ? fileURLToPath(id) : id
-    const commonjs = path.endsWith('.cjs') || (path.endsWith('.js') && packageType(dirname(path)) === 'commonjs')
-    if (isFramework(path) || commonjs)
+    const commonjs = path.endsWith('.cjs') || (path.endsWith('.js') && this.#packageType(dirname(path)) === 'commonjs')
+    if (path.startsWith(`${this.#implementationRoot}/`) || commonjs)
       return { externalize: pathToFileURL(path).href, type: commonjs ? 'commonjs' : 'module' }
   }
-  const options = mergeConfig(
-    {
-      root: process.cwd(),
-      logLevel: 'silent',
-      resolve: { tsconfigPaths: true },
-      ssr: { noExternal: true },
-    },
-    vite,
-  )
-  const server = await createServer({
-    ...options,
-    configFile: false,
-    appType: 'custom',
-    clearScreen: false,
-    server: { ...vite.server, middlewareMode: true, watch: null, ws: false },
-    plugins: [
+
+  #serverConfig(vite: UserConfig): InlineConfig {
+    const options = mergeConfig(
       {
-        name: 'hanamaru-runtime',
-        enforce: 'pre',
-        resolveId(source, importer) {
-          if (source === 'hanamaru') return { id: runtimeURL, external: true }
-          const id = source.startsWith('file:')
-            ? fileURLToPath(source)
-            : source.startsWith('.') && importer
-              ? resolve(dirname(importer), source)
-              : source
-          const found = external(id)
-          if (found) return { id: found.externalize, external: true }
-        },
+        root: process.cwd(),
+        logLevel: 'silent',
+        resolve: { tsconfigPaths: true },
+        ssr: { noExternal: true },
       },
-      ...(vite.plugins ?? []),
-      {
-        name: 'hanamaru-js-paths',
-        enforce: 'post',
-        resolveId(source, importer) {
-          // Preserve the CLI's tsconfig paths support for JS test files, including files outside root.
-          if (!importer || !/\.[cm]?js$/.test(importer) || source.startsWith('.') || source.startsWith('/')) return
-          return tsconfig.resolve(source, pathToFileURL(importer).href)
+      vite,
+    )
+    const tsconfig = this.#tsconfig
+    return {
+      ...options,
+      configFile: false,
+      appType: 'custom',
+      clearScreen: false,
+      server: { ...vite.server, middlewareMode: true, watch: null, ws: false },
+      plugins: [
+        {
+          name: 'hanamaru-runtime',
+          enforce: 'pre',
+          resolveId: (source, importer) => {
+            if (source === 'hanamaru') return { id: this.#runtimeURL, external: true }
+            const id = source.startsWith('file:')
+              ? fileURLToPath(source)
+              : source.startsWith('.') && importer
+                ? resolve(dirname(importer), source)
+                : source
+            const found = this.#external(id)
+            if (found) return { id: found.externalize, external: true }
+          },
         },
-      },
-    ],
-  })
-  const records = new Map<string, Promise<FetchResult>>()
-  const invoke: ModuleInvoke = async (name, args) => {
+        ...(vite.plugins ?? []),
+        {
+          name: 'hanamaru-js-paths',
+          enforce: 'post',
+          resolveId(source, importer) {
+            // Preserve the CLI's tsconfig paths support for JS test files, including files outside root.
+            if (!importer || !/\.[cm]?js$/.test(importer) || source.startsWith('.') || source.startsWith('/')) return
+            return tsconfig.resolve(source, pathToFileURL(importer).href)
+          },
+        },
+      ],
+    }
+  }
+
+  /** 関数値として渡されるため、thisを抱えたまま持ち出せる形にする。 */
+  readonly invoke: ModuleInvoke = async (name, args) => {
+    if (this.#closing) throw new Error('module compiler is closed')
     if (name === 'getBuiltins') return [...builtinModules, { type: 'regexp', source: '^node:', flags: '' }]
     if (name !== 'fetchModule') throw new Error(`unknown module request: ${name}`)
     const [url, importer, fetchOptions] = v.parse(
@@ -117,30 +142,31 @@ export async function createModuleCompiler(entryURL: URL, vite: UserConfig = {})
       args,
     )
     if (url.startsWith('file:')) {
-      const found = external(url)
+      const found = this.#external(url)
       if (found) return found
     }
     const key = JSON.stringify([url, importer, fetchOptions.startOffset])
-    if (!records.has(key))
-      records.set(
-        key,
-        (async () => {
-          const result = await required(server.environments.ssr).fetchModule(url, importer, {
-            ...fetchOptions,
-            cached: false,
-          })
-          if ('file' in result && result.file) {
-            const found = external(result.file)
-            if (found) return found
-          }
-          return {
-            ...result,
-            ...('code' in result ? { code: preserveExportErrors(result.code) } : {}),
-            invalidate: false,
-          }
-        })(),
-      )
-    return { ...(await required(records.get(key))) }
+    if (!this.#records.has(key)) this.#records.set(key, this.#fetch(url, importer, fetchOptions.startOffset))
+    return { ...(await required(this.#records.get(key))) }
   }
-  return { invoke, close: () => server.close() }
+
+  async #fetch(url: string, importer: string | undefined, startOffset: number | undefined): Promise<FetchResult> {
+    const server = required(this.#server, 'module compiler was not started')
+    const result = await required(server.environments.ssr).fetchModule(url, importer, { startOffset, cached: false })
+    if ('file' in result && result.file) {
+      const found = this.#external(result.file)
+      if (found) return found
+    }
+    return {
+      ...result,
+      ...('code' in result ? { code: preserveExportErrors(result.code) } : {}),
+      invalidate: false,
+    }
+  }
+
+  /** 二重に閉じても同じ約束を返す。閉じたあとの取り寄せは受け付けない。 */
+  close(): Promise<void> {
+    this.#closing ??= required(this.#server, 'module compiler was not started').close()
+    return this.#closing
+  }
 }
