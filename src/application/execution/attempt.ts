@@ -12,7 +12,7 @@ import type { AttemptReply } from '../ports/executor.js'
 import { callReference, evaluate, failure, faultToFailure } from './assertions.js'
 import { now } from './clock.js'
 import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
-import { patchMethods, restoreMethods } from './instrumentation.js'
+import { MethodPatch } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
 import type { AttemptServices } from './services.js'
@@ -129,7 +129,7 @@ export async function executeAttempt(
         'argsFrom' in check ? { ...check, args: arrayValue(invoke(check.argsFrom, undefined, [ctx])) } : check
       return bindCall({ ...condition, object, check: resolved })
     })
-    const instruments = patchMethods(overlayMocks(node.mocks, item.mocks), calls, node.bp.target)
+    const instruments = new MethodPatch(overlayMocks(node.mocks, item.mocks), calls, node.bp.target)
     let failed = false,
       originalError
     try {
@@ -163,7 +163,7 @@ export async function executeAttempt(
       originalError = valueOf(error)
     }
     timer.enter('cleanup')
-    const errors = restoreMethods(instruments.restore)
+    const errors = instruments.restore()
     if (errors.length) throw new CleanupFault(failed ? [originalError, ...errors] : errors)
     if (failed) throw originalError
   }
