@@ -21,11 +21,15 @@ import {
   required,
   valueOf,
 } from '../../foundation/value.js'
-import { moduleIdentity, registerModule } from './reference.js'
+import type { ModuleRegistry } from './reference.js'
 
 type Namespace = Record<PropertyKey, Value>
 
-export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePreparation[] = []) {
+export function createModuleRuntime(
+  registry: ModuleRegistry,
+  invoke: ModuleInvoke,
+  preparation: ModulePreparation[] = [],
+) {
   const slots = new Map(
     preparation.map(({ id, keys }) => [
       id,
@@ -90,7 +94,7 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
     })
     views.set(original, facade)
     views.set(facade, facade)
-    registerModule(facade, id)
+    registry.register(facade, id)
     return facade
   }
   class Evaluator extends ESModulesEvaluator {
@@ -143,7 +147,7 @@ export function createModuleRuntime(invoke: ModuleInvoke, preparation: ModulePre
     },
   })
   const bindEntry = <T extends { object: object; key: string }>(entry: T): T & { sourceObject?: object } => {
-    const id = moduleIdentity(entry.object)
+    const id = registry.identify(entry.object)
     if (!id) return entry
     const slot = slots.get(id)
     if (!slot?.keys.has(entry.key)) throw new Error(`unprepared module mock: ${id}#${entry.key}`)

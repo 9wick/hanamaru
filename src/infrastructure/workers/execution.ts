@@ -15,6 +15,7 @@ import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
 import { required } from '../../foundation/value.js'
 import * as comparison from '../comparison.js'
+import { ModuleRegistry } from '../modules/reference.js'
 import { createModuleRuntime } from '../modules/runtime.js'
 import { describeExecutionPlan } from './plan-shape.js'
 import type { ExecutionCommand, ExecutionMessage } from './protocol.js'
@@ -37,7 +38,11 @@ const compiling = new Map<number, { resolve: (value: Value) => void; reject: (er
 
 let nextCompileId = 0
 
+// module runtimeと計画の指紋は同じnamespaceの出自を見なければ噛み合わない。
+const registry = new ModuleRegistry()
+
 const runtime = createModuleRuntime(
+  registry,
   (name, args) =>
     new Promise<Value>((resolve, reject) => {
       const id = nextCompileId++
@@ -131,7 +136,7 @@ async function startExecution() {
           throw new TypeError('test registrations changed between collection and execution')
     })
     const plan = createPlan(validatedBlueprints(definitions))
-    if (JSON.stringify(describeExecutionPlan(plan.allNodes)) !== workerData.shape)
+    if (JSON.stringify(describeExecutionPlan(registry, plan.allNodes)) !== workerData.shape)
       throw new TypeError('test definitions changed between collection and execution')
     const nodes = indexExecutionNodes(plan.allNodes)
     async function serve(groups: ActiveGroup[] = []): Promise<Extract<ExecutionCommand, { type: 'group-close' }>> {

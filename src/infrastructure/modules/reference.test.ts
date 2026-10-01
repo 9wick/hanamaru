@@ -1,9 +1,11 @@
 import { expect, test } from 'vite-plus/test'
 import { Test } from '../../index.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
-import { collectModulePreparation, registerModule } from './reference.js'
+import { ModuleRegistry, collectModulePreparation } from './reference.js'
 
 const add = (a: number, b: number): number => a + b
+
+const registry = new ModuleRegistry()
 
 type Exports = Record<string, (value: number) => number>
 
@@ -15,8 +17,8 @@ function namespace(exports: Exports): Exports {
 test('preparation lists every mocked and observed key once per registered module', () => {
   const alpha = namespace({ read: (n) => n, write: (n) => n })
   const beta = namespace({ load: (n) => n })
-  registerModule(alpha, '/alpha.ts')
-  registerModule(beta, '/beta.ts')
+  registry.register(alpha, '/alpha.ts')
+  registry.register(beta, '/beta.ts')
   const definition = new Test()
     .mock(alpha, 'read', (m) => m.returns(1))
     .target(add)
@@ -34,7 +36,7 @@ test('preparation lists every mocked and observed key once per registered module
         .expect((e) => [e.result.toBe(3)]),
     )
     .todo('later')
-  expect(collectModulePreparation(collectBlueprints(definition))).toStrictEqual([
+  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([
     { id: '/alpha.ts', keys: ['read', 'write'] },
     { id: '/beta.ts', keys: ['load'] },
   ])
@@ -42,7 +44,7 @@ test('preparation lists every mocked and observed key once per registered module
 
 test('preparation visits group children', () => {
   const alpha = namespace({ read: (n) => n })
-  registerModule(alpha, '/nested.ts')
+  registry.register(alpha, '/nested.ts')
   const child = new Test().target(add).it('mocks', (t) =>
     t
       .mock(alpha, 'read', (m) => m.returns(1))
@@ -50,7 +52,9 @@ test('preparation visits group children', () => {
       .expect((e) => [e.result.toBe(3)]),
   )
   const definition = new Test().group([child])
-  expect(collectModulePreparation(collectBlueprints(definition))).toStrictEqual([{ id: '/nested.ts', keys: ['read'] }])
+  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([
+    { id: '/nested.ts', keys: ['read'] },
+  ])
 })
 
 test('ordinary fixture objects need no preparation', () => {
@@ -61,7 +65,7 @@ test('ordinary fixture objects need no preparation', () => {
       .args(1, 2)
       .expect((e) => [e.result.toBe(3)]),
   )
-  expect(collectModulePreparation(collectBlueprints(definition))).toStrictEqual([])
+  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([])
 })
 
 test('a module namespace the runtime did not load is rejected with the key that referenced it', () => {
@@ -72,7 +76,7 @@ test('a module namespace the runtime did not load is rejected with the key that 
       .args(1, 2)
       .expect((e) => [e.result.toBe(3)]),
   )
-  expect(() => collectModulePreparation(collectBlueprints(definition))).toThrow(
+  expect(() => collectModulePreparation(registry, collectBlueprints(definition))).toThrow(
     /module was loaded outside the test runtime: read/,
   )
 })
@@ -84,5 +88,5 @@ test('context fixtures named by call.from are resolved at execution, not during 
       .expect((e) => [e.result.toBe(3)])
       .expectCalls((call) => [call.from(() => ({ read: (n: number) => n }), 'read').notCalled()]),
   )
-  expect(collectModulePreparation(collectBlueprints(definition))).toStrictEqual([])
+  expect(collectModulePreparation(registry, collectBlueprints(definition))).toStrictEqual([])
 })

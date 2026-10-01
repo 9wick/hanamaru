@@ -11,7 +11,7 @@ import { property } from '../../foundation/value.js'
 import * as comparison from '../comparison.js'
 import { readConfig } from '../filesystem/config.js'
 import { createModuleCompiler } from '../modules/compiler.js'
-import { collectModulePreparation } from '../modules/reference.js'
+import { ModuleRegistry, collectModulePreparation } from '../modules/reference.js'
 import { createModuleRuntime } from '../modules/runtime.js'
 import { openExecution } from './client.js'
 import { describeExecutionPlan } from './plan-shape.js'
@@ -24,6 +24,8 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
   for (const method of consoleMethods)
     console[method] = (...values: Value[]) => process.stderr.write(values.map(String).join(' ') + '\n')
   const send = (event: CliMessage) => port.postMessage(event)
+  // module runtimeと、準備・指紋の算出は同じnamespaceの出自を見なければ噛み合わない。
+  const registry = new ModuleRegistry()
   const controller = new AbortController()
   port.on('message', (message) => {
     if (property(message, 'type') === 'interrupt') controller.abort()
@@ -39,11 +41,11 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
     readConfig,
     createCompiler: (vite) => createModuleCompiler(runtimeURL, vite),
     createRuntime: (invoke) => {
-      const runtime = createModuleRuntime(invoke)
+      const runtime = createModuleRuntime(registry, invoke)
       return { import: (file) => runtime.import(pathToFileURL(file).href), close: () => runtime.close() }
     },
-    prepare: collectModulePreparation,
-    describe: describeExecutionPlan,
+    prepare: (blueprints) => collectModulePreparation(registry, blueprints),
+    describe: (nodes) => describeExecutionPlan(registry, nodes),
     openExecution: (options) => openExecution(executionWorkerURL, options),
   }).catch((error) => send({ type: 'error', message: errorStack(error) }))
 }

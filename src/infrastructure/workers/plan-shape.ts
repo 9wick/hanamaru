@@ -2,16 +2,16 @@ import { indexExecutionNodes } from '../../application/execution/plan.js'
 import type { BehaviorBlueprint } from '../../domain/definition/types.js'
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
-import { moduleIdentity } from '../modules/reference.js'
+import type { ModuleRegistry } from '../modules/reference.js'
 
 type BehaviorShape = { kind: BehaviorBlueprint['kind']; once?: BehaviorShape[]; fallback?: BehaviorShape }
 
-export function describeExecutionPlan(nodes: ExecutionNode[]) {
+export function describeExecutionPlan(registry: ModuleRegistry, nodes: ExecutionNode[]) {
   const objects = new Map<object, number>()
   const reference = ({ object, key }: { object?: object; key: string }) => {
     if (object === undefined) return { key, fromContext: true }
     if (!objects.has(object)) objects.set(object, objects.size)
-    return { object: objects.get(object), key, module: moduleIdentity(object) ?? null }
+    return { object: objects.get(object), key, module: registry.identify(object) ?? null }
   }
   const behavior = (value: BehaviorBlueprint): BehaviorShape =>
     value.kind === 'sequence'

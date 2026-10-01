@@ -4,6 +4,7 @@ import { Test, middleware } from '../../index.js'
 
 import { createPlan } from '../../application/execution/plan.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
+import { ModuleRegistry } from '../modules/reference.js'
 import { describeExecutionPlan } from './plan-shape.js'
 
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
@@ -11,7 +12,7 @@ import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 const add = (a: number, b: number): number => a + b
 
 function shapeOf(definition: TestDefinition): string {
-  return JSON.stringify(describeExecutionPlan(createPlan(collectBlueprints(definition)).allNodes))
+  return JSON.stringify(describeExecutionPlan(new ModuleRegistry(), createPlan(collectBlueprints(definition)).allNodes))
 }
 
 function groupWith(options: { timeout?: number }): TestDefinition {
