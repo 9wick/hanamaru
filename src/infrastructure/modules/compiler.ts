@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as v from 'valibot'
 import type { ModuleInvoke } from '../../application/ports/module-loader.js'
 import { required } from '../../foundation/value.js'
-import { resolveTsconfigPath } from './resolver.js'
+import { TsconfigResolver } from './resolver.js'
 
 // Vite 8.3 guards generated export getters. Preserve TDZ errors without changing user catch blocks.
 export function preserveExportErrors(code: string) {
@@ -39,6 +39,7 @@ export function preserveExportErrors(code: string) {
 
 export async function createModuleCompiler(entryURL: URL, vite: UserConfig = {}) {
   if (!vite || typeof vite !== 'object' || Array.isArray(vite)) throw new TypeError('vite must be a config object')
+  const tsconfig = new TsconfigResolver()
   const implementationRoot = dirname(fileURLToPath(entryURL))
   const runtimeURL = entryURL.href
   const isFramework = (id: string) => id.startsWith(`${implementationRoot}/`)
@@ -98,7 +99,7 @@ export async function createModuleCompiler(entryURL: URL, vite: UserConfig = {})
         resolveId(source, importer) {
           // Preserve the CLI's tsconfig paths support for JS test files, including files outside root.
           if (!importer || !/\.[cm]?js$/.test(importer) || source.startsWith('.') || source.startsWith('/')) return
-          return resolveTsconfigPath(source, pathToFileURL(importer).href)
+          return tsconfig.resolve(source, pathToFileURL(importer).href)
         },
       },
     ],

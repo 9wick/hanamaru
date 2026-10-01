@@ -12,8 +12,6 @@ interface ConfigEntry {
   config: Tsconfig
 }
 
-const cache = new Map<string, ConfigEntry | null>()
-
 function jsonc(text: string): Tsconfig {
   let clean = '',
     quote = false,
@@ -71,35 +69,7 @@ function jsonc(text: string): Tsconfig {
   )
 }
 
-function configFor(parentURL: string): ConfigEntry | null {
-  if (!parentURL?.startsWith('file:')) return null
-  let directory = dirname(fileURLToPath(parentURL))
-  const visited: string[] = []
-  while (true) {
-    if (cache.has(directory)) {
-      const value = cache.get(directory)
-      if (value === undefined) throw new Error('tsconfig cache entry is missing')
-      for (const path of visited) cache.set(path, value)
-      return value
-    }
-    visited.push(directory)
-    const path = join(directory, 'tsconfig.json')
-    if (existsSync(path)) {
-      const value = { directory, config: jsonc(readFileSync(path, 'utf8')) }
-      for (const part of visited) cache.set(part, value)
-      return value
-    }
-    const parent = dirname(directory)
-    if (parent === directory) break
-    directory = parent
-  }
-  for (const part of visited) cache.set(part, null)
-  return null
-}
-
-function aliasCandidates(specifier: string, parentURL: string) {
-  const entry = configFor(parentURL)
-  if (!entry) return []
+function aliasCandidates(entry: ConfigEntry, specifier: string): string[] {
   const options = entry.config.compilerOptions ?? {}
   const base = resolvePath(entry.directory, options.baseUrl ?? '.')
   const matches: string[] = []
@@ -121,8 +91,45 @@ function extensions(file: string) {
   return [file]
 }
 
-export function resolveTsconfigPath(specifier: string, parentURL: string) {
-  for (const candidate of aliasCandidates(specifier, parentURL))
-    for (const file of extensions(candidate)) if (existsSync(file)) return file
-  return null
+/**
+ * tsconfigのpathsでJSの指定子を解決する。読み込んだtsconfigは覚えたまま再利用するため、
+ * 探索の結果が1つのcompilerの寿命の中で揺れない。
+ */
+export class TsconfigResolver {
+  readonly #configs = new Map<string, ConfigEntry | null>()
+
+  /** 探索の途中で通ったディレクトリにも答えを書き戻し、兄弟ファイルからの解決を1回で済ませる。 */
+  #configFor(parentURL: string): ConfigEntry | null {
+    if (!parentURL?.startsWith('file:')) return null
+    let directory = dirname(fileURLToPath(parentURL))
+    const visited: string[] = []
+    while (true) {
+      if (this.#configs.has(directory)) {
+        const value = this.#configs.get(directory)
+        if (value === undefined) throw new Error('tsconfig cache entry is missing')
+        for (const path of visited) this.#configs.set(path, value)
+        return value
+      }
+      visited.push(directory)
+      const path = join(directory, 'tsconfig.json')
+      if (existsSync(path)) {
+        const value = { directory, config: jsonc(readFileSync(path, 'utf8')) }
+        for (const part of visited) this.#configs.set(part, value)
+        return value
+      }
+      const parent = dirname(directory)
+      if (parent === directory) break
+      directory = parent
+    }
+    for (const part of visited) this.#configs.set(part, null)
+    return null
+  }
+
+  resolve(specifier: string, parentURL: string): string | null {
+    const entry = this.#configFor(parentURL)
+    if (!entry) return null
+    for (const candidate of aliasCandidates(entry, specifier))
+      for (const file of extensions(candidate)) if (existsSync(file)) return file
+    return null
+  }
 }
