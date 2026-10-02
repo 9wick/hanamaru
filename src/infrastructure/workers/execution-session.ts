@@ -95,7 +95,7 @@ export class ExecutionSession {
    * 覚えのないcompile返信だけはprotocolの破れで、
    * どう畳むかは入口が決めるため、見分けた結果だけを返す。
    */
-  receive(message: ExecutionIncoming): boolean {
+  receive(message: Exclude<ExecutionIncoming, { type: 'initialize' }>): boolean {
     if (message.type === 'compiled') return this.#compiles.settle(message)
     if (message.type === 'interrupt') {
       this.#tracker.interrupt()

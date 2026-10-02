@@ -10,8 +10,9 @@ import type {
   ExecutionServices,
   ExecutionSpec,
   GroupReply,
+  PreparedExecution,
 } from '../../application/ports/executor.js'
-import { Executor } from '../../application/ports/executor.js'
+import { ExecutionLauncher } from '../../application/ports/executor.js'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
 import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 import { errorStack } from '../../foundation/errors.js'
@@ -23,13 +24,12 @@ import { PendingReplies } from './requests.js'
 import { executionMessageSchema } from './schemas.js'
 
 /** 立ち上がりの合図。待つ側と知らせる側で持ち主が分かれるため、約束と口を一緒に作る。 */
-function opening(): { settled: Promise<void>; open: () => void; fail: (error: Value) => void } {
-  const captured: { open?: () => void; fail?: (error: Value) => void } = {}
-  const settled = new Promise<void>((resolve, reject) => {
+function opening(): { settled: Promise<void>; open: () => void } {
+  const captured: { open?: () => void } = {}
+  const settled = new Promise<void>((resolve) => {
     captured.open = resolve
-    captured.fail = reject
   })
-  return { settled, open: required(captured.open), fail: required(captured.fail) }
+  return { settled, open: required(captured.open) }
 }
 
 /**
@@ -37,30 +37,27 @@ function opening(): { settled: Promise<void>; open: () => void; fail: (error: Va
  * 返信待ち・立ち上がりの約束・畳んだかどうかはこの1回に属し、
  * runの進み具合は開くときに受け取ったtrackerとeventsへ渡す。
  */
-class RunningExecution implements ExecutionHandle {
+class RunningExecution implements PreparedExecution, ExecutionHandle {
   readonly #requests = new PendingReplies<ReplyValue>()
   readonly #opening = opening()
   readonly #interrupt = () => this.#post({ type: 'interrupt' })
   /** workerが死んだ瞬間に待っている全部へ同じ失敗を渡すため、listenerへそのまま預けられる形で持つ。 */
   readonly #fail = (error: Value) => {
-    this.#fatal = error
-    this.#opening.fail(error)
+    this.#fatal ??= { error }
+    // 収集中はまだ待ち手がいない。失敗を保持してstartで返し、未処理のPromise rejectionを作らない。
+    this.#opening.open()
     this.#requests.abandon(error)
   }
   readonly #worker: Worker
-  readonly #services: ExecutionServices
   readonly #tracker: RunTracker
-  readonly #events: RunEvents
-  #closing = false
-  #fatal: Value = undefined
+  #services: ExecutionServices | undefined
+  #events: RunEvents | undefined
+  #closing: Promise<void> | undefined
+  #fatal: { error: Value } | null = null
 
-  constructor(worker: Worker, services: ExecutionServices, tracker: RunTracker, events: RunEvents) {
+  constructor(worker: Worker, tracker: RunTracker) {
     this.#worker = worker
-    this.#services = services
     this.#tracker = tracker
-    this.#events = events
-    services.signal.addEventListener('abort', this.#interrupt)
-    if (services.signal.aborted) this.#interrupt()
     worker.on('error', this.#fail)
     worker.on('exit', (code) => {
       if (!this.#closing) this.#fail(new Error(`execution worker exited (${code})`))
@@ -68,9 +65,24 @@ class RunningExecution implements ExecutionHandle {
     worker.on('message', (input) => this.#receive(input))
   }
 
-  /** workerが自分の持ち場を用意し終えるまで、commandは受け取ってもらえない。 */
-  opened(): Promise<void> {
-    return this.#opening.settled
+  /** 計画が決まるまでworkerはテストを読まない。起動時の失敗もここで呼び出し側に返す。 */
+  async start(events: RunEvents, spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
+    if (this.#closing) throw new Error('execution worker is closed')
+    if (this.#services) throw new Error('execution worker is already initialized')
+    this.#throwFailure()
+    this.#services = services
+    this.#events = events
+    services.onLoading('execution worker setup')
+    services.signal.addEventListener('abort', this.#interrupt)
+    if (services.signal.aborted) this.#interrupt()
+    this.#post({ type: 'initialize', spec })
+    await this.#opening.settled
+    this.#throwFailure()
+    return this
+  }
+
+  #throwFailure(): void {
+    if (this.#fatal) throw this.#fatal.error
   }
 
   #post(message: Value): void {
@@ -78,9 +90,12 @@ class RunningExecution implements ExecutionHandle {
   }
 
   #receive(input: unknown): void {
+    if (this.#closing) return
     const parsed = v.safeParse(executionMessageSchema, input)
     if (!parsed.success) return this.#fail(new Error(`invalid execution message: ${v.summarize(parsed.issues)}`))
     const message = parsed.output
+    if (message.type === 'error') return this.#fail(new Error(message.message))
+    if (!this.#services || !this.#events) return this.#fail(new Error('execution message before initialization'))
     if (message.type === 'compile') {
       this.#services
         .invoke(message.name, message.args)
@@ -95,7 +110,6 @@ class RunningExecution implements ExecutionHandle {
         .catch(this.#fail)
     } else if (message.type === 'ready') this.#opening.open()
     else if (message.type === 'loading') this.#services.onLoading(message.file)
-    else if (message.type === 'error') this.#fail(new Error(message.message))
     else if (message.type === 'reply') {
       if (!this.#requests.has(message.id)) return this.#fail(new Error('unexpected execution reply'))
       if ('reason' in message.value && message.value.reason) this.#tracker.abort(message.value.reason)
@@ -124,7 +138,7 @@ class RunningExecution implements ExecutionHandle {
   }
 
   #request(command: CommandInput): Promise<ReplyValue> {
-    if (this.#fatal) return Promise.reject(this.#fatal)
+    if (this.#fatal) return Promise.reject(this.#fatal.error)
     if (this.#closing) return Promise.reject(new Error('execution worker is closed'))
     return this.#requests.open((id) => this.#post({ ...command, id }))
   }
@@ -159,19 +173,22 @@ class RunningExecution implements ExecutionHandle {
     return result
   }
 
-  async close(): Promise<void> {
-    this.#closing = true
-    this.#services.signal.removeEventListener('abort', this.#interrupt)
-    await this.#worker.terminate()
+  close(): Promise<void> {
+    if (!this.#closing) {
+      this.#services?.signal.removeEventListener('abort', this.#interrupt)
+      this.#fail(new Error('execution worker is closed'))
+      this.#closing = this.#worker.terminate().then(() => {})
+    }
+    return this.#closing
   }
 }
 
 /**
  * 実行workerを立ち上げて持ち場を開く。
- * 通知の受け取り手も走らせる計画も外との繋ぎも収集が終わるまで決まらないため、workerはstartで初めて起動する。
+ * 起動と依存読み込みは収集と並行して進める。計画と外との繋ぎは収集後のstartで渡す。
  */
 @Config()
-export class WorkerExecutionLauncher extends Executor {
+export class WorkerExecutionLauncher extends ExecutionLauncher {
   readonly #workerURL: URL
   readonly #tracker: RunTracker
 
@@ -181,23 +198,10 @@ export class WorkerExecutionLauncher extends Executor {
     this.#tracker = tracker
   }
 
-  /** 立ち上がりで落ちたworkerは残しておけない。畳んでから失敗を返す。 */
-  async start(
-    events: RunEvents,
-    { roots, preparation, shape }: ExecutionSpec,
-    services: ExecutionServices,
-  ): Promise<ExecutionHandle> {
-    services.onLoading('execution worker setup')
+  open(): PreparedExecution {
     const worker = new Worker(this.#workerURL, {
-      workerData: { role: 'execution', roots, preparation, shape },
+      workerData: { role: 'execution' },
     })
-    const execution = new RunningExecution(worker, services, this.#tracker, events)
-    try {
-      await execution.opened()
-    } catch (error) {
-      await execution.close()
-      throw error
-    }
-    return execution
+    return new RunningExecution(worker, this.#tracker)
   }
 }

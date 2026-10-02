@@ -3,7 +3,6 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CollectionEvents } from '../../application/collection/events.js'
 import { errorStack } from '../../foundation/errors.js'
-import { ValueComparison } from '../comparison.js'
 import { ProjectFilesystem } from '../filesystem/project-files.js'
 import { ModuleEntry } from '../modules/entry.js'
 import { WorkerExecutionLauncher } from './client.js'
@@ -42,7 +41,6 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
         WorkerEnvironment,
         PublicEntry,
         ProjectFilesystem,
-        ValueComparison,
         StderrLog,
         CollectionChannel,
         WorkerModuleToolchain,

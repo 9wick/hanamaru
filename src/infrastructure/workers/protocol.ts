@@ -42,6 +42,7 @@ export type ExecutionMessage =
 
 export type ExecutionIncoming =
   | ExecutionCommand
+  | { type: 'initialize'; spec: ExecutionWorkerData }
   | { type: 'interrupt' }
   | { type: 'compiled'; id: number; result?: Value; error?: string }
 

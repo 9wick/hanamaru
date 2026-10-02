@@ -49,17 +49,18 @@ const commandSchemas = [
   v.object({ type: v.literal('group-close'), id: v.number(), path: v.array(v.number()), failed: v.boolean() }),
 ]
 
-export const executionIncomingSchema = v.variant('type', [
-  ...commandSchemas,
-  v.object({ type: v.literal('interrupt') }),
-  v.object({ type: v.literal('compiled'), id: v.number(), result: v.optional(jsValue), error: v.optional(v.string()) }),
-])
-
 export const executionWorkerDataSchema = v.object({
   roots: v.array(v.object({ file: v.string(), index: v.number(), origin: location })),
   preparation: v.array(v.object({ id: v.string(), keys: v.array(v.string()) })),
   shape: v.string(),
 })
+
+export const executionIncomingSchema = v.variant('type', [
+  ...commandSchemas,
+  v.object({ type: v.literal('initialize'), spec: executionWorkerDataSchema }),
+  v.object({ type: v.literal('interrupt') }),
+  v.object({ type: v.literal('compiled'), id: v.number(), result: v.optional(jsValue), error: v.optional(v.string()) }),
+])
 
 export const cliWorkerDataSchema = v.object({
   files: v.array(v.string()),
