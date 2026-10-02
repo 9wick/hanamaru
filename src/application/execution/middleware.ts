@@ -89,9 +89,13 @@ export async function withMiddleware<T>(
   body: (fields: Fields) => Promise<T>,
   onTimeout?: () => void,
   onStage?: (stage: Stage, timeoutMs: number) => void,
+  cancellation?: AbortSignal,
 ): Promise<T | undefined> {
   const timeoutMs = step.timeout ?? defaultMiddlewareTimeoutMs
   const timer = new StageTimer<MiddlewareStage>(timeoutMs, 'before', () => onTimeout?.())
+  const cancelTimer = () => timer.clear()
+  cancellation?.addEventListener('abort', cancelTimer)
+  if (cancellation?.aborted) cancelTimer()
   let calls = 0
   let trace: MiddlewareTrace<T> = { stage: 'before' }
   let nextPromise: Promise<RuntimeMiddlewareResult> | undefined
@@ -158,6 +162,7 @@ export async function withMiddleware<T>(
     if (downstream) throw new CleanupFault([downstream.error, valueOf(error)])
     throw new MiddlewareFault(valueOf(error), trace.stage === 'inside' ? 'after' : trace.stage)
   } finally {
+    cancellation?.removeEventListener('abort', cancelTimer)
     timer.clear()
     onStage?.('end', timeoutMs)
   }
@@ -172,7 +177,7 @@ function passedMiddleware(durationMs: number): MutableGroupMiddleware {
 }
 
 /** group middlewareの例外を、報告する結果とrunを打ち切る理由へ翻訳する。打ち切らないならabortはnull。 */
-function groupMiddlewareOutcome(
+export function groupMiddlewareOutcome(
   error: Value,
   durationMs: number,
 ): { middleware: MutableGroupMiddleware; abort: Reason | null } {

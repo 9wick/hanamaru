@@ -1,3 +1,4 @@
+import type { Resource } from '../../domain/definition/resource.js'
 import { Injectable } from '@zeltjs/core'
 import { indexExecutionNodes } from '../../application/execution/plan.js'
 import type { ModulePreparation } from '../../application/ports/module-loader.js'
@@ -60,6 +61,23 @@ export class ModuleRegistry {
 
   /** 収集と実行で定義が同じかを突き合わせる指紋。差し替えの宛先はmoduleの出自まで含めて見る。 */
   describe(nodes: ExecutionNode[]) {
+    const resources = new Map<Resource, number>()
+    const resourceShapes: { id: number; name: string; scope: string; timeout: number; require: number[] }[] = []
+    const resourceId = (r: Resource): number => {
+      const previous = resources.get(r)
+      if (previous !== undefined) return previous
+      const id = resources.size
+      resources.set(r, id)
+      const shape = {
+        id,
+        name: r.name,
+        scope: r.scope,
+        timeout: r.timeout ?? defaultMiddlewareTimeoutMs,
+        require: r.require.map(resourceId),
+      }
+      resourceShapes.push(shape)
+      return id
+    }
     const objects = new Map<object, number>()
     const reference = ({ object, key }: { object?: object; key: string }) => {
       if (object === undefined) return { key, fromContext: true }
@@ -70,11 +88,12 @@ export class ModuleRegistry {
       value.kind === 'sequence'
         ? { kind: value.kind, once: value.once.map(behavior), fallback: behavior(value.fallback) }
         : { kind: value.kind }
-    return [...indexExecutionNodes(nodes)].map(([path, node]) => ({
+    const described = [...indexExecutionNodes(nodes)].map(([path, node]) => ({
       path,
       kind: node.kind,
       name: node.bp.name,
       config: node.config,
+      resources: (node.resources ?? []).map(resourceId),
       frames: node.frames.map((frame) => frame.steps.map((step) => step.timeout ?? defaultMiddlewareTimeoutMs)),
       mocks: node.mocks.map((mock) => ({ ...reference(mock), behavior: behavior(mock.behavior) })),
       ...(node.kind === 'group'
@@ -88,6 +107,7 @@ export class ModuleRegistry {
             cases: node.bp.cases.map((item) => ({
               name: item.name,
               mode: item.mode,
+              resources: (item.resources ?? []).map(resourceId),
               config: item.config,
               origin: item.origin,
               ...(item.mode === 'todo'
@@ -104,5 +124,8 @@ export class ModuleRegistry {
             })),
           }),
     }))
+    return resourceShapes.length
+      ? { nodes: described, resources: resourceShapes.sort((a, b) => a.id - b.id) }
+      : described
   }
 }

@@ -1,3 +1,4 @@
+import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
 import * as v from 'valibot'
 import type { CollectionEvent } from '../../application/collection/scope.js'
 import {
@@ -15,6 +16,7 @@ import {
   todoCase,
   withMock,
   withRetry,
+  withResource,
   withStep,
   withTimeout,
 } from '../../domain/definition/construction.js'
@@ -95,6 +97,13 @@ export function createTest(location: () => SourceLocation, record: (event: Colle
     retry(count: number) {
       settingAllowed(this.#data)
       return this.#next(withRetry(this.#data, count), location)
+    }
+    require<T extends Resource>(
+      r: T,
+    ): TargetStage<ExtendContext<ResourceFields<T>, C>, R, ExtendContext<ResourceFields<T>, R>>
+    require(r: Resource): object {
+      settingAllowed(this.#data)
+      return this.#next(withResource(this.#data, r), location)
     }
     use<S extends object>(step: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
     use(step: Middleware<C, object>): object {

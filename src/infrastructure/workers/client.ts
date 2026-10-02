@@ -147,15 +147,15 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
   }
 
   /** 節はworkerが自分で読み直した計画から引くため、どのcaseかはpathで指す。 */
-  async attempt(_node: SuiteNode, _item: RuntimeCase, path: number[], number: number): Promise<AttemptReply> {
-    const reply = await this.#request({ type: 'attempt', path, number })
+  async attempt(node: SuiteNode, _item: RuntimeCase, path: number[], number: number): Promise<AttemptReply> {
+    const reply = await this.#request({ type: 'attempt', path, number, resourceFields: node.resourceFields })
     if (!('result' in reply)) throw new TypeError('unexpected attempt reply')
     return reply
   }
 
   /** 囲みの中のfieldsはworker側が持つため、子を辿る間の受け渡しは空で足りる。 */
-  async group(_node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {
-    const opened = await this.#request({ type: 'group-open', path })
+  async group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {
+    const opened = await this.#request({ type: 'group-open', path, resourceFields: node.resourceFields })
     if ('result' in opened) throw new TypeError('unexpected group reply')
     if (!opened.entered) return opened
     let failed = true

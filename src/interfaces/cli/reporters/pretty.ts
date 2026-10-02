@@ -1,6 +1,6 @@
 import { relative } from 'node:path'
 import type { SourceLocation } from '../../../domain/definition/types.js'
-import type { MutableCaseResult, MutableNodeResult } from '../../../domain/result/mutable.js'
+import type { MutableCaseResult, MutableNodeResult, MutableResourceResult } from '../../../domain/result/mutable.js'
 import { formatValue } from './format-value.js'
 
 function formatFailure(item: MutableCaseResult, depth: number, groupOrigins: SourceLocation[]) {
@@ -65,4 +65,16 @@ export function formatNode(node: MutableNodeResult, depth = 0, groupOrigins: Sou
     }
   }
   return lines
+}
+
+export function formatResources(resources: readonly MutableResourceResult[] = []): string[] {
+  return resources.flatMap((r) =>
+    r.middleware.status === 'failed'
+      ? r.middleware.failures.flatMap((issue) => [
+          `✗ resource ${r.name} (${r.scope}): ${issue.message}`,
+          ...('cause' in issue ? [`  cause: ${formatValue(issue.cause)}`] : []),
+          ...('timeoutMs' in issue ? [`  timeout: ${issue.timeoutMs}ms (${issue.phase})`] : []),
+        ])
+      : [],
+  )
 }

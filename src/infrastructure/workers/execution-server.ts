@@ -1,3 +1,4 @@
+import { jsonFields } from '../../domain/definition/resource.js'
 import { Injectable, inject } from '@zeltjs/core'
 import { AttemptExecutor } from '../../application/execution/attempt.js'
 import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
@@ -27,9 +28,9 @@ interface ActiveGroup {
 }
 
 /** 囲んでいるgroupのframeとfieldsを、節が持つ並びへ織り込む。 */
-function withGroups<N extends ExecutionNode>(node: N, groups: ActiveGroup[]): N {
-  const frames: Frame[] = []
-  const stable: Fields = {}
+function withGroups<N extends ExecutionNode>(node: N, groups: ActiveGroup[], supplied: Fields): N {
+  const frames: Frame[] = [{ steps: [], fields: supplied }]
+  const stable: Fields = { ...supplied }
   for (const group of groups) Object.assign(stable, group.fields)
   node.frames.forEach((frame, index) => {
     frames.push(frame)
@@ -82,7 +83,7 @@ export class ExecutionServer {
       const key = JSON.stringify(command.type === 'attempt' ? command.path.slice(0, -1) : command.path)
       const original = serving.nodes.get(key)
       if (!original) throw new TypeError('execution job references an unknown path')
-      const node = serving.runtime.bindNode(withGroups(original, groups))
+      const node = serving.runtime.bindNode(withGroups(original, groups, jsonFields(command.resourceFields)))
       if (command.type === 'attempt') {
         if (node.kind !== 'test') throw new TypeError('attempt requires a test node')
         const item = node.bp.cases[required(command.path.at(-1))]

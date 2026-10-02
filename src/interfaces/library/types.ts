@@ -1,3 +1,4 @@
+import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
 import type {
   Assertions,
   CallAssertion,
@@ -100,6 +101,7 @@ export type CallsBuilder<C = object> = (call: CallBuilder<C>) => CallExpectation
 
 export interface ItBuilder<F extends AnyFn, C> extends ExecutionSettings<ItBuilder<F, C>> {
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, C>
+  require<T extends Resource>(r: T): ItBuilder<F, ExtendContext<ResourceFields<T>, C>>
   args(...args: Parameters<F>): ItArgs<F, C>
   argsFrom(build: (ctx: Ctx<C>) => Parameters<F>): ItArgs<F, C>
 }
@@ -137,6 +139,7 @@ export interface Suite<F extends AnyFn, C, R extends object = {}>
 
 export interface TestBuilder<F extends AnyFn, C, R extends object = {}>
   extends CaseMethods<F, C, R>, ExecutionSettings<TestBuilder<F, C, R>> {
+  require<T extends Resource>(r: T): TestBuilder<F, ExtendContext<ResourceFields<T>, C>, R>
   use<S extends object>(m: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
 }
@@ -156,26 +159,26 @@ export type FirstPhase<P extends InputPhase> = 'group' extends P ? 'group' : 'at
 
 export type ChildrenPhase<D extends readonly TestDefinition<never>[]> = D[number][typeof definitionBrand]['phase']
 
-interface GroupMethods<C extends object, R extends object, P extends InputPhase = 'attempt'> {
+interface GroupMethods<C extends object, R extends object, P extends InputPhase = 'attempt', G extends object = R> {
   /** middlewareを取る形を先に並べ、その場で書いたmiddlewareのctxを文脈から型付けする。 */
   group<S extends object>(
-    m: Middleware<R, S>,
-    children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<R, S>>,
-  ): GroupStage<C, R, 'group'>
+    m: Middleware<G, S>,
+    children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<G, S>>,
+  ): GroupStage<C, R, 'group', G>
   group<S extends object>(
     name: string,
-    m: Middleware<R, S>,
-    children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<R, S>>,
-  ): GroupStage<C, R, 'group'>
-  group<const D extends CompatibleChildren<C, R>>(children: D): GroupStage<C, R, FirstPhase<P | ChildrenPhase<D>>>
-  group<const D extends CompatibleChildren<C, R>>(
+    m: Middleware<G, S>,
+    children: CompatibleChildren<ExtendContext<C, S>, ExtendContext<G, S>>,
+  ): GroupStage<C, R, 'group', G>
+  group<const D extends CompatibleChildren<C, G>>(children: D): GroupStage<C, R, FirstPhase<P | ChildrenPhase<D>>, G>
+  group<const D extends CompatibleChildren<C, G>>(
     name: string,
     children: D,
-  ): GroupStage<C, R, FirstPhase<P | ChildrenPhase<D>>>
+  ): GroupStage<C, R, FirstPhase<P | ChildrenPhase<D>>, G>
 }
 
-export interface GroupStage<C extends object, R extends object, P extends InputPhase>
-  extends GroupMethods<C, R, P>, DefinitionHandle<R, P> {
+export interface GroupStage<C extends object, R extends object, P extends InputPhase, G extends object = R>
+  extends GroupMethods<C, R, P, G>, DefinitionHandle<R, P> {
   /** チェーン内の複数groupと共通設定を取得する。GroupSuite自体は実行階層ではない。 */
   blueprint(): DefinitionBlueprint<R>
 }
@@ -184,10 +187,13 @@ export type GroupSuite<C extends object, R extends object = {}> =
   | GroupStage<C, R, 'attempt'>
   | GroupStage<C, R, 'group'>
 
-export interface TargetStage<C extends object, R extends object = {}>
-  extends GroupMethods<C, R>, ExecutionSettings<TargetStage<C, R>> {
-  use<S extends object>(m: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R>
+export interface TargetStage<C extends object, R extends object = {}, G extends object = R>
+  extends GroupMethods<C, R, 'attempt', G>, ExecutionSettings<TargetStage<C, R, G>> {
+  require<T extends Resource>(
+    r: T,
+  ): TargetStage<ExtendContext<ResourceFields<T>, C>, R, ExtendContext<ResourceFields<T>, G>>
+  use<S extends object>(m: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R, G>
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R, G>
   target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
   target<F extends AnyFn>(name: string, fn: F): TestBuilder<F, C, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>

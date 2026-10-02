@@ -59,11 +59,20 @@ export class ProgressStore {
     if (progress.kind === 'init') {
       this.result = progress.result
       this.#index = indexResult(progress.result.tests)
+      for (const resource of progress.result.resources ?? [])
+        if (resource.middleware.status === 'failed') this.#index.failed.add(`resource:${resource.id}`)
       return
     }
     const result = this.result
     if (!result) throw new Error('progress received before initialization')
-    if (progress.kind === 'case') {
+    if (progress.kind === 'resource') {
+      result.resources ??= []
+      const index = result.resources.findIndex((r) => r.id === progress.result.id)
+      if (index < 0) result.resources.push(progress.result)
+      else result.resources[index] = progress.result
+      if (progress.result.middleware.status === 'failed') this.#index.failed.add(`resource:${progress.result.id}`)
+      else this.#index.failed.delete(`resource:${progress.result.id}`)
+    } else if (progress.kind === 'case') {
       const slot = this.#index.cases.get(pathKey(progress.result.path))
       if (!slot) throw new Error('progress references an unknown case')
       slot.node.cases[slot.index] = progress.result

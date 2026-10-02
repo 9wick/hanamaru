@@ -45,8 +45,19 @@ export const executionMessageSchema = v.variant('type', [
 ])
 
 const commandSchemas = [
-  v.object({ type: v.literal('attempt'), id: v.number(), path: v.array(v.number()), number: v.number() }),
-  v.object({ type: v.literal('group-open'), id: v.number(), path: v.array(v.number()) }),
+  v.object({
+    type: v.literal('attempt'),
+    id: v.number(),
+    path: v.array(v.number()),
+    number: v.number(),
+    resourceFields: v.optional(v.record(v.string(), jsValue)),
+  }),
+  v.object({
+    type: v.literal('group-open'),
+    id: v.number(),
+    path: v.array(v.number()),
+    resourceFields: v.optional(v.record(v.string(), jsValue)),
+  }),
   v.object({ type: v.literal('group-close'), id: v.number(), path: v.array(v.number()), failed: v.boolean() }),
 ]
 

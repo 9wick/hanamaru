@@ -1,3 +1,13 @@
+export { resource } from './interfaces/library/resource.js'
+export type {
+  Resource,
+  ResourceScope,
+  ResourceContext,
+  ResourceFields,
+  ResourceNext,
+  JsonValue,
+  JsonObject,
+} from './domain/definition/resource.js'
 export type { Config } from './application/collection/config.js'
 export type { RunOptions } from './application/execution/options.js'
 export type {
@@ -57,6 +67,7 @@ export type {
   MiddlewareStage,
   PassedAttemptResult,
   RunResult,
+  ResourceResult,
   TargetOutcome,
   TestResult,
 } from './domain/result/types.js'

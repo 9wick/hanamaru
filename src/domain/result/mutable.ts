@@ -1,3 +1,4 @@
+import type { ResourceScope } from '../definition/resource.js'
 import type { SourceLocation } from '../definition/types.js'
 import type { ResolvedExecutionConfig } from '../execution/config.js'
 import type { AssertionResult, DiagnosticValue, Failure, GroupMiddlewareFailure, TargetOutcome } from './types.js'
@@ -56,7 +57,15 @@ export interface MutableGroupResult {
 
 export type MutableNodeResult = MutableTestResult | MutableGroupResult
 
+export interface MutableResourceResult {
+  id: number
+  name: string
+  scope: ResourceScope
+  middleware: MutableGroupMiddleware
+}
+
 export interface MutableRunResult {
+  resources?: MutableResourceResult[]
   version: 1
   status: 'passed' | 'failed' | 'cancelled'
   reason: Reason | 'completed'

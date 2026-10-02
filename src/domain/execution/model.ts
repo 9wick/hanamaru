@@ -1,3 +1,4 @@
+import type { Resource } from '../definition/resource.js'
 import type {
   Fields,
   RuntimeBlueprint,
@@ -15,6 +16,7 @@ export interface Frame {
 }
 
 export interface NodeBase {
+  resources?: readonly Resource[]
   rootIndex: number
   config: ResolvedExecutionConfig
   mocks: RuntimeMock[]
@@ -23,6 +25,7 @@ export interface NodeBase {
   entryOrigin: SourceLocation | null
   originalIndex?: number
   stable?: Fields
+  resourceFields?: Fields
 }
 
 export interface SuiteNode extends NodeBase {
@@ -39,6 +42,7 @@ export interface GroupNode extends NodeBase {
 export type ExecutionNode = SuiteNode | GroupNode
 
 export interface Plan {
+  resources?: readonly Resource[]
   blueprints: RuntimeBlueprint[]
   allNodes: ExecutionNode[]
   nodes: ExecutionNode[]

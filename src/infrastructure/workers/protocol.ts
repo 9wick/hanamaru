@@ -1,3 +1,4 @@
+import type { Fields } from '../../domain/definition/runtime.js'
 import type { CliOptions } from '../../application/collection/options.js'
 import type { MessagePort } from 'node:worker_threads'
 import type { Stage } from '../../application/execution/state.js'
@@ -21,8 +22,8 @@ export interface ExecutionWorkerData {
 }
 
 export type ExecutionCommand =
-  | { type: 'attempt'; id: number; path: number[]; number: number }
-  | { type: 'group-open'; id: number; path: number[] }
+  | { type: 'attempt'; id: number; path: number[]; number: number; resourceFields?: Fields }
+  | { type: 'group-open'; id: number; path: number[]; resourceFields?: Fields }
   | { type: 'group-close'; id: number; path: number[]; failed: boolean }
 
 export type CommandInput = ExecutionCommand extends infer C
