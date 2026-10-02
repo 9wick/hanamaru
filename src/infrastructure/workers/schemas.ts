@@ -1,4 +1,5 @@
 import * as v from 'valibot'
+import { MessagePort } from 'node:worker_threads'
 import { progressSchema } from '../../application/execution/progress-schema.js'
 import {
   attempt,
@@ -63,6 +64,7 @@ export const executionIncomingSchema = v.variant('type', [
 ])
 
 export const cliWorkerDataSchema = v.object({
+  executionPort: v.instance(MessagePort),
   files: v.array(v.string()),
   options: v.object({
     filter: v.optional(v.string()),
@@ -79,9 +81,14 @@ export const cliWorkerDataSchema = v.object({
   }),
 })
 
+export const executionBootstrapSchema = v.object({ role: v.literal('execution'), port: v.instance(MessagePort) })
+
+export const executionClosedSchema = v.object({ type: v.literal('execution-closed') })
+
 const reporterSchema = v.picklist(['pretty', 'json'])
 
 export const cliMessageSchema = v.union([
+  v.object({ type: v.literal('close-execution') }),
   v.object({ type: v.literal('loading'), file: v.string(), timeout: v.number() }),
   v.object({ type: v.literal('running'), reporter: reporterSchema, shutdownGrace: v.number() }),
   v.object({ type: v.literal('progress'), progress: progressSchema }),

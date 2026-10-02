@@ -1,5 +1,5 @@
 import { Config, inject } from '@zeltjs/core'
-import { Worker } from 'node:worker_threads'
+import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CaseFailed } from '../../application/execution/faults.js'
 import type { RunEvents } from '../../application/execution/services.js'
@@ -17,6 +17,7 @@ import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
 import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 import { errorStack } from '../../foundation/errors.js'
 import { CollectionEnvironment } from './environment.js'
+import { CollectionChannel } from './collection-channel.js'
 import type { Value } from '../../foundation/value.js'
 import { required } from '../../foundation/value.js'
 import type { CommandInput, ReplyValue } from './protocol.js'
@@ -48,21 +49,23 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
     this.#opening.open()
     this.#requests.abandon(error)
   }
-  readonly #worker: Worker
+  readonly #port: MessagePort
+  readonly #stop: () => Promise<void>
   readonly #tracker: RunTracker
   #services: ExecutionServices | undefined
   #events: RunEvents | undefined
   #closing: Promise<void> | undefined
   #fatal: { error: Value } | null = null
 
-  constructor(worker: Worker, tracker: RunTracker) {
-    this.#worker = worker
+  constructor(port: MessagePort, tracker: RunTracker, stop: () => Promise<void>) {
+    this.#port = port
     this.#tracker = tracker
-    worker.on('error', this.#fail)
-    worker.on('exit', (code) => {
-      if (!this.#closing) this.#fail(new Error(`execution worker exited (${code})`))
+    this.#stop = stop
+    port.on('messageerror', this.#fail)
+    port.on('close', () => {
+      if (!this.#closing) this.#fail(new Error('execution worker disconnected'))
     })
-    worker.on('message', (input) => this.#receive(input))
+    port.on('message', (input) => this.#receive(input))
   }
 
   /** 計画が決まるまでworkerはテストを読まない。起動時の失敗もここで呼び出し側に返す。 */
@@ -86,7 +89,7 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
   }
 
   #post(message: Value): void {
-    this.#worker.postMessage(message)
+    this.#port.postMessage(message)
   }
 
   #receive(input: unknown): void {
@@ -177,31 +180,34 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
     if (!this.#closing) {
       this.#services?.signal.removeEventListener('abort', this.#interrupt)
       this.#fail(new Error('execution worker is closed'))
-      this.#closing = this.#worker.terminate().then(() => {})
+      this.#closing = this.#stop().finally(() => this.#port.close())
     }
     return this.#closing
   }
 }
 
 /**
- * 実行workerを立ち上げて持ち場を開く。
- * 起動と依存読み込みは収集と並行して進める。計画と外との繋ぎは収集後のstartで渡す。
+ * CLIが先に起こした実行workerへの持ち場を開く。
+ * 計画と外との繋ぎは収集後のstartで渡す。
  */
 @Config()
 export class WorkerExecutionLauncher extends ExecutionLauncher {
-  readonly #workerURL: URL
+  readonly #port: MessagePort
+  readonly #channel: CollectionChannel
   readonly #tracker: RunTracker
 
-  constructor(environment = inject(CollectionEnvironment), tracker = inject(RunTracker)) {
+  constructor(
+    environment = inject(CollectionEnvironment),
+    tracker = inject(RunTracker),
+    channel = inject(CollectionChannel),
+  ) {
     super()
-    this.#workerURL = environment.executionWorkerURL
+    this.#port = environment.executionPort
+    this.#channel = channel
     this.#tracker = tracker
   }
 
   open(): PreparedExecution {
-    const worker = new Worker(this.#workerURL, {
-      workerData: { role: 'execution' },
-    })
-    return new RunningExecution(worker, this.#tracker)
+    return new RunningExecution(this.#port, this.#tracker, () => this.#channel.closeExecution())
   }
 }

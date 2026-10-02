@@ -8,7 +8,7 @@ import type { ExecutionCommand, ExecutionIncoming } from './protocol.js'
 import { PendingReplies } from './requests.js'
 
 /**
- * compileを親のportへ頼む取り寄せ口。発番と突き合わせを1か所に閉じ込める。
+ * compileを収集workerのportへ頼む取り寄せ口。発番と突き合わせを1か所に閉じ込める。
  * module runtimeから見ると、収集workerが自分で立てるcompilerと同じ形の取り寄せ口になる。
  */
 @Config()
@@ -78,7 +78,7 @@ export class CommandQueue {
   }
 }
 
-/** 親から届いた1件を行き先へ振り分ける受け口。 */
+/** 収集workerから届いた1件を行き先へ振り分ける受け口。 */
 @Injectable()
 export class ExecutionSession {
   readonly #compiles: CompileRequests

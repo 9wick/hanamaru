@@ -34,7 +34,7 @@ export class ExecutionWorker {
     this.#transport = transport
   }
 
-  /** 親が口を閉じるまで戻らないため、待ち合わせずに走らせる。 */
+  /** 収集workerが口を閉じるまで戻らないため、待ち合わせずに走らせる。 */
   serve(): void {
     this.#channel.onMessage((message) => {
       if (message.type === 'initialize') {
@@ -48,7 +48,7 @@ export class ExecutionWorker {
   }
 
   #load(workerData: ExecutionWorkerData): void {
-    // 変換は親のportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
+    // 変換は収集workerのportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
     const runtime = this.#runtimes.start(this.#transport, workerData.preparation)
     this.#loader
       .load(runtime, workerData)

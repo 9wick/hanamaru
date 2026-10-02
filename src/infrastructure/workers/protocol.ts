@@ -1,4 +1,5 @@
 import type { CliOptions } from '../../application/collection/options.js'
+import type { MessagePort } from 'node:worker_threads'
 import type { Stage } from '../../application/execution/state.js'
 import type { AttemptReply, Executor, GroupReply } from '../../application/ports/executor.js'
 import type { ModulePreparation, RootReference } from '../../application/ports/module-loader.js'
@@ -8,6 +9,7 @@ import type { Value } from '../../foundation/value.js'
 export interface CliWorkerData {
   files: string[]
   options: CliOptions
+  executionPort: MessagePort
 }
 
 export type { CliMessage, Reporter } from '../../application/collection/events.js'

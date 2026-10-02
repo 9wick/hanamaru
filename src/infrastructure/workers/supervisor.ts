@@ -1,5 +1,5 @@
 import { Config, inject } from '@zeltjs/core'
-import { Worker } from 'node:worker_threads'
+import { MessageChannel, Worker } from 'node:worker_threads'
 import * as v from 'valibot'
 import { ProgressStore } from '../../application/execution/progress.js'
 import type { CollectionRequest } from '../../application/ports/collection-runner.js'
@@ -65,12 +65,13 @@ interface ShutdownPolicy {
 }
 
 /**
- * 収集workerを起こして見張り、終了コードを決める。1回のCLI起動が1回の監督で、
+ * 収集workerと実行workerを起こして見張り、終了コードを決める。1回のCLI起動が1回の監督で、
  * 期限・猶予・中断された事実はその1回の中だけで意味を持つため、runの間だけ手元に置く。
  */
 @Config()
 export class CollectionSupervisor extends CollectionRunner {
   readonly #workerURL: URL
+  readonly #executionWorkerURL: URL
   readonly #progress: ProgressStore
   readonly #presenter: ResultPresenter
 
@@ -81,37 +82,74 @@ export class CollectionSupervisor extends CollectionRunner {
   ) {
     super()
     this.#workerURL = environment.collectionWorkerURL
+    this.#executionWorkerURL = environment.executionWorkerURL
     this.#progress = progress
     this.#presenter = presenter
   }
 
-  run({ options, files }: CollectionRequest): Promise<number> {
+  async run({ options, files }: CollectionRequest): Promise<number> {
     const progress = this.#progress
-    const worker = new Worker(this.#workerURL, { workerData: { options, files } })
+    const { port1, port2 } = new MessageChannel()
+    let worker: Worker | undefined
+    let execution: Worker
+    try {
+      worker = new Worker(this.#workerURL, {
+        workerData: { options, files, executionPort: port1 },
+        transferList: [port1],
+      })
+      execution = new Worker(this.#executionWorkerURL, {
+        workerData: { role: 'execution', port: port2 },
+        transferList: [port2],
+      })
+    } catch (error) {
+      // 片方の起動が同期的に失敗しても、既に起こしたworkerと未転送のportを残さない。
+      port1.close()
+      port2.close()
+      await worker?.terminate()
+      throw error
+    }
+    const collection = worker
+    let executionClosing = false
+    let stoppingExecution: Promise<number> | undefined
+    const stopExecution = () => {
+      // Denoはterminateの呼び出し中にもexitを通知するため、呼び出す前に正常な停止と確定する。
+      executionClosing = true
+      return (stoppingExecution ??= execution.terminate())
+    }
     const timers = new ShutdownTimers()
     let phase: SupervisorPhase = { kind: 'running' }
     let policy: ShutdownPolicy = { graceMs: 1_000, reporter: options.reporter }
     return new Promise<number>((resolve, reject) => {
       const printResult = (result: MutableRunResult) => this.#presenter.present(result, policy.reporter)
-      const finish = (code: number) => {
+      const finish = (code: number, forced = false) => {
         if (phase.kind === 'complete') return
         phase = { kind: 'complete' }
         timers.clearAll()
         process.off('SIGINT', interrupt)
-        worker.terminate().then(() => resolve(code), reject)
+        const stopped = Promise.all([collection.terminate(), stopExecution()])
+        if (forced) {
+          // 猶予切れではCLIを終了させる。同期ループ中のBunはterminateの完了を返せないため、
+          // workerがプロセスを生かし続けないようにし、停止要求の完了を終了の条件にしない。
+          collection.unref()
+          execution.unref()
+          stopped.catch((error: unknown) =>
+            process.stderr.write(`hanamaru: worker shutdown failed: ${String(error)}\n`),
+          )
+          resolve(code)
+        } else stopped.then(() => resolve(code), reject)
       }
       // 猶予を使い切ったら、手元の部分結果を出してから降りる。
       const reportAfterGrace = (code: number) => {
         timers.startGrace(policy.graceMs, () => {
           process.stderr.write(`hanamaru: shutdown grace exceeded (${policy.graceMs}ms)\n`)
           if (progress.result) printResult(progress.result)
-          finish(exitCode(phase, code))
+          finish(exitCode(phase, code), true)
         })
       }
       const interrupt = () => {
         phase = { kind: 'interrupted' }
         process.stderr.write('hanamaru: interrupted\n')
-        worker.postMessage({ type: 'interrupt' })
+        collection.postMessage({ type: 'interrupt' })
         timers.startGrace(policy.graceMs, () => {
           if (progress.result)
             printResult({
@@ -119,11 +157,11 @@ export class CollectionSupervisor extends CollectionRunner {
               status: progress.result.status === 'failed' ? 'failed' : 'cancelled',
               reason: 'interrupted',
             })
-          finish(130)
+          finish(130, true)
         })
       }
       process.on('SIGINT', interrupt)
-      worker.on('message', (input) => {
+      collection.on('message', (input) => {
         if (phase.kind === 'complete') return
         const parsed = v.safeParse(cliMessageSchema, input)
         if (!parsed.success) {
@@ -132,10 +170,20 @@ export class CollectionSupervisor extends CollectionRunner {
           return
         }
         const message = parsed.output
-        if (message.type === 'loading') {
+        if (message.type === 'close-execution') {
+          stopExecution().then(
+            () => {
+              if (phase.kind !== 'complete') collection.postMessage({ type: 'execution-closed' })
+            },
+            (error: unknown) => {
+              process.stderr.write(`hanamaru: execution worker shutdown failed: ${String(error)}\n`)
+              finish(exitCode(phase, 2))
+            },
+          )
+        } else if (message.type === 'loading') {
           timers.restartLoading(message.timeout, () => {
             process.stderr.write(`hanamaru: collection timeout: ${message.file} (${message.timeout}ms)\n`)
-            finish(exitCode(phase, 2))
+            finish(exitCode(phase, 2), true)
           })
         } else if (message.type === 'running') {
           timers.clearLoading()
@@ -166,13 +214,24 @@ export class CollectionSupervisor extends CollectionRunner {
           finish(exitCode(phase, 2))
         }
       })
-      worker.on('error', (error) => {
+      collection.on('error', (error) => {
         process.stderr.write(`hanamaru: ${error.stack ?? error}\n`)
         finish(exitCode(phase, 2))
       })
-      worker.on('exit', (code) => {
+      collection.on('exit', (code) => {
         if (phase.kind !== 'complete') {
           process.stderr.write(`hanamaru: worker exited (${code})\n`)
+          finish(exitCode(phase, 2))
+        }
+      })
+      execution.on('error', (error) => {
+        if (phase.kind === 'complete') return
+        process.stderr.write(`hanamaru: execution worker: ${error.stack ?? error}\n`)
+        finish(exitCode(phase, 2))
+      })
+      execution.on('exit', (code) => {
+        if (phase.kind !== 'complete' && !executionClosing) {
+          process.stderr.write(`hanamaru: execution worker exited (${code})\n`)
           finish(exitCode(phase, 2))
         }
       })
