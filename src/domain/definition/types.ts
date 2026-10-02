@@ -1,3 +1,4 @@
+import type { Resource } from './resource.js'
 import type { AnyFn } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
 import type { Assertions, CallAssertion, CallExpectations } from '../assertion/types.js'
@@ -110,6 +111,7 @@ export interface ExpectationBlueprint<C> {
 }
 
 export type ExecutableCase<F extends AnyFn, C> = {
+  readonly resources?: readonly Resource[]
   readonly name: string
   readonly mode: 'run' | 'only' | 'skip'
   readonly origin: SourceLocation
@@ -131,6 +133,7 @@ export interface TodoCase {
 }
 
 interface BlueprintBase<R extends object> {
+  readonly resources?: readonly Resource[]
   readonly config: ExecutionConfig
   readonly [blueprintBrand]: (ctx: R) => void
   readonly version: 1
@@ -172,6 +175,7 @@ export interface ErasedSuiteBlueprint<R extends object = {}> extends BlueprintBa
   readonly cases: readonly (
     | TodoCase
     | {
+        readonly resources?: readonly Resource[]
         readonly name: string
         readonly mode: 'run' | 'only' | 'skip'
         readonly origin: SourceLocation

@@ -14,6 +14,7 @@ const { version } = v.parse(
 @Config()
 class ProcessEnvironment extends CliEnvironment {
   override readonly collectionWorkerURL = new URL('./cli-worker.js', import.meta.url)
+  override readonly executionWorkerURL = new URL('./execution-worker.js', import.meta.url)
 }
 
 @Config()

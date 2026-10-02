@@ -5,14 +5,20 @@ import { Test } from '../../index.js'
 import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../foundation/value.js'
-import { ValueComparison } from '../../infrastructure/comparison.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
 import type { ModuleSession } from '../ports/collection-host.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type { RunEvents } from '../execution/services.js'
-import type { AttemptReply, ExecutionHandle, ExecutionServices, ExecutionSpec, GroupReply } from '../ports/executor.js'
-import { Executor } from '../ports/executor.js'
+import type {
+  AttemptReply,
+  ExecutionHandle,
+  ExecutionServices,
+  ExecutionSpec,
+  GroupReply,
+  PreparedExecution,
+} from '../ports/executor.js'
+import { ExecutionLauncher } from '../ports/executor.js'
 import type { CliOptions } from './options.js'
 import type { Config as ProjectConfig } from './config.js'
 import { recordCollectionEvent } from './current-scope.js'
@@ -31,6 +37,8 @@ interface Options {
   readConfig?: () => Promise<ProjectConfig>
   importFile?: (file: string) => void
   glob?: (pattern: string) => string[]
+  openModules?: () => void
+  startExecution?: () => void
 }
 
 /**
@@ -41,6 +49,7 @@ function harness(options: Options = {}) {
   const messages: string[] = []
   const closed: string[] = []
   const warnings: string[] = []
+  const opened: string[] = []
 
   @Config()
   class TestSink extends CollectionSink {
@@ -101,6 +110,8 @@ function harness(options: Options = {}) {
   @Config()
   class TestModules extends ModuleToolchain {
     open(): Promise<ModuleSession> {
+      opened.push('modules')
+      options.openModules?.()
       return Promise.resolve(testModules)
     }
   }
@@ -125,24 +136,38 @@ function harness(options: Options = {}) {
       await body({})
       return { middleware: { status: 'passed', durationMs: 0, failures: [], cleanup: 'complete' }, reason: null }
     },
+    close: () => prepared.close(),
+  }
+
+  let closing: Promise<void> | undefined
+  const prepared: PreparedExecution = {
+    start(_events: RunEvents, _spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
+      opened.push('execution start')
+      services.onLoading('execution worker setup')
+      options.startExecution?.()
+      return Promise.resolve(testExecution)
+    },
     close(): Promise<void> {
-      closed.push('execution')
-      return Promise.resolve()
+      if (!closing) {
+        closed.push('execution')
+        closing = Promise.resolve()
+      }
+      return closing
     },
   }
 
   @Config()
-  class TestExecutor extends Executor {
-    start(_events: RunEvents, _spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
-      services.onLoading('execution worker setup')
-      return Promise.resolve(testExecution)
+  class TestExecutor extends ExecutionLauncher {
+    open(): PreparedExecution {
+      opened.push('execution boot')
+      return prepared
     }
   }
 
-  const configs: ConfigClass<object>[] = [TestSink, TestFiles, TestWarnings, TestModules, TestExecutor, ValueComparison]
+  const configs: ConfigClass<object>[] = [TestSink, TestFiles, TestWarnings, TestModules, TestExecutor]
   // 進捗と期限の通知は量が多く、収集の流れとは別に検証している。
   const flow = () => messages.filter((message) => message !== 'progress' && message !== 'deadline')
-  return { configs, flow, closed, warnings }
+  return { configs, flow, closed, warnings, opened }
 }
 
 /** 入口と同じ順序。1つのscopeが1回のrunを持ち、終わったら畳む。 */
@@ -156,7 +181,7 @@ async function collect(configs: ConfigClass<object>[], request: CollectionReques
 }
 
 test('the config load has its own timeout and the rest uses the configured one', async () => {
-  const { configs, flow, closed } = harness({ config: { collectionTimeout: 500 } })
+  const { configs, flow, closed, opened } = harness({ config: { collectionTimeout: 500 } })
   await collect(configs, { files: ['a.test.ts'], options: {} })
   expect(flow()).toStrictEqual([
     'loading hanamaru.config.ts @30000',
@@ -167,6 +192,7 @@ test('the config load has its own timeout and the rest uses the configured one',
     'result',
   ])
   expect(closed).toStrictEqual(['execution', 'modules'])
+  expect(opened).toStrictEqual(['execution boot', 'modules', 'execution start'])
 })
 
 test('the command line timeout wins over the configured one, including the config load', async () => {
@@ -192,11 +218,11 @@ test('a failure while reading a test file names the file and its projects', asyn
   })
   await collect(configs, { files: [], options: {} })
   expect(flow().at(-1)).toContain('error while collecting rel/a.test.ts (projects: unit): TypeError: broken import')
-  expect(closed).toStrictEqual(['modules'])
+  expect(closed).toStrictEqual(['execution', 'modules'])
 })
 
 test('a config that cannot be read stops before any resource is opened', async () => {
-  const { configs, flow, closed } = harness({
+  const { configs, flow, closed, opened } = harness({
     readConfig: () => Promise.reject(new Error('cannot load config: hanamaru.config.ts')),
   })
   await collect(configs, { files: ['a.test.ts'], options: {} })
@@ -205,13 +231,15 @@ test('a config that cannot be read stops before any resource is opened', async (
     'error Error: cannot load config: hanamaru.config.ts',
   ])
   expect(closed).toStrictEqual([])
+  expect(opened).toStrictEqual([])
 })
 
 test('no matching test file stops before the test runtime is opened', async () => {
-  const { configs, flow, closed } = harness()
+  const { configs, flow, closed, opened } = harness()
   await collect(configs, { files: [], options: {} })
   expect(flow()).toStrictEqual(['loading hanamaru.config.ts @30000', 'error TypeError: no test files matched'])
   expect(closed).toStrictEqual([])
+  expect(opened).toStrictEqual([])
 })
 
 test('an invalid shutdown grace is reported before the test runtime is opened', async () => {
@@ -219,4 +247,28 @@ test('an invalid shutdown grace is reported before the test runtime is opened', 
   await collect(configs, { files: ['a.test.ts'], options: {} })
   expect(flow().at(-1)).toContain('shutdownGrace')
   expect(closed).toStrictEqual([])
+})
+
+test('a compiler startup failure closes the worker that was already launched', async () => {
+  const { configs, flow, closed, opened } = harness({
+    openModules: () => {
+      throw new Error('compiler failed')
+    },
+  })
+  await collect(configs, { files: ['a.test.ts'], options: {} })
+  expect(opened).toStrictEqual(['execution boot', 'modules'])
+  expect(closed).toStrictEqual(['execution'])
+  expect(flow().at(-1)).toBe('error Error: compiler failed')
+})
+
+test('a worker initialization failure closes both resources before reporting the error', async () => {
+  const { configs, flow, closed } = harness({
+    startExecution: () => {
+      throw new Error('execution failed')
+    },
+  })
+  await collect(configs, { files: ['a.test.ts'], options: {} })
+  expect(closed).toStrictEqual(['execution', 'modules'])
+  expect(flow().at(-1)).toBe('error Error: execution failed')
+  expect(flow()).not.toContain('running')
 })

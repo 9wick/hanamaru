@@ -1,4 +1,3 @@
-import { loadConfigFromFile } from '@hanamaru/vite'
 import { globSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as v from 'valibot'
@@ -12,6 +11,7 @@ export async function readConfig(options: CliOptions, onLoading: (file: string) 
   let config: Config = {}
   if (options.config || foundConfigs.length) {
     onLoading(configPath)
+    const { loadConfigFromFile } = await import('@hanamaru/vite')
     const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, configPath, process.cwd(), 'silent')
     if (!loaded) throw new Error(`cannot load config: ${configPath}`)
     if (Object.hasOwn(loaded.config, 'include') || Object.hasOwn(loaded.config, 'exclude'))

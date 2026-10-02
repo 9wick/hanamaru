@@ -1,9 +1,11 @@
+import type { ResourceScope } from '../../domain/definition/resource.js'
 import type {
   CaseResultBase,
   MutableAttempt,
   MutableCaseResult,
   MutableGroupMiddleware,
   MutableRunResult,
+  MutableResourceResult,
   Reason,
 } from '../../domain/result/mutable.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
@@ -12,6 +14,7 @@ import { failure } from './assertions.js'
 import { now } from './clock.js'
 
 export type Progress =
+  | { kind: 'resource'; result: MutableResourceResult }
   | { kind: 'init'; result: MutableRunResult }
   | { kind: 'case'; result: MutableCaseResult }
   | { kind: 'group'; path: number[]; middleware: MutableGroupMiddleware | null }
@@ -27,6 +30,15 @@ export type ActiveExecution =
       base: CaseResultBase
       attempts: MutableAttempt[]
       number: number
+      started: number
+      timeoutMs: number
+    }
+  | {
+      kind: 'resource'
+      id: number
+      name: string
+      scope: ResourceScope
+      stage: 'before' | 'after' | 'contract'
       started: number
       timeoutMs: number
     }
@@ -66,6 +78,31 @@ export function progressOf(active: ActiveExecution, phase: ExecutionPhase | null
       },
     }
   }
+  if (active.kind === 'resource')
+    return {
+      kind: 'resource',
+      result: {
+        id: active.id,
+        name: active.name,
+        scope: active.scope,
+        middleware: {
+          status: reason === 'timeout' ? 'failed' : 'cancelled',
+          durationMs: now() - active.started,
+          cleanup: 'incomplete',
+          failures:
+            reason === 'timeout'
+              ? [
+                  {
+                    kind: 'timeout',
+                    phase: active.stage,
+                    timeoutMs: active.timeoutMs,
+                    message: `resource ${active.name} exceeded ${active.timeoutMs}ms`,
+                  },
+                ]
+              : [],
+        },
+      },
+    }
   return {
     kind: 'group',
     path: active.path,

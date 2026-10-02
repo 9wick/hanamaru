@@ -1,3 +1,4 @@
+import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
 import type {
   CallCheck,
   RuntimeCallAssertion,
@@ -15,6 +16,7 @@ import {
   withExpectation,
   withMock,
   withRetry,
+  withResource,
   withTimeout,
 } from '../../domain/definition/construction.js'
 import { methodValue } from '../../domain/definition/operations.js'
@@ -27,12 +29,12 @@ import type {
   RuntimeMock,
 } from '../../domain/definition/runtime.js'
 import { assertionTag, behaviorTag, doneTag } from '../../domain/definition/tags.js'
-import type { BehaviorAction, SourceLocation } from '../../domain/definition/types.js'
+import type { BehaviorAction, SourceLocation, ExtendContext } from '../../domain/definition/types.js'
 import { checkedBehavior } from '../../domain/definition/validation.js'
 import type { AnyFn, FnKeys, MethodOf } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
 import { arrayValue, invoke, nonempty } from '../../foundation/value.js'
-import type { CallsBuilder, Expect, ItArgs, ItCalls, ItExpected, MockDef } from './types.js'
+import type { ItBuilder, CallsBuilder, Expect, ItArgs, ItCalls, ItExpected, MockDef } from './types.js'
 
 function valueAssertions(subject: 'result' | 'error') {
   const assertion = (check: ValueCheck): RuntimeValueAssertion => ({ [assertionTag]: true, subject, check })
@@ -137,6 +139,9 @@ export class CaseBuilder<F extends AnyFn, C> {
   }
   mock<O extends object, K extends FnKeys<O>>(object: O, key: K, def: MockDef<MethodOf<O, K>>): CaseBuilder<F, C> {
     return this.#next(withMock(this.#data, createMock(object, key, def)))
+  }
+  require<T extends Resource>(r: T): ItBuilder<F, ExtendContext<ResourceFields<T>, C>> {
+    return new CaseBuilder<F, ExtendContext<ResourceFields<T>, C>>(withResource(this.#data, r))
   }
   args(...args: Parameters<F>): ItArgs<F, C> {
     return this.#next(withArgs(this.#data, { kind: 'value', value: arrayValue(args) }))

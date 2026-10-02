@@ -266,3 +266,5 @@ createUser
 
 Node.js 22.18以上、Bun 1.3以上、Deno 2.9.2以上を対象としています。TypeScriptの型契約は5.8以上を対象とします。
 ランタイムごとの起動方法とTypeScriptの制約は[対応環境](docs/reference/limitations.md)と[CLI](docs/reference/cli.md)を参照してください。
+
+共有環境を必要なテストだけで準備するには、[resource](docs/concepts/resources.md)を参照してください。

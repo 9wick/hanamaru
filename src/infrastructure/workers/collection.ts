@@ -3,7 +3,6 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CollectionEvents } from '../../application/collection/events.js'
 import { errorStack } from '../../foundation/errors.js'
-import { ValueComparison } from '../comparison.js'
 import { ProjectFilesystem } from '../filesystem/project-files.js'
 import { ModuleEntry } from '../modules/entry.js'
 import { WorkerExecutionLauncher } from './client.js'
@@ -19,15 +18,16 @@ function released(error: unknown): unknown {
   return error instanceof AggregateError && error.errors.length === 1 ? error.errors[0] : error
 }
 
-export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void {
+export function startCollection(runtimeURL: URL): void {
   if (!parentPort) throw new Error('collection requires a worker thread')
   captureConsole()
   const port = parentPort
+  const workerData = v.parse(cliWorkerDataSchema, rawWorkerData)
 
   @Config()
   class WorkerEnvironment extends CollectionEnvironment {
     override readonly port = port
-    override readonly executionWorkerURL = executionWorkerURL
+    override readonly executionPort = workerData.executionPort
   }
 
   @Config()
@@ -35,14 +35,12 @@ export function startCollection(runtimeURL: URL, executionWorkerURL: URL): void 
     override readonly url = runtimeURL
   }
 
-  const workerData = v.parse(cliWorkerDataSchema, rawWorkerData)
   createApp([])
     .createRuntime({
       configs: [
         WorkerEnvironment,
         PublicEntry,
         ProjectFilesystem,
-        ValueComparison,
         StderrLog,
         CollectionChannel,
         WorkerModuleToolchain,

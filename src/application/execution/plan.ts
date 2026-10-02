@@ -1,3 +1,5 @@
+import type { Resource } from '../../domain/definition/resource.js'
+import { checkedResources, resourceGraph } from '../../domain/definition/resource.js'
 import type { CaseBlueprint, RuntimeBlueprint, RuntimeMock } from '../../domain/definition/runtime.js'
 import type { SourceLocation } from '../../domain/definition/types.js'
 import { configWith, defaultExecutionConfig } from '../../domain/execution/config.js'
@@ -34,15 +36,20 @@ function expand(
   mocks: RuntimeMock[],
   frames: Frame[],
   entryOrigin: SourceLocation | null,
+  resources: readonly Resource[] = [],
 ): ExecutionNode[] {
+  const demands = checkedResources([...resources, ...(bp.resources ?? [])])
   const settings = configWith(config, bp.config)
   const currentMocks = overlayMocks(mocks, bp.mocks)
   const currentFrames = [...frames, { steps: bp.steps, fields: {} }]
   if (bp.kind === 'definition')
-    return bp.children.flatMap((child) => expand(child, rootIndex, settings, currentMocks, currentFrames, entryOrigin))
+    return bp.children.flatMap((child) =>
+      expand(child, rootIndex, settings, currentMocks, currentFrames, entryOrigin, demands),
+    )
   if (bp.kind === 'test')
     return [
       {
+        resources: demands,
         kind: 'test',
         rootIndex,
         bp,
@@ -54,10 +61,11 @@ function expand(
       },
     ]
   const children = bp.children.flatMap((entry) =>
-    expand(entry.blueprint, rootIndex, settings, currentMocks, currentFrames, entry.origin),
+    expand(entry.blueprint, rootIndex, settings, currentMocks, currentFrames, entry.origin, demands),
   )
   return [
     {
+      resources: demands,
       kind: 'group',
       rootIndex,
       bp,
@@ -95,5 +103,16 @@ export function createPlan(blueprints: RuntimeBlueprint[], settings: RunSettings
   const nodes = settings.filter === undefined ? allNodes : filterNodes(allNodes, settings.filter)
   if (!nodes.length) throw new TypeError('filter matched no cases')
   const only = allCases(nodes).some((item) => item.mode === 'only')
-  return { blueprints, allNodes, nodes, only }
+  const roots: Resource[] = []
+  const visit = (items: ExecutionNode[]): void => {
+    for (const node of items) {
+      if (node.kind === 'group') visit(node.children)
+      else
+        for (const item of node.bp.cases)
+          if (item.mode !== 'skip' && item.mode !== 'todo' && (!only || item.mode === 'only'))
+            roots.push(...(node.resources ?? []), ...(item.resources ?? []))
+    }
+  }
+  visit(nodes)
+  return { blueprints, allNodes, nodes, only, resources: resourceGraph(roots) }
 }

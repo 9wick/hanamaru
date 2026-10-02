@@ -1,3 +1,4 @@
+import type { Resource } from './resource.js'
 import type { AnyFn } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
 import type { RuntimeCallAssertion } from '../assertion/runtime.js'
@@ -38,6 +39,7 @@ export interface RuntimeExpectation {
 }
 
 export interface CaseData {
+  resources?: readonly Resource[]
   readonly [doneTag]?: true
   config: ExecutionConfig
   mocks: RuntimeMock[]
@@ -47,6 +49,7 @@ export interface CaseData {
 }
 
 export interface CaseBase {
+  resources?: readonly Resource[]
   name: string
   origin: SourceLocation
   row: { index: number; value: Value } | null
@@ -69,6 +72,7 @@ export interface RuntimeTodo extends CaseBase {
 export type CaseBlueprint = RuntimeCase | RuntimeTodo
 
 export interface BlueprintBase {
+  resources?: readonly Resource[]
   version: 1
   config: ExecutionConfig
   steps: RuntimeMiddleware[]
@@ -104,6 +108,7 @@ export interface RuntimeDefinitionHandle {
 }
 
 export interface DefinitionData {
+  resources?: readonly Resource[]
   stage: 'base' | 'target' | 'suite' | 'group'
   config: ExecutionConfig
   steps: RuntimeMiddleware[]

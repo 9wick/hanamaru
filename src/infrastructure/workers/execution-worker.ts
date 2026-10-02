@@ -16,6 +16,7 @@ export class ExecutionWorker {
   readonly #channel: ExecutionChannel
   readonly #runtimes: ModuleRuntimeLauncher
   readonly #transport: ModuleTransport
+  #initialized = false
 
   constructor(
     session = inject(ExecutionSession),
@@ -33,12 +34,21 @@ export class ExecutionWorker {
     this.#transport = transport
   }
 
-  /** 親が口を閉じるまで戻らないため、待ち合わせずに走らせる。 */
-  serve(workerData: ExecutionWorkerData): void {
+  /** 収集workerが口を閉じるまで戻らないため、待ち合わせずに走らせる。 */
+  serve(): void {
     this.#channel.onMessage((message) => {
-      if (!this.#session.receive(message)) this.#channel.fail(new Error('unexpected module compilation reply'))
+      if (message.type === 'initialize') {
+        if (this.#initialized) return this.#channel.fail(new Error('execution worker is already initialized'))
+        this.#initialized = true
+        this.#load(message.spec)
+      } else if (!this.#initialized && message.type !== 'interrupt') {
+        this.#channel.fail(new Error('execution worker is not initialized'))
+      } else if (!this.#session.receive(message)) this.#channel.fail(new Error('unexpected module compilation reply'))
     })
-    // 変換は親のportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
+  }
+
+  #load(workerData: ExecutionWorkerData): void {
+    // 変換は収集workerのportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
     const runtime = this.#runtimes.start(this.#transport, workerData.preparation)
     this.#loader
       .load(runtime, workerData)

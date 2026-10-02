@@ -12,8 +12,8 @@ import { RunSnapshot } from '../execution/services.js'
 import type { ModuleSession } from '../ports/collection-host.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
-import type { ExecutionSpec } from '../ports/executor.js'
-import { Executor } from '../ports/executor.js'
+import type { ExecutionSpec, PreparedExecution } from '../ports/executor.js'
+import { ExecutionLauncher } from '../ports/executor.js'
 import type { RootReference } from '../ports/module-loader.js'
 import type { Config } from './config.js'
 import { collectWithin } from './current-scope.js'
@@ -73,7 +73,7 @@ export class CollectionSession {
   readonly #modules: ModuleToolchain
   readonly #warnings: Warnings
   readonly #events: CollectionEvents
-  readonly #executor: Executor
+  readonly #executor: ExecutionLauncher
   readonly #walker: RunWalker
   readonly #snapshot: RunSnapshot
 
@@ -82,7 +82,7 @@ export class CollectionSession {
     modules = inject(ModuleToolchain),
     warnings = inject(Warnings),
     events = inject(CollectionEvents),
-    executor = inject(Executor),
+    executor = inject(ExecutionLauncher),
     walker = inject(RunWalker),
     snapshot = inject(RunSnapshot),
   ) {
@@ -103,14 +103,20 @@ export class CollectionSession {
       const config = await this.#loadConfig(request.options)
       const limits = collectionLimits(request.options, config)
       const files = this.#select(request, config)
-      this.#events.loading('test runtime setup', limits.timeout)
-      const modules = await this.#modules.open(config.vite)
+      const execution = this.#executor.open()
+      let modules: ModuleSession | undefined
       try {
+        this.#events.loading('test runtime setup', limits.timeout)
+        modules = await this.#modules.open(config.vite)
         const collected = await this.#collect(modules, files, limits.timeout, collecting)
-        await this.#execute(modules, this.#plan(modules, collected, request), limits, signal)
+        await this.#execute(execution, modules, this.#plan(modules, collected, request), limits, signal)
       } finally {
-        // 畳む途中の失敗も収集の失敗と同じ通り道で伝える。
-        await modules.close()
+        // 変換要求が届かなくなってからcompilerを閉じる。compiler起動の失敗時もworkerは残さない。
+        try {
+          await execution.close()
+        } finally {
+          await modules?.close()
+        }
       }
     } catch (error) {
       const context = collecting.file
@@ -198,6 +204,7 @@ export class CollectionSession {
   }
 
   async #execute(
+    prepared: PreparedExecution,
     modules: ModuleSession,
     { plan, settings, spec, sources }: Planned,
     limits: CollectionLimits,
@@ -205,7 +212,7 @@ export class CollectionSession {
   ) {
     // 1回のrunの通知は収集のprotocolへ出す。出どころを付けられるのは計画が組み上がったこの時点から。
     const events = new CollectionRunEvents(this.#events, sources, this.#snapshot)
-    const execution = await this.#executor.start(events, spec, {
+    const execution = await prepared.start(events, spec, {
       invoke: (name, args) => modules.invoke(name, args),
       signal,
       onLoading: (file) => this.#events.loading(file, limits.timeout),

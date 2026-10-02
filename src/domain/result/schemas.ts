@@ -196,7 +196,15 @@ const nodeResultSchema: v.GenericSchema<Value, import('./mutable.js').MutableNod
   ]),
 )
 
+export const resourceResultSchema = v.object({
+  id: v.number(),
+  name: v.string(),
+  scope: v.picklist(['perRun', 'perWorker']),
+  middleware: groupMiddlewareSchema,
+})
+
 export const runResultSchema = v.object({
+  resources: v.optional(v.array(resourceResultSchema)),
   version: v.literal(1),
   status: v.picklist(['passed', 'failed', 'cancelled']),
   reason: v.picklist(['completed', 'timeout', 'interrupted', 'cleanup-failed']),
