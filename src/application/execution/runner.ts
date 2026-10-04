@@ -1,3 +1,5 @@
+import { checkedResources, jsonFields } from '../../domain/definition/resource.js'
+import { RunResources } from './resources.js'
 import { Injectable, inject } from '@zeltjs/core'
 import type { CaseBlueprint, Fields } from '../../domain/definition/runtime.js'
 import type { ExecutionNode, GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
@@ -25,6 +27,7 @@ interface Walk {
   execution: ExecutionHandle
   events: RunEvents
   only: boolean
+  resources: RunResources
 }
 
 /**
@@ -58,8 +61,9 @@ export class RunWalker {
     events: RunEvents,
     signal?: AbortSignal,
   ): Promise<MutableRunResult> {
-    const { nodes, only } = buildPlan()
-    const walk: Walk = { execution, events, only }
+    const { nodes, only, resources: graph = [] } = buildPlan()
+    const resources = new RunResources(graph, this.#tracker, events, (progress) => this.#publish(walk, progress))
+    const walk: Walk = { execution, events, only, resources }
     const tracker = this.#tracker
     // 走り出す前に中断されていた実行は、1件も動かさずに打ち切った姿で返す。
     if (signal?.aborted) tracker.interrupt()
@@ -77,6 +81,7 @@ export class RunWalker {
     signal?.addEventListener('abort', interrupt)
     const tests: MutableNodeResult[] = []
     try {
+      await resources.prepare(signal)
       for (const [index, node] of nodes.entries())
         tests.push(
           tracker.reason
@@ -84,15 +89,24 @@ export class RunWalker {
             : await this.#node(walk, node, [node.originalIndex ?? index]),
         )
     } finally {
+      try {
+        await execution.close()
+      } finally {
+        await resources.close()
+      }
       signal?.removeEventListener('abort', interrupt)
     }
     const failed =
-      resultFailed(tests, settings.failOnFlaky) || tracker.reason === 'timeout' || tracker.reason === 'cleanup-failed'
+      resultFailed(tests, settings.failOnFlaky) ||
+      resources.results.some((r) => r.middleware.status === 'failed') ||
+      tracker.reason === 'timeout' ||
+      tracker.reason === 'cleanup-failed'
     return {
       version: 1,
       status: failed ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
       reason: tracker.reason ?? 'completed',
       tests,
+      ...(resources.results.length ? { resources: resources.results } : {}),
     }
   }
 
@@ -156,7 +170,22 @@ export class RunWalker {
       }
       return group(middleware)
     }
-    const reply = await execution.group(node, path, executeChildren)
+    const supplied = walk.resources.fields(node.resources)
+    if (supplied === null) {
+      for (const [index, child] of node.children.entries())
+        children.push({
+          origin: required(child.entryOrigin),
+          result: cancelledTree(child, childPath(child, index), only),
+        })
+      return group(notRunMiddleware('cancelled'))
+    }
+    const prepared = {
+      ...node,
+      resourceFields: supplied,
+      stable: { ...supplied, ...node.stable },
+      frames: [{ steps: [], fields: supplied }, ...node.frames],
+    }
+    const reply = await execution.group(prepared, path, executeChildren)
     if (reply.reason) tracker.abort(reply.reason)
     // middlewareが落ちた時点で残りの子は動かないため、実行しなかった姿で埋める。
     if (reply.middleware.status === 'failed')
@@ -184,6 +213,8 @@ export class RunWalker {
     const mode = executableMode(item, only)
     // todoを先に外すことで、以降のitemが実行に必要な定義を備えたcaseだと型でも決まる。
     if (item.mode === 'todo' || mode || tracker.reason) return notRunCase(base, mode ?? 'cancelled')
+    const supplied = walk.resources.fields(checkedResources([...(node.resources ?? []), ...(item.resources ?? [])]))
+    if (supplied === null) return notRunCase(base, 'cancelled')
     const started = now(),
       attempts: MutableAttempt[] = []
     for (let number = 1; number <= base.config.retry + 1; number++) {
@@ -191,7 +222,11 @@ export class RunWalker {
       // 走り出す前に、いま中断されたらどう見えるかを知らせる。確定した結果ではないので手元には残さない。
       events.progress(tracker.activeProgress('interrupted'))
       events.deadline({ kind: 'start', timeoutMs: base.config.timeout, progress: tracker.activeProgress('timeout') })
-      const { result, retryable } = await execution.attempt(node, item, base.path, number)
+      const fields = jsonFields(supplied)
+      const prepared = Object.keys(fields).length
+        ? { ...node, resourceFields: fields, frames: [{ steps: [], fields }, ...node.frames] }
+        : node
+      const { result, retryable } = await execution.attempt(prepared, item, base.path, number)
       events.deadline({ kind: 'end' })
       tracker.end()
       attempts.push(result)

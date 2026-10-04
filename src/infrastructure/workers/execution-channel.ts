@@ -9,7 +9,7 @@ import type { ExecutionIncoming, ExecutionMessage, ReplyValue } from './protocol
 import { ExecutionEnvironment } from './environment.js'
 import { executionIncomingSchema } from './schemas.js'
 
-/** 実行workerと親を繋ぐMessagePort。protocolの形を組み立てて送受信するのはここだけにする。 */
+/** 収集workerと実行workerを繋ぐ専用MessagePort。protocolの形を組み立てて送受信するのはここだけにする。 */
 @Injectable()
 export class ExecutionChannel {
   readonly #port: MessagePort
@@ -41,7 +41,7 @@ export class ExecutionChannel {
     this.#post({ type: 'group-stage', path, stage, timeoutMs })
   }
 
-  /** 畳めない失敗は親へ伝えてから口を閉じる。以降のcommandは届かない。 */
+  /** 畳めない失敗は収集workerへ伝えてから口を閉じる。以降のcommandは届かない。 */
   fail<T>(error: T): void {
     this.#post({ type: 'error', message: errorStack(error) })
     this.#port.close()

@@ -471,3 +471,116 @@ export const namespace = new Test().use(middleware(async (_, next) => next({id: 
   expect(childTest(groupNode(result)).cases[0].attempts).toHaveLength(2)
   expect(testNode(result, 1).cases.map((item) => item.attempts.at(-1)?.status)).toEqual(['passed', 'passed'])
 })
+
+test('installed resources are hoisted on the brain, shared across files and released after worker cleanup', () => {
+  const trace = join(installed.consumer, 'resource-trace.txt')
+  writeFileSync(
+    join(installed.consumer, 'shared-resource.ts'),
+    `
+import { resource } from 'hanamaru'
+import { appendFileSync } from 'node:fs'
+import { threadId } from 'node:worker_threads'
+const log = (s: string) => appendFileSync(${JSON.stringify(trace)}, s + '\\n')
+export const db = resource({ name: 'db', scope: 'perRun', async setup(_, next) {
+  log('db open')
+  try { return await next({ dbUrl: 'db://test', brain: threadId }) } finally { log('db close') }
+}})
+export const schema = resource({ name: 'schema', scope: 'perWorker', require: [db], async setup(ctx, next) {
+  log('schema open')
+  try { return await next({ url: ctx.dbUrl + '/schema', brain: ctx.brain }) } finally { log('schema close') }
+}})
+`,
+  )
+  const files = ['resource-a', 'resource-b'].map((name) =>
+    consumerFixture(
+      installed,
+      name,
+      `
+import { schema } from './shared-resource.ts'
+import { appendFileSync } from 'node:fs'
+import { threadId } from 'node:worker_threads'
+export const suite = new Test().require(schema).group('group', middleware(async (ctx, next) => {
+  if (ctx.brain === threadId) throw new Error('resource was not hoisted')
+  try { return await next() } finally { appendFileSync(${JSON.stringify(trace)}, 'worker close\\n') }
+}), [new Test<{url: string, brain: number}>().target((url: string) => url)
+.it('uses schema', t => t.argsFrom(ctx => [ctx.url]).expect(e => [e.result.toBe('db://test/schema'), e.result.toSatisfy(() => !Object.hasOwn(e.ctx, 'dbUrl'))]))])
+`,
+    ),
+  )
+  const result = jsonResult(invoke(installed.env, ...files, '-r', 'json'), 0)
+  expect(result.resources?.map((r) => [r.name, r.middleware.status])).toEqual([
+    ['db', 'passed'],
+    ['schema', 'passed'],
+  ])
+  expect(readFileSync(trace, 'utf8').trim().split('\n')).toEqual([
+    'db open',
+    'schema open',
+    'worker close',
+    'worker close',
+    'schema close',
+    'db close',
+  ])
+})
+
+test('installed resource setup failure cancels dependent cases and reports its cause in JSON and pretty', () => {
+  const file = consumerFixture(
+    installed,
+    'resource-failure',
+    `
+import { resource } from 'hanamaru'
+const bad = resource({ name: 'database', scope: 'perRun', async setup() { throw new Error('RESOURCE_CONNECTION_REFUSED') } })
+export const blocked = new Test().require(bad).target(() => 1).it('dependent', t => t.args().expect(e => [e.result.toBe(1)]))
+export const independent = new Test().target(() => 1).it('independent', t => t.args().expect(e => [e.result.toBe(1)]))
+`,
+  )
+  const result = jsonResult(invoke(installed.env, file, '-r', 'json'), 1)
+  expect(testNode(result).cases[0].notRun).toBe('cancelled')
+  expect(testNode(result, 1).cases[0].attempts[0].status).toBe('passed')
+  expect(result.resources?.[0].middleware).toMatchObject({ status: 'failed', failures: [{ phase: 'before' }] })
+  const pretty = invoke(installed.env, file, '-r', 'pretty')
+  expect(pretty.status, pretty.stderr).toBe(1)
+  expect(pretty.stdout).toContain('resource database')
+  expect(pretty.stdout).toContain('RESOURCE_CONNECTION_REFUSED')
+})
+
+test('installed CLI rejects non-JSON resource values and only starts selected resources', () => {
+  const file = consumerFixture(
+    installed,
+    'resource-data',
+    `
+import { resource } from 'hanamaru'
+const invalid = resource({ name: 'invalid', scope: 'perRun', async setup(_, next) { return await next({ missing: undefined }) } })
+export const suite = new Test().target(() => 1)
+.it('bad', t => t.require(invalid).args().expect(e => [e.result.toBe(1)]))
+.it('good', t => t.args().expect(e => [e.result.toBe(1)]))
+`,
+  )
+  const result = jsonResult(invoke(installed.env, file, '-r', 'json'), 1)
+  expect(result.resources?.[0].middleware.status).toBe('failed')
+  expect(testNode(result).cases.map((c) => c.notRun ?? c.attempts[0].status)).toEqual(['cancelled', 'passed'])
+  const filtered = jsonResult(invoke(installed.env, file, '--filter', 'good', '-r', 'json'), 0)
+  expect(filtered.resources).toBeUndefined()
+})
+
+test('installed resource deadlines identify a blocked setup and a blocked teardown', () => {
+  for (const stage of ['before', 'after']) {
+    const file = consumerFixture(
+      installed,
+      `resource-timeout-${stage}`,
+      `
+import { resource } from 'hanamaru'
+const stuck = resource({ name: 'stuck', scope: 'perRun', timeout: 50, async setup(_, next) {
+  ${stage === 'before' ? 'while (true) {}' : 'try { return await next({ value: 1 }) } finally { while (true) {} }'}
+}})
+export const suite = new Test().require(stuck).target(() => 1).it('case', t => t.args().expect(e => [e.result.toBe(1)]))
+`,
+    )
+    const result = jsonResult(invoke(installed.env, file, '--shutdown-grace', '50', '-r', 'json'), 1)
+    expect(result).toMatchObject({ status: 'failed', reason: 'timeout' })
+    expect(result.resources?.[0].middleware).toMatchObject({
+      status: 'failed',
+      cleanup: 'incomplete',
+      failures: [{ kind: 'timeout', phase: stage }],
+    })
+  }
+})

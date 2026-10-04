@@ -1,3 +1,5 @@
+import type { Resource } from './resource.js'
+import { checkedResources } from './resource.js'
 import type { Value } from '../../foundation/value.js'
 import { functionValue, objectValue, property } from '../../foundation/value.js'
 import type { RuntimeCallAssertion } from '../assertion/runtime.js'
@@ -65,6 +67,10 @@ export function groupAllowed(data: DefinitionData): void {
 
 export function callsAllowed(data: CaseData): void {
   if (data.calls.length) throw new TypeError('expectCalls already set')
+}
+
+export function withResource<T extends { resources?: readonly Resource[] }>(data: T, resource: Resource): T {
+  return { ...data, resources: checkedResources([...(data.resources ?? []), resource]) }
 }
 
 export function withStep(data: DefinitionData, step: RuntimeMiddleware): DefinitionData {
@@ -137,6 +143,7 @@ export function toBlueprint(data: DefinitionData): RuntimeBlueprint {
   if (data.stage === 'suite') {
     if (data.name === null || data.target === null) throw new TypeError('test definition is incomplete')
     return {
+      ...(data.resources ? { resources: data.resources } : {}),
       version: 1,
       kind: 'test',
       name: data.name,
@@ -149,6 +156,7 @@ export function toBlueprint(data: DefinitionData): RuntimeBlueprint {
   }
   if (data.stage === 'group')
     return {
+      ...(data.resources ? { resources: data.resources } : {}),
       version: 1,
       kind: 'definition',
       config: { ...data.config },
@@ -183,5 +191,13 @@ export function completedCase(
 ): RuntimeCase {
   if (!data[doneTag] || !data.args || (!data.expect && !data.calls.length))
     throw new TypeError('case must return args and an expectation')
-  return { ...base, config: data.config, mocks: data.mocks, args: data.args, expect: data.expect, calls: data.calls }
+  return {
+    ...base,
+    ...(data.resources ? { resources: data.resources } : {}),
+    config: data.config,
+    mocks: data.mocks,
+    args: data.args,
+    expect: data.expect,
+    calls: data.calls,
+  }
 }

@@ -1,3 +1,13 @@
+export { resource } from './interfaces/library/resource.js'
+export type {
+  Resource,
+  ResourceScope,
+  ResourceContext,
+  ResourceFields,
+  ResourceNext,
+  JsonValue,
+  JsonObject,
+} from './domain/definition/resource.js'
 export type { Config } from './application/collection/config.js'
 export type { RunOptions } from './application/execution/options.js'
 export type {
@@ -57,6 +67,7 @@ export type {
   MiddlewareStage,
   PassedAttemptResult,
   RunResult,
+  ResourceResult,
   TargetOutcome,
   TestResult,
 } from './domain/result/types.js'
@@ -95,7 +106,6 @@ import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Config } from './application/collection/config.js'
 import { recordCollectionEvent } from './application/collection/current-scope.js'
-import { ValueComparison } from './infrastructure/comparison.js'
 import { createSourceLocation } from './infrastructure/source-location.js'
 import { createTest } from './interfaces/library/definition.js'
 import { createRegisterTest } from './interfaces/library/registration.js'
@@ -105,7 +115,7 @@ const location = createSourceLocation(dirname(fileURLToPath(import.meta.url)))
 export type Test<R extends object = {}> = TestType<R>
 export const Test = createTest(location, recordCollectionEvent)
 export const registerTest = createRegisterTest(location, recordCollectionEvent)
-export const run = createRun(ValueComparison)
+export const run = createRun(async () => (await import('./infrastructure/comparison.js')).ValueComparison)
 export function defineConfig(config: Config): Config {
   return config
 }

@@ -1,3 +1,4 @@
+import type { ResourceScope } from '../definition/resource.js'
 import type { CallAssertion, ErrorAssertion, ResultAssertion } from '../assertion/types.js'
 import type { SourceLocation } from '../definition/types.js'
 import type { ResolvedExecutionConfig } from '../execution/config.js'
@@ -208,7 +209,15 @@ export interface GroupResult {
   }[]
 }
 
+export interface ResourceResult {
+  readonly id: number
+  readonly name: string
+  readonly scope: ResourceScope
+  readonly middleware: GroupMiddlewareResult
+}
+
 interface RunResultBase {
+  readonly resources?: readonly ResourceResult[]
   readonly version: 1
   readonly tests: readonly (TestResult | GroupResult)[]
 }

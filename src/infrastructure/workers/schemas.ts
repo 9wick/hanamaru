@@ -1,4 +1,5 @@
 import * as v from 'valibot'
+import { MessagePort } from 'node:worker_threads'
 import { progressSchema } from '../../application/execution/progress-schema.js'
 import {
   attempt,
@@ -44,16 +45,21 @@ export const executionMessageSchema = v.variant('type', [
 ])
 
 const commandSchemas = [
-  v.object({ type: v.literal('attempt'), id: v.number(), path: v.array(v.number()), number: v.number() }),
-  v.object({ type: v.literal('group-open'), id: v.number(), path: v.array(v.number()) }),
+  v.object({
+    type: v.literal('attempt'),
+    id: v.number(),
+    path: v.array(v.number()),
+    number: v.number(),
+    resourceFields: v.optional(v.record(v.string(), jsValue)),
+  }),
+  v.object({
+    type: v.literal('group-open'),
+    id: v.number(),
+    path: v.array(v.number()),
+    resourceFields: v.optional(v.record(v.string(), jsValue)),
+  }),
   v.object({ type: v.literal('group-close'), id: v.number(), path: v.array(v.number()), failed: v.boolean() }),
 ]
-
-export const executionIncomingSchema = v.variant('type', [
-  ...commandSchemas,
-  v.object({ type: v.literal('interrupt') }),
-  v.object({ type: v.literal('compiled'), id: v.number(), result: v.optional(jsValue), error: v.optional(v.string()) }),
-])
 
 export const executionWorkerDataSchema = v.object({
   roots: v.array(v.object({ file: v.string(), index: v.number(), origin: location })),
@@ -61,7 +67,15 @@ export const executionWorkerDataSchema = v.object({
   shape: v.string(),
 })
 
+export const executionIncomingSchema = v.variant('type', [
+  ...commandSchemas,
+  v.object({ type: v.literal('initialize'), spec: executionWorkerDataSchema }),
+  v.object({ type: v.literal('interrupt') }),
+  v.object({ type: v.literal('compiled'), id: v.number(), result: v.optional(jsValue), error: v.optional(v.string()) }),
+])
+
 export const cliWorkerDataSchema = v.object({
+  executionPort: v.instance(MessagePort),
   files: v.array(v.string()),
   options: v.object({
     filter: v.optional(v.string()),
@@ -78,9 +92,14 @@ export const cliWorkerDataSchema = v.object({
   }),
 })
 
+export const executionBootstrapSchema = v.object({ role: v.literal('execution'), port: v.instance(MessagePort) })
+
+export const executionClosedSchema = v.object({ type: v.literal('execution-closed') })
+
 const reporterSchema = v.picklist(['pretty', 'json'])
 
 export const cliMessageSchema = v.union([
+  v.object({ type: v.literal('close-execution') }),
   v.object({ type: v.literal('loading'), file: v.string(), timeout: v.number() }),
   v.object({ type: v.literal('running'), reporter: reporterSchema, shutdownGrace: v.number() }),
   v.object({ type: v.literal('progress'), progress: progressSchema }),

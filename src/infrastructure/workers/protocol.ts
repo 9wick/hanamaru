@@ -1,4 +1,6 @@
+import type { Fields } from '../../domain/definition/runtime.js'
 import type { CliOptions } from '../../application/collection/options.js'
+import type { MessagePort } from 'node:worker_threads'
 import type { Stage } from '../../application/execution/state.js'
 import type { AttemptReply, Executor, GroupReply } from '../../application/ports/executor.js'
 import type { ModulePreparation, RootReference } from '../../application/ports/module-loader.js'
@@ -8,6 +10,7 @@ import type { Value } from '../../foundation/value.js'
 export interface CliWorkerData {
   files: string[]
   options: CliOptions
+  executionPort: MessagePort
 }
 
 export type { CliMessage, Reporter } from '../../application/collection/events.js'
@@ -19,8 +22,8 @@ export interface ExecutionWorkerData {
 }
 
 export type ExecutionCommand =
-  | { type: 'attempt'; id: number; path: number[]; number: number }
-  | { type: 'group-open'; id: number; path: number[] }
+  | { type: 'attempt'; id: number; path: number[]; number: number; resourceFields?: Fields }
+  | { type: 'group-open'; id: number; path: number[]; resourceFields?: Fields }
   | { type: 'group-close'; id: number; path: number[]; failed: boolean }
 
 export type CommandInput = ExecutionCommand extends infer C
@@ -42,6 +45,7 @@ export type ExecutionMessage =
 
 export type ExecutionIncoming =
   | ExecutionCommand
+  | { type: 'initialize'; spec: ExecutionWorkerData }
   | { type: 'interrupt' }
   | { type: 'compiled'; id: number; result?: Value; error?: string }
 

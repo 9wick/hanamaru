@@ -37,12 +37,12 @@ export interface RunInput extends RunSettings, RunListeners {
  * 1回のrunぶんのscopeを立てて畳む入口。runを辿る一式はこのscopeが持つため、
  * 利用者がcontainerを組み立てる必要はない。
  */
-export function createRun(comparison: ConfigClass<Comparison>) {
+export function createRun(comparison: () => Promise<ConfigClass<Comparison>>) {
   return function run(input: TestDefinition | readonly TestDefinition[], options: RunOptions = {}): Promise<RunResult> {
     const received: RunInput = options
     // 錠はscopeを立てるより先に取る。収集の途中で始まったrunも重なりとして弾く。
     return runExclusively(async () => {
-      const scope = await createApp([]).createRuntime({ configs: [comparison, LocalExecutor] })
+      const scope = await createApp([]).createRuntime({ configs: [await comparison(), LocalExecutor] })
       try {
         // 受け取り手は呼び出しの引数で決まる。1回ぶんの通知の宛先として組み立てて渡す。
         const events = new ListenerEvents(received, await scope.get(RunSnapshot))

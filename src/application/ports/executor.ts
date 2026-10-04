@@ -49,3 +49,15 @@ export interface ExecutionHandle {
 export abstract class Executor {
   abstract start(events: RunEvents, spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle>
 }
+
+/** 計画を待つ実行の持ち場。収集中の失敗でも開いた側が畳む。closeは何度呼んでも同じ終了を待つ。 */
+export interface PreparedExecution {
+  start(events: RunEvents, spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle>
+  close(): Promise<void>
+}
+
+/** 計画が決まる前に実行環境を起こす口。openは起動完了を待たず、収集と並行して準備する。 */
+@Config({ abstract: true })
+export abstract class ExecutionLauncher {
+  abstract open(): PreparedExecution
+}

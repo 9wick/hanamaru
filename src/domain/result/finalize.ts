@@ -75,13 +75,16 @@ function finalizeNode(input: MutableNodeResult): TestResult | GroupResult {
 
 export function finalizeRun(input: MutableRunResult): RunResult {
   const tests = input.tests.map(finalizeNode)
+  const resources = input.resources
+    ? { resources: input.resources.map((r) => ({ ...r, middleware: finalizeMiddleware(r.middleware) })) }
+    : {}
   if (input.status === 'passed') {
     if (input.reason !== 'completed') throw new TypeError('passed runs must complete')
-    return { version: 1, status: 'passed', reason: 'completed', tests }
+    return { ...resources, version: 1, status: 'passed', reason: 'completed', tests }
   }
   if (input.status === 'cancelled') {
     if (input.reason !== 'interrupted') throw new TypeError('cancelled runs must be interrupted')
-    return { version: 1, status: 'cancelled', reason: 'interrupted', tests }
+    return { ...resources, version: 1, status: 'cancelled', reason: 'interrupted', tests }
   }
-  return { version: 1, status: 'failed', reason: input.reason, tests }
+  return { ...resources, version: 1, status: 'failed', reason: input.reason, tests }
 }

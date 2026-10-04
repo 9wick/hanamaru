@@ -1,6 +1,5 @@
 import { Injectable, inject } from '@zeltjs/core'
 import type { InlineConfig, UserConfig, ViteDevServer } from '@hanamaru/vite'
-import { createServer, mergeConfig } from '@hanamaru/vite'
 import type { FetchResult } from '@hanamaru/vite/module-runner'
 import { parse } from 'acorn'
 import { existsSync, readFileSync } from 'node:fs'
@@ -150,11 +149,8 @@ export class ModuleCompilerLauncher {
 
   async start(vite: UserConfig = {}): Promise<RunningCompiler> {
     if (!vite || typeof vite !== 'object' || Array.isArray(vite)) throw new TypeError('vite must be a config object')
+    const { createServer, mergeConfig } = await import('@hanamaru/vite')
     const externals = new ExternalModules(this.#implementationRoot)
-    return new RunningCompiler(await createServer(this.#serverConfig(vite, externals)), externals)
-  }
-
-  #serverConfig(vite: UserConfig, externals: ExternalModules): InlineConfig {
     const options = mergeConfig(
       {
         root: process.cwd(),
@@ -164,6 +160,10 @@ export class ModuleCompilerLauncher {
       },
       vite,
     )
+    return new RunningCompiler(await createServer(this.#serverConfig(vite, externals, options)), externals)
+  }
+
+  #serverConfig(vite: UserConfig, externals: ExternalModules, options: UserConfig): InlineConfig {
     const tsconfig = this.#tsconfig
     const runtimeURL = this.#runtimeURL
     return {
