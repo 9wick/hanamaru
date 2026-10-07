@@ -1,12 +1,15 @@
+import { Config } from '@zeltjs/core'
+import { createTestTarget } from '@zeltjs/testing/vitest'
 import { once } from 'node:events'
 import { MessageChannel } from 'node:worker_threads'
 import { expect, onTestFinished, test, vi } from 'vite-plus/test'
 import { CollectionChannel } from './collection-channel.js'
 import { CollectionEnvironment } from './environment.js'
 
-function channel() {
+async function channel() {
   const control = new MessageChannel()
   const execution = new MessageChannel()
+  @Config()
   class Environment extends CollectionEnvironment {
     readonly port = control.port1
     readonly executionPort = execution.port1
@@ -17,11 +20,12 @@ function channel() {
     execution.port1.close()
     execution.port2.close()
   })
-  return { channel: new CollectionChannel(new Environment()), parent: control.port2 }
+  const { target: channel } = await createTestTarget(CollectionChannel, { configs: [Environment, CollectionChannel] })
+  return { channel, parent: control.port2 }
 }
 
 test('close waits for the parent to stop execution and sends only one request', async () => {
-  const { channel: worker, parent } = channel()
+  const { channel: worker, parent } = await channel()
   const requested = once(parent, 'message')
   const stopped = vi.fn()
   const closing = worker.closeExecution()
@@ -40,7 +44,7 @@ test('close waits for the parent to stop execution and sends only one request', 
 })
 
 test('disconnecting the parent rejects the execution shutdown waiter', async () => {
-  const { channel: worker, parent } = channel()
+  const { channel: worker, parent } = await channel()
   const closing = worker.closeExecution()
   const rejected = expect(closing).rejects.toThrow('CLI disconnected')
   parent.close()

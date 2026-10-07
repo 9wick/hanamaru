@@ -1,31 +1,13 @@
-import { createApp } from '@zeltjs/core'
+import { createTestTarget } from '@zeltjs/testing/vitest'
 import { expect, test } from 'vite-plus/test'
-import { Test, middleware } from '../../index.js'
-import { ValueComparison } from '../../infrastructure/comparison.js'
-import { LocalExecutor } from './local.js'
+import { Test, middleware, run } from '../../index.js'
 import { ProgressStore } from './progress.js'
-import type { RunListeners } from './services.js'
-import { ListenerEvents, RunSnapshot } from './services.js'
-
 import type { MutableRunResult } from '../../domain/result/mutable.js'
-import { collectBlueprints } from '../../interfaces/library/run.js'
-import { createPlan } from './plan.js'
-import { RunWalker } from './runner.js'
-
-/** 手元で走らせるrunの一式。ライブラリのrunと同じscopeの組み立て。 */
-async function walkerFor(listeners: RunListeners) {
-  const scope = await createApp([]).createRuntime({ configs: [ValueComparison, LocalExecutor] })
-  const events = new ListenerEvents(listeners, await scope.get(RunSnapshot))
-  return {
-    walker: await scope.get(RunWalker),
-    execution: await (await scope.get(LocalExecutor)).start(events),
-    events,
-  }
-}
+import type { RunInput } from '../../interfaces/library/run.js'
 
 test('progress transfer grows linearly and reconstructs nested case results', async () => {
   async function measure(count: number) {
-    const store = new ProgressStore()
+    const { target: store } = await createTestTarget(ProgressStore)
     let bytes = 0
     const cases = new Test()
       .target((n: number) => n)
@@ -39,8 +21,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
       middleware(async (_, next) => next()),
       [cases],
     )
-    const plan = createPlan(collectBlueprints(root))
-    const { walker, execution, events } = await walkerFor({
+    const input: RunInput = {
       onProgress(progress) {
         bytes += JSON.stringify(progress).length
         store.apply(structuredClone(progress))
@@ -48,8 +29,8 @@ test('progress transfer grows linearly and reconstructs nested case results', as
       onDeadline(deadline) {
         bytes += JSON.stringify(deadline).length
       },
-    })
-    const result = await walker.run(execution, () => plan, {}, events)
+    }
+    const result = await run(root, input)
     expect(store.result?.tests).toEqual(result.tests)
     return bytes
   }
@@ -59,7 +40,7 @@ test('progress transfer grows linearly and reconstructs nested case results', as
 })
 
 test('the progress stream reconstructs nested groups, skips and retries', async () => {
-  const store = new ProgressStore()
+  const { target: store } = await createTestTarget(ProgressStore)
   let attempts = 0
   const flaky = new Test()
     .retry(1)
@@ -76,17 +57,17 @@ test('the progress stream reconstructs nested groups, skips and retries', async 
     [flaky],
   )
   const root = new Test().group('root', [inner, steady])
-  const { walker, execution, events } = await walkerFor({
+  const input: RunInput = {
     onProgress: (progress) => store.apply(structuredClone(progress)),
-  })
-  const result = await walker.run(execution, () => createPlan(collectBlueprints(root)), {}, events)
+  }
+  const result = await run(root, input)
   expect(result.status).toBe('passed')
   expect(store.result?.tests).toStrictEqual(result.tests)
 })
 
 test('the progress stream reconstructs the cancelled tree after an interrupt', async () => {
   const controller = new AbortController()
-  const store = new ProgressStore()
+  const { target: store } = await createTestTarget(ProgressStore)
   const active = new Test()
     .target(() => {
       controller.abort()
@@ -99,22 +80,17 @@ test('the progress stream reconstructs the cancelled tree after an interrupt', a
     middleware(async (_, next) => next()),
     [active, pending],
   )
-  const { walker, execution, events } = await walkerFor({
+  const input: RunInput = {
+    signal: controller.signal,
     onProgress: (progress) => store.apply(structuredClone(progress)),
-  })
-  const result = await walker.run(
-    execution,
-    () => createPlan(collectBlueprints([root, pending])),
-    {},
-    events,
-    controller.signal,
-  )
+  }
+  const result = await run([root, pending], input)
   expect(result.reason).toBe('interrupted')
   expect(store.result?.tests).toStrictEqual(result.tests)
 })
 
-test('progress rejects unknown paths and recomputes failure state after retry recovery', () => {
-  const store = new ProgressStore()
+test('progress rejects unknown paths and recomputes failure state after retry recovery', async () => {
+  const { target: store } = await createTestTarget(ProgressStore)
   expect(() => store.apply({ kind: 'group', path: [0], middleware: null })).toThrow('before initialization')
   const initial: MutableRunResult = {
     version: 1,

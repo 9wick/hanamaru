@@ -170,6 +170,16 @@ scopeは1回のrunにつき1つです。CLIの親プロセスは1回の起動ご
 ライブラリの `run()` は呼び出しごとにscopeを立てて畳みます。結果の表示先(`ResultPresenter`)や
 実行の持ち場を開く口(`Executor`)は宛名で、繋ぎ先は各起動ファイルが `configs` で選びます。公開APIの利用者がコンテナに触ることはありません。
 
+サービスのunitテストは `@zeltjs/testing/vitest` の `createTestTarget(Service, { configs, overrides })` を使います。
+対象は返り値の `target`、同じDIスコープの依存は `get()` で取得し、`new` で手動構築しません。
+テスト用の実装・設定は `@Config()` の派生クラスとして宣言します。サービスの依存は `inject()` で宣言し、
+呼び出しごとの入力を閉じ込めるためにテスト専用のDI派生クラスを作りません。
+サービス取得・入力・実行・検証はテスト本文から読めるようにし、runtimeの生成を包む独自helperやfixtureは作りません。
+実行の組み立てを含めて検証するテストは、既存の `run()` などの入口を使います。
+runtimeの終了は公式テストadapterが `afterAll` に登録します。テスト中に開いたSDK資源は `onTestFinished` で閉じます。
+状態はテストごとに隔離し、別プロセスを模した送信側・受信側にはそれぞれ別のruntimeを用意します。
+テスト定義のBuilder、収集ごとの値(`CollectionLog`など)、SDKの資源(`Worker`・`MessageChannel`など)は直接生成できます。
+
 runごとに変わる入力（収集の要求・vite設定・mockの準備・実行の計画・通知の受け取り手）はConfigに載せず、
 メソッド引数として渡します。1回ぶんの資源も同じで、Vite serverやmodule runtimeは
 立ち上げ役(`ModuleCompilerLauncher`・`ModuleRuntimeLauncher`・`WorkerExecutionLauncher`)が

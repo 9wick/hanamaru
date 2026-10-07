@@ -1,6 +1,7 @@
+import { Config } from '@zeltjs/core'
+import { createTestTarget } from '@zeltjs/testing/vitest'
 import { Worker } from 'node:worker_threads'
 import { expect, onTestFinished, test, vi } from 'vite-plus/test'
-import { ProgressStore } from '../../application/execution/progress.js'
 import { ResultPresenter } from '../../application/ports/collection-runner.js'
 import { CliEnvironment } from './environment.js'
 import { CollectionSupervisor } from './supervisor.js'
@@ -24,23 +25,26 @@ function workerURL(source: string): URL {
   return new URL(`data:text/javascript,${encodeURIComponent(imports + source)}`)
 }
 
-function supervisor(collectionSource = collect, executionURL = workerURL(execute)) {
+async function supervisor(collectionSource = collect, executionURL = workerURL(execute)) {
+  @Config()
   class Environment extends CliEnvironment {
     readonly collectionWorkerURL = workerURL(collectionSource)
     readonly executionWorkerURL = executionURL
   }
+  @Config()
   class Presenter extends ResultPresenter {
     override readonly present = vi.fn()
   }
-  const presenter = new Presenter()
-  const runner = new CollectionSupervisor(new Environment(), new ProgressStore(), presenter)
-  return { runner, presenter }
+  const { target: runner, get } = await createTestTarget(CollectionSupervisor, {
+    configs: [Environment, Presenter, CollectionSupervisor],
+  })
+  return { runner, presenter: await get(Presenter) }
 }
 
 test('the CLI owns both peer workers and acknowledges termination before reporting the result', async () => {
   const terminated = vi.spyOn(Worker.prototype, 'terminate')
   onTestFinished(() => terminated.mockRestore())
-  const { runner, presenter } = supervisor()
+  const { runner, presenter } = await supervisor()
   expect(await runner.run({ files: [], options: {} })).toBe(0)
   expect(presenter.present).toHaveBeenCalledExactlyOnceWith(result, 'json')
   expect(terminated).toHaveBeenCalledTimes(2)
@@ -53,7 +57,7 @@ test('an exit emitted synchronously by terminate is an expected shutdown', async
     return original.call(this)
   })
   onTestFinished(() => terminated.mockRestore())
-  const { runner } = supervisor()
+  const { runner } = await supervisor()
   expect(await runner.run({ files: [], options: {} })).toBe(0)
   expect(terminated).toHaveBeenCalledTimes(2)
 })
@@ -65,7 +69,7 @@ test.each([
 ])('%s failure stops both workers without inventing a result', async (_, source, url) => {
   const terminated = vi.spyOn(Worker.prototype, 'terminate')
   onTestFinished(() => terminated.mockRestore())
-  const { runner, presenter } = supervisor(source, url)
+  const { runner, presenter } = await supervisor(source, url)
   expect(await runner.run({ files: [], options: {} })).toBe(2)
   expect(presenter.present).not.toHaveBeenCalled()
   expect(terminated).toHaveBeenCalledTimes(2)
@@ -74,7 +78,7 @@ test.each([
 test('a collection timeout stops both workers even when both threads are blocked', async () => {
   const terminated = vi.spyOn(Worker.prototype, 'terminate')
   onTestFinished(() => terminated.mockRestore())
-  const { runner, presenter } = supervisor(
+  const { runner, presenter } = await supervisor(
     "parentPort.postMessage({ type: 'loading', file: 'blocked', timeout: 20 }); while (true) {}",
     workerURL('while (true) {}'),
   )
@@ -86,7 +90,7 @@ test('a collection timeout stops both workers even when both threads are blocked
 test('a synchronous failure to create execution stops the already created collection worker', async () => {
   const terminated = vi.spyOn(Worker.prototype, 'terminate')
   onTestFinished(() => terminated.mockRestore())
-  const { runner } = supervisor('setInterval(() => {}, 1000)', new URL('https://invalid.example/worker.js'))
+  const { runner } = await supervisor('setInterval(() => {}, 1000)', new URL('https://invalid.example/worker.js'))
   await expect(runner.run({ files: [], options: {} })).rejects.toThrow()
   expect(terminated).toHaveBeenCalledTimes(1)
 })
