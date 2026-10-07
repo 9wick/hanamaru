@@ -393,13 +393,18 @@ test('installed CLI terminates blocked group cleanup after a failed child', () =
   }
 })
 
-test('CLI Ctrl+C interrupts a blocked target and exits 130', async () => {
+test('CLI Ctrl+C preserves completed and pending results around a blocked target and exits 130', async () => {
   const file = consumerFixture(
     installed,
     'interrupt',
     `export const suite = new Test().timeout(10000)
-  .target(() => { console.error('target ready'); while (true) {} })
-  .it('interrupt', t => t.args().expect(e => [e.result.toBe(1)]))`,
+  .target(value => {
+    if (value === 2) { console.error('target ready'); while (true) {} }
+    return value
+  })
+  .it('completed', t => t.args(1).expect(e => [e.result.toBe(1)]))
+  .it('interrupt', t => t.args(2).expect(e => [e.result.toBe(2)]))
+  .it('pending', t => t.args(3).expect(e => [e.result.toBe(3)]))`,
   )
   const run = await interrupt(installed.env, [file, '--shutdown-grace', '100', '--reporter', 'json'], 'target ready')
   expect(run.interrupted, run.stderr).toBe(true)
@@ -408,9 +413,14 @@ test('CLI Ctrl+C interrupts a blocked target and exits 130', async () => {
   const output = runResult(run.stdout)
   expect(output.status).toBe('cancelled')
   expect(output.reason).toBe('interrupted')
-  const attempt = testNode(output).cases[0].attempts[0]
+  const items = testNode(output).cases
+  expect(items.map((item) => item.name)).toStrictEqual(['completed', 'interrupt', 'pending'])
+  expect(items[0].attempts[0].status).toBe('passed')
+  const attempt = items[1].attempts[0]
   expect(attempt.status).toBe('cancelled')
   expect(attempt.cleanup).toBe('incomplete')
+  expect(items[2].notRun).toBe('cancelled')
+  expect(items[2].attempts).toStrictEqual([])
 })
 
 test('installed CLI keeps diagnostic inspection failures separate from target outcomes', () => {
