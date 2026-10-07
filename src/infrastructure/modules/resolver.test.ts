@@ -1,3 +1,4 @@
+import { createTestTarget } from '@zeltjs/testing/vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,7 +22,7 @@ function from(root: string, file: string): string {
   return pathToFileURL(join(root, file)).href
 }
 
-test('aliases resolve through the TypeScript extension candidates', () => {
+test('aliases resolve through the TypeScript extension candidates', async () => {
   const root = project({
     'tsconfig.json': `{
       // trailing commas and comments are part of the accepted tsconfig dialect
@@ -32,7 +33,7 @@ test('aliases resolve through the TypeScript extension candidates', () => {
     'lib/shared.ts': 'export const shared = 1',
     'caller.js': '',
   })
-  const resolver = new TsconfigResolver()
+  const { target: resolver } = await createTestTarget(TsconfigResolver)
   const caller = from(root, 'caller.js')
   expect(resolver.resolve('@app/thing.js', caller)).toBe(join(root, 'src/thing.ts'))
   expect(resolver.resolve('@app/thing', caller)).toBe(join(root, 'src/thing.ts'))
@@ -42,11 +43,12 @@ test('aliases resolve through the TypeScript extension candidates', () => {
   expect(resolver.resolve('node:fs', caller)).toBeNull()
 })
 
-test('specifiers outside a file URL have no tsconfig to consult', () => {
-  expect(new TsconfigResolver().resolve('@app/thing', 'data:text/javascript,')).toBeNull()
+test('specifiers outside a file URL have no tsconfig to consult', async () => {
+  const { target: resolver } = await createTestTarget(TsconfigResolver)
+  expect(resolver.resolve('@app/thing', 'data:text/javascript,')).toBeNull()
 })
 
-test('the nearest tsconfig wins over the one above it', () => {
+test('the nearest tsconfig wins over the one above it', async () => {
   const root = project({
     'tsconfig.json': '{ "compilerOptions": { "paths": { "@app/*": ["outer/*"] } } }',
     'outer/thing.ts': 'export const thing = 1',
@@ -54,26 +56,28 @@ test('the nearest tsconfig wins over the one above it', () => {
     'inner/tsconfig.json': '{ "compilerOptions": { "paths": { "@app/*": ["*"] } } }',
     'inner/caller.js': '',
   })
-  const resolver = new TsconfigResolver()
+  const { target: resolver } = await createTestTarget(TsconfigResolver)
   expect(resolver.resolve('@app/thing', from(root, 'inner/caller.js'))).toBe(join(root, 'inner/thing.ts'))
   expect(resolver.resolve('@app/thing', from(root, 'caller.js'))).toBe(join(root, 'outer/thing.ts'))
 })
 
-test('one resolver reads a tsconfig once, a new one reads it again', () => {
+test('one resolver reads a tsconfig once, a new one reads it again', async () => {
   const root = project({
     'tsconfig.json': '{ "compilerOptions": { "paths": { "@app/*": ["first/*"] } } }',
     'first/thing.ts': 'export const thing = 1',
     'second/thing.ts': 'export const thing = 2',
     'caller.js': '',
   })
-  const resolver = new TsconfigResolver()
+  const { target: resolver } = await createTestTarget(TsconfigResolver)
   expect(resolver.resolve('@app/thing', from(root, 'caller.js'))).toBe(join(root, 'first/thing.ts'))
   writeFileSync(join(root, 'tsconfig.json'), '{ "compilerOptions": { "paths": { "@app/*": ["second/*"] } } }')
   expect(resolver.resolve('@app/thing', from(root, 'caller.js'))).toBe(join(root, 'first/thing.ts'))
-  expect(new TsconfigResolver().resolve('@app/thing', from(root, 'caller.js'))).toBe(join(root, 'second/thing.ts'))
+  const { target: freshResolver } = await createTestTarget(TsconfigResolver)
+  expect(freshResolver.resolve('@app/thing', from(root, 'caller.js'))).toBe(join(root, 'second/thing.ts'))
 })
 
-test('a directory without any tsconfig stays unresolved', () => {
+test('a directory without any tsconfig stays unresolved', async () => {
   const root = project({ 'caller.js': '' })
-  expect(new TsconfigResolver().resolve('@app/thing', from(root, 'caller.js'))).toBeNull()
+  const { target: resolver } = await createTestTarget(TsconfigResolver)
+  expect(resolver.resolve('@app/thing', from(root, 'caller.js'))).toBeNull()
 })
