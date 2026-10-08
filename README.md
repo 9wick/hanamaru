@@ -1,7 +1,38 @@
 # hanamaru
 
-Honoのように、短いチェーンで型を積み上げる、軽量なテストフレームワーク。
-対象・モック・引数・期待を書き、CLIで実行するルートを `registerTest` で登録します。
+hanamaruは、TypeScriptの関数やメソッドをテストするフレームワークです。
+
+テスト対象を選び、引数と期待を分けて書くことで、「何を渡すとどうなるはずか」がそのまま読み取れます。テスト対象の型から引数や期待値の型が決まるため、テスト側で型を書き直すことなく、書き間違いや実装変更のズレに気づけます。
+
+テスト定義は[`.blueprint()`](docs/reference/metadata.md)で構造化データとして取り出せます。階層構成、モック、呼び出し条件、関数参照などが含まれており、テスト対象を実行せずにケース一覧を書き出したり、独自ツールやプラグインから利用したりできます。
+
+単体関数から依存を持つ処理まで使えます。テスト定義用のライブラリと、実行用のCLIを提供します。
+
+## テスト対象の型を、そのまま使う
+
+たとえば `add(a: number, b: number): number` をテストする場合、次のように書けます。
+
+<!-- example: docs/examples/math.test.ts -->
+```ts
+import { Test, registerTest } from 'hanamaru'
+import { add } from './math.ts'
+
+export const addition = new Test()
+  .target(add)
+  .it('2つの数を足す', t => t.args(1, 2).expect(e => [
+    e.result.toBe(3),
+  ]))
+
+registerTest(addition)
+```
+
+`.target(add)` に渡した関数から、`.args()` の引数と `e.result` の期待値の型が決まります。引数や戻り値の型をテスト側で書き直す必要はありません。`.args('1', 2)` や `e.result.toBe('3')` のような書き間違いは、エディタやTypeScriptの型チェックで見つかります。非同期関数も同じ書き方で扱え、エラーやrejectは `e.error` で確かめられます。
+
+`registerTest` はCLIで実行するテストを登録する関数です。`add` の実装を含む例は[入門ガイド](docs/guides/getting-started.md#最初のテスト)を参照してください。
+
+## 戻り値と、依存の呼ばれ方を確かめる
+
+戻り値に加えて、依存先のメソッドがどう呼ばれたかも確かめられます。
 
 <!-- example: docs/examples/user.test.ts -->
 ```ts
@@ -35,236 +66,60 @@ export const users = new Test()
 
 registerTest(users)
 ```
-出典: [docs/examples/user.test.ts](docs/examples/user.test.ts)
 
-この例の `export` は別のサンプルから `users` をimportするためです。CLIが実行するかどうかは、末尾の `registerTest(users)` で決まります。
+`.expect()` は戻り値や例外を、`.expectCalls()` は依存メソッドの呼び出し回数や引数を確かめます。個別にspyを登録する必要はありません。振る舞いを変えたい依存には `.mock()` を使い、ケースごとに上書きもできます。
 
-`.target()` から引数と戻り値の型が決まります。
-戻り値・例外は `.expect()`、呼ばれ方は `.expectCalls()` に条件を並べます。
-呼び出しの記録は自動で設定するので、検証のためにmockやspyを登録する必要はありません。
-振る舞いを変えたい依存だけ `.mock(obj, key, ...)` で設定し、ケース内の同じmockで上書きできます。
+この例では保存処理をモックに置き換え、通知処理は本物を呼んで記録しています。
+**呼び出しの記録だけでは、本物の処理は止まりません。** DB更新や外部への通知を避けたい場合は、その依存もモックに置き換えてください。
+対象と依存の実装例は[モックの例](docs/guides/getting-started.md#モックを使う)を参照してください。
 
-## 小さく始める
+## テストの準備と共通設定をまとめる
 
-純粋関数なら、対象・引数・期待だけで書けます。
+テストデータの組み合わせを並べたいときや、前後の準備・後始末、テスト間での設定の共有にも対応しています。
 
-<!-- example: docs/examples/math.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { add } from './math.ts'
+| やりたいこと | hanamaruの機能 |
+|---|---|
+| 入力と期待値の組み合わせを並べる | [each](docs/guides/each.md)：行データからケースを作る |
+| 準備と後始末をまとめる | [middleware](docs/guides/middleware.md)：前処理と後始末を一緒に書く。用意した値の型は引数や期待値に伝わる |
+| 複数のテストに同じモックや設定を使う | [group](docs/guides/grouping.md)：配下のテストへ共通設定を適用する |
+| 共有リソースの依存関係と寿命を管理する | [resource](docs/concepts/resources.md)：必要なテストだけに共有環境を用意する |
+| 制限時間や再試行を指定する | [timeout・retry](docs/guides/execution-options.md)：共通設定またはケースごとに指定する |
 
-export const addition = new Test()
-  .target(add)
-  .it('2つの数を足す', t => t.args(1, 2).expect(e => [
-    e.result.toBe(3),
-  ]))
+各試行では、hanamaruが管理するモック、コンテキスト、呼び出し記録を作り直します。外部DBやモジュール内の状態は自動では復元しないため、必要な初期化や後始末はmiddlewareなどに書きます。
 
-registerTest(addition)
-```
-出典: [docs/examples/math.test.ts](docs/examples/math.test.ts)
+## 実行して、失敗の理由を確認する
 
-パッケージをインストールした環境で、テストファイルを指定して実行できます。
+CLIはテストファイルを読み込み、`registerTest` で登録されたテストを実行して結果を表示します。
+失敗した条件、期待値、実際の値に加えて、テストを書いたファイルと行番号を報告します。
+JSON出力や、コードから直接結果を受け取る `run(test)` APIも使えます。
+
+- [CLIと設定](docs/reference/cli.md)：ファイル指定、CIでの実行、出力形式
+- [project](docs/guides/projects.md)：unit・integrationなどの名前で読むファイルを選ぶ
+- [実行結果](docs/reference/results.md)：失敗の情報と各試行の結果
+
+## インストール
 
 ```console
-npx hanamaru src/math.test.ts
+npm install --save-dev hanamaru
 ```
 
-このコマンドは、例のファイルを `src/math.test.ts` に置いた場合です。引数なしの `npx hanamaru` は `**/*.{test,spec}.ts` を探索します。型チェックを含むtest scriptは[はじめる](docs/guides/getting-started.md#実行環境とコマンド)を参照してください。
+テストの実行は `npx hanamaru` です。既定では `**/*.{test,spec}.ts` を探し、`registerTest` で登録されたテストを実行します。
+最初のテストから実行までの手順は[入門ガイド](docs/guides/getting-started.md)を参照してください。
 
-## 行データからケースを書く
+CLIはTypeScriptコードを変換して実行します。CLI自体は型チェックを行わないため、型チェックには既存のTypeScript環境を使ってください。
 
-<!-- example: docs/examples/each.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { add } from './math.ts'
+## 対応環境と提供範囲
 
-export const addition = new Test()
-  .target(add)
-  .each('2つの数を足す', [
-    { a: 1, b: 2, expected: 3 },
-    { a: 2, b: 3, expected: 5 },
-  ], (t, row) => t
-    .args(row.a, row.b)
-    .expect(e => [e.result.toBe(row.expected)]))
+Node.js 22.18以上、Bun 1.3以上、Deno 2.9.2以上に対応しています。型チェックにはTypeScript 5.8以上を使います。BunやDenoでの起動方法は[CLI](docs/reference/cli.md)を参照してください。
 
-registerTest(addition)
-```
-出典: [docs/examples/each.test.ts](docs/examples/each.test.ts)
-
-eachはitと並ぶ入口です。行ごとに名前やIDを追加せず、引数・期待の型を保ってケースを並べます。
-[eachの表示と実行](docs/guides/each.md)を参照してください。
-
-## モックなしでも呼び出しを検証する
-
-<!-- example: docs/examples/calls.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-// モックを設定せず、本物の処理がどう呼ばれるかを検証する。
-export const calls = new Test()
-  .target(createUser)
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expectCalls(call => [
-      call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ]))
-
-registerTest(calls)
-```
-出典: [docs/examples/calls.test.ts](docs/examples/calls.test.ts)
-
-この例ではsaveとsendの本物の処理を呼び、その呼ばれ方を検証します。
-
-## 関連するテストをまとめる
-
-<!-- example: docs/examples/group-scopes.test.ts#group -->
-```ts
-const userGroup = new Test()
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .group('ユーザー', [createTests, saveTests])
-```
-出典: [docs/examples/group-scopes.test.ts](docs/examples/group-scopes.test.ts)
-
-groupで関連するテストを一つのまとまりにし、配下へ共通のmock・use・timeout・retryを適用できます。
-名前は任意です。子が一つでも配列で渡します。子の設定はその子の配下だけに適用し、元の定義や兄弟へ影響しません。
-グループ化と共通設定の範囲は[テストをグループにまとめる](docs/guides/grouping.md)を参照してください。
-
-## group全体で資源を共有する
-
-通常の `.use()` は各caseの各attemptを囲みます。
-高価な資源を一つのgroup全体で共有したい場合は、そのgroupの子全体をmiddlewareで囲めます。
-
-<!-- example: docs/examples/group-middleware.test.ts#group-middleware -->
-```ts
-export const serverTests = new Test()
-  .group(middleware(async (_, next) => {
-    const server = await startServer()
-    try {
-      return await next({ server })
-    } finally {
-      await server.stop()
-    }
-  }), [listUsers, missingPage])
-```
-出典: [docs/examples/group-middleware.test.ts](docs/examples/group-middleware.test.ts)
-
-middlewareは一度だけserverを用意し、`next({ server })` の値を両方の子の各attemptへ渡します。
-共有資源のlifetimeを表すだけで、case間の順序依存は許しません。
-
-## 実行設定を下流へ渡す
-
-`.timeout(1_000)` と `.retry(2)` はgroup、`.target()` の前後、ケースで設定できます。
-内側で指定した項目だけを上書きし、未指定の項目は親から引き継ぎます。
-retryは失敗したケースだけを再試行し、各試行を結果に残します。
-[timeoutとretry](docs/guides/execution-options.md)に設定例と停止の保証を記載しています。
-
-## ケースは独立して実行できる
-
-各caseは、他のcaseが実行されたか、どの順序で実行されたかに依存しないものとして扱います。
-宣言順は表示上の順序であり、case間の依存を表しません。middleware・mock・コンテキスト・呼び出し記録は各attemptで作り直します。
-将来のshuffle・並列実行・複数processへの配置でも意味が変わらないtestを基本にし、順序を持つ一連の操作は通常のcaseとは分けてflowとして扱う方針です。
-
-## 資源の取得と解放を同じ場所に書く
-
-<!-- example: docs/examples/middleware.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-import { createDatabase, countUsers } from './database.ts'
-
-export const userCount = new Test()
-  .use(middleware(async (_, next) => {
-    const db = await createDatabase()
-    try {
-      return await next({ db, expected: 3 })
-    } finally {
-      await db.close()
-    }
-  }))
-  .target(countUsers)
-  .it('ユーザー数を取得する', t => t
-    .argsFrom(ctx => [ctx.db])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
-
-registerTest(userCount)
-```
-出典: [docs/examples/middleware.test.ts](docs/examples/middleware.test.ts)
-
-middlewareは `middleware(fn, options?)` で作り、nextへ渡した値の型は後続のargsFromや`e.ctx`へ伝わります。
-値を渡すだけなら `.use(middleware(async (_, next) => next({ expected: 3 })))` と書けます。
-詳しくは[middleware](docs/guides/middleware.md)を参照してください。
-
-## 定義したテストを実行する
-
-日常のテスト実行にはCLIを使います。テストファイルは実行するルートを `registerTest` で登録し、CLIが収集・実行・結果表示・終了コードを担当します。ファイル内で `run()` を呼ぶ必要はありません。
-
-[テストの登録](docs/guides/registration.md)はCLIの実行対象の宣言です。exportしただけのテストは実行対象になりません。読むファイルの集合を名前で選ぶ設定は[project](docs/guides/projects.md)です。projectを使う場合も実行コマンドはCLIです。環境の準備・後始末はテストのmiddlewareに書きます。
-
-### プログラムから結果を受け取る
-
-自分のスクリプトから読み込み済みの定義を実行し、`RunResult` を処理したい場合は、ライブラリAPIの `run(test)` または `run([testA, testB])` を使います。
-
-<!-- example: docs/examples/metadata.ts#run -->
-```ts
-import { run } from 'hanamaru'
-import { users } from './user.test.ts'
-
-const result = await run(users)
-```
-出典: [docs/examples/metadata.ts](docs/examples/metadata.ts)
-
-`run` は設定ファイルを読まず、ファイル探索やprojectの選択を行いません。CLIとライブラリAPIの保証の違いは[実行方法の選び方](docs/reference/cli.md#実行方法の選び方)を参照してください。
-
-### 失敗を確認する
-
-失敗には宣言位置を自動で添え、条件・期待・観測・原因を構造として返します。
-
-```text
-createUser
-  ✗ 保存して通知する  src/user.test.ts:42:4
-    call(send).calledOnceWith
-      expected: 合計1回、引数 [{ id: 'u1' }]
-      actual:   合計2回
-```
-
-結果用の識別子やソース位置を手書きする必要はありません。詳しくは[宣言位置と実行結果](docs/reference/results.md)を参照してください。
+v0.1.0ではテストを直列に実行します。並列実行・watchモード・カバレッジ計測・snapshot・fake timersは提供していません。VitestやJestと一部共通するマッチャ名はありますが、API全体の互換性はありません。モックの対象にできる参照など、詳しい範囲は[制約と実装状況](docs/reference/limitations.md)を参照してください。
 
 ## ドキュメント
 
-最初のテストを書いて実行する手順は、[はじめる](docs/guides/getting-started.md)を参照してください。
-
-### テストを書く
-
-- [Test ビルダー](docs/reference/api-test.md) / [it ビルダー](docs/reference/api-it.md)
-- [マッチャ](docs/reference/api-expect.md) / [モック](docs/reference/api-mock.md)
-- [行データからケースを書く（each）](docs/guides/each.md)
-- [middleware](docs/guides/middleware.md) / [テストをグループにまとめる](docs/guides/grouping.md)
-
-### 実行して結果を確認する
-
-- [CLIと設定ファイル](docs/reference/cli.md)
-- [テストの登録](docs/guides/registration.md)
-- [projectで読むファイルを選ぶ](docs/guides/projects.md)
-- [projectの利用例：unitとintegration/e2eを分ける](docs/guides/project-use-cases.md)
-- [timeoutとretry](docs/guides/execution-options.md)
-- [宣言位置と実行結果](docs/reference/results.md)
-
-### 仕様を詳しく知る
-
-- [設計思想](docs/concepts/concepts.md)
-- [型推論](docs/reference/type-inference.md)
-- [実行セマンティクス](docs/concepts/semantics.md)
-- [制約と実装状況](docs/reference/limitations.md)
-- [用語集](docs/concepts/glossary.md)
-
-### プラグインを作る
-
+- [入門ガイド](docs/guides/getting-started.md)
+- API：[Test](docs/reference/api-test.md) / [ケース](docs/reference/api-it.md) / [マッチャ](docs/reference/api-expect.md) / [モック](docs/reference/api-mock.md)
+- [型推論](docs/reference/type-inference.md) / [実行の仕組み](docs/concepts/semantics.md)
 - [プラグイン向けblueprint](docs/reference/metadata.md)
+- [変更履歴](CHANGELOG.md) / [開発への参加](CONTRIBUTING.md)
 
-## 対応環境
-
-Node.js 22.18以上、Bun 1.3以上、Deno 2.9.2以上を対象としています。TypeScriptの型契約は5.8以上を対象とします。
-ランタイムごとの起動方法とTypeScriptの制約は[対応環境](docs/reference/limitations.md)と[CLI](docs/reference/cli.md)を参照してください。
-
-共有環境を必要なテストだけで準備するには、[resource](docs/concepts/resources.md)を参照してください。
+MIT License。詳しくは[LICENSE](LICENSE)を参照してください。

@@ -1,7 +1,16 @@
 {
   "name": "hanamaru",
   "version": "0.1.0",
+  "description": "Type-safe TypeScript tests with fluent builders, automatic call recording, and scoped middleware.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/9wick/hanamaru.git"
+  },
+  "homepage": "https://github.com/9wick/hanamaru#readme",
+  "bugs": {
+    "url": "https://github.com/9wick/hanamaru/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -15,7 +24,9 @@
   "files": [
     "dist",
     "docs",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json && tsc -p e2e/tsconfig.json && tsc -p scripts/tsconfig.json",

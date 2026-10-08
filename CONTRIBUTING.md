@@ -31,7 +31,7 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 | `npm run test:package` | tarballをインストールした利用者プロジェクトでの公開APIとCLI |
 | `npm run test:examples` | 公開文書のサンプルをhanamaru自身で実行した結果 |
 | `npm run check:docs` | リンク・アンカー・表・コードフェンスと、README.md / docs/**/*.md の全tsブロックが例と一致すること |
-| `npm run docs:sync` | 例に合わせて文書のtsブロックと出典行を書き換え |
+| `npm run docs:sync` | 例に合わせて文書のtsブロックと、出典行がある場合はそのリンクを書き換え |
 
 `test:e2e` / `test:package` / `test:examples` は単独実行でも先にビルドします。
 `test:unit` はビルドしないため、`dist/` がなくても実行できます。
@@ -84,8 +84,9 @@ CLIは `registerTest` で登録された完成定義だけを収集します。�
 <!-- example: none — 紐付けない理由 -->                  例外
 ```
 
-閉じフェンスの直後の1行は出典行で、`出典: [docs/examples/mock.test.ts](examples/mock.test.ts)`
-の形で `npm run docs:sync` が生成・更新します。
+例との紐付けと本文の同期には、この非表示のマーカーだけを使います。読者向けの出典表示は不要です。
+閉じフェンスの直後に `出典: [docs/examples/mock.test.ts](examples/mock.test.ts)` の行がある場合は、
+`npm run docs:sync` がリンクを更新します。出典行がない文書には追加しません。
 
 例ファイル側では `// #region 名前` 〜 `// #endregion 名前`（`[a-z0-9-]+`、入れ子可）で
 連続した範囲に名前を付けます。表示は範囲内の行そのままで、目印行の除去とインデントの調整だけを
@@ -136,6 +137,51 @@ Node.js 22.18.0 / 24で全検査と配布物のE2Eを実行します。
 Bun 1.3.5 / latest、Deno 2.9.2 / v2.xでは同じ配布物E2Eを実行します。
 Bun / Denoのjobではunitテスト・lint・型検査を重複実行しません。
 OSはLinuxです。他のOSと公開npmレジストリ経由のインストールは未検証です。
+
+## リリース手順
+
+以下はnpmへの公開とGitHub Release作成を担当するメンテナー向けの手順です。
+リリース対象の変更がmainに入り、同じコミットのCIが全て成功していることを確認します。
+`package.json` / `package-lock.json` のversionと[変更履歴](CHANGELOG.md)を合わせてください。
+
+まず依存を固定した状態で検証します。
+
+```console
+npm ci
+npm run check
+HANAMARU_RUNTIME=bun npm run test:package
+HANAMARU_RUNTIME=deno npm run test:package
+```
+
+`test:package` はtarballを利用者プロジェクトへインストールし、公開API・型定義・CLIを検証します。
+入門ガイドの最初の例を、ES Modules指定やtsconfigのないプロジェクトで `npx hanamaru` から実行できることを確認します。任意の型チェック設定を追加した `npm test` の成功・失敗も確認します。
+Bun / Denoは事前にインストールしてください。対応環境の全CI jobの結果も確認します。
+
+実際に配るtarballを作り、公開内容を確認します。次の例は0.1.0用です。
+
+```console
+release_dir=$(mktemp -d)
+npm pack --pack-destination "$release_dir"
+tar -tzf "$release_dir/hanamaru-0.1.0.tgz"
+npm publish --dry-run "$release_dir/hanamaru-0.1.0.tgz"
+npm whoami
+npm owner ls hanamaru
+```
+
+tarballにJavaScript・型定義・CLIのworker・README・文書・LICENSE・第三者のライセンス表示が含まれることを確認します。
+`--dry-run` はレジストリへ公開しません。ここまでの検証に加え、利用者環境での依存監査も確認してください。
+開発依存の監査だけでは、bundlerで取り込むコードや利用者側の依存解決を判定できません。
+
+公開を決定したら、確認した同じtarballを公開します。
+
+```console
+npm publish "$release_dir/hanamaru-0.1.0.tgz"
+npm view hanamaru@0.1.0 version dist-tags
+```
+
+新しい一時プロジェクトで `hanamaru@0.1.0` をレジストリからインストールし、入門ガイドの `npx hanamaru` と、任意で型チェックを加えた `npm test` を再確認します。
+成功後、リリース対象のコミットに `v0.1.0` タグを付け、GitHub Releaseへ変更履歴とtarballを添付します。
+タグのpushや公開操作は、リリースを行う担当者の判断で実施します。
 
 
 ## ソースコードの配置

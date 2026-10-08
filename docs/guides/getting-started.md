@@ -1,12 +1,21 @@
 # はじめる
 
-このページはhanamaruのAPIを使った入門例です。配布物をNode.js 22.18・24、Bun 1.3.5、Deno 2.9.2で実行し、TypeScript 5.8.3で型検証しています。
+このページでは、hanamaruの導入から最初のテスト、モック、middlewareの使い方までを説明します。まずNode.js 22.18以上で始めます。Bun・Denoでの起動方法は[CLI](../reference/cli.md)を参照してください。
 
-hanamaruパッケージとTypeScriptを開発依存に追加した環境で、テストを定義してCLIで実行します。設定ファイルは不要です。依存の配布状況とランタイムの制約は[実装状況](../reference/limitations.md)を参照してください。
+hanamaruを開発依存に追加し、テストを定義してCLIで実行します。最初の例を実行するための設定ファイルは不要です。依存の配布状況とランタイムの制約は[実装状況](../reference/limitations.md)を参照してください。
 
-## ローカル配布物をインストールする
+## インストールする
 
-公開npm経由の配布は未検証です。現在のソースから試す場合は、まずこのリポジトリで配布物を作ります。
+```console
+npm install --save-dev hanamaru@^0.1.0
+```
+
+次の2ファイルを `src` 以下へ置けば、最初のテストを実行できます。プロジェクトの `"type"` やtsconfigを変更する必要はありません。
+v0.1.0の公開前に試す場合は、以下のローカル配布物を使ってください。
+
+### 公開前のソースから試す
+
+このリポジトリで配布物を作ります。
 
 ```console
 npm ci
@@ -17,10 +26,10 @@ npm pack
 次の `/path/to` はtarballを置いた実際のパスに置き換えてください。
 
 ```console
-npm install --save-dev /path/to/hanamaru-0.1.0.tgz typescript@5.8.3
+npm install --save-dev /path/to/hanamaru-0.1.0.tgz
 ```
 
-[実行環境とコマンド](#実行環境とコマンド)のpackage.json・tsconfig.jsonを用意し、次の2ファイルを `src` 以下へ置いて実行します。
+次の2ファイルを `src` 以下へ置いて実行します。
 
 ## 最初のテスト
 
@@ -67,7 +76,7 @@ registerTest(addition)
 npx hanamaru src/math.test.ts
 ```
 
-CLIは `registerTest` で登録されたルートを収集して実行するので、テストファイル内で `run()` を呼ぶ必要はありません。CLI自体は型チェックをしないため、日常の実行では後述の[型チェックを含むtest script](#実行環境とコマンド)を使います。
+CLIは `registerTest` で登録されたルートを収集して実行するので、テストファイル内で `run()` を呼ぶ必要はありません。CLI自体は型チェックをしないため、型エラーも検出したい場合は、後述の[任意の型チェック設定](#任意の型チェック)を使えます。
 
 ## モックを使う
 
@@ -192,11 +201,19 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 読むファイルを名前付きで選ぶ機能は[project](projects.md)、unitとintegration/e2eを分ける構成は[利用例](project-use-cases.md)で説明します。登録とprojectを含むファイル指定・設定は[CLI](../reference/cli.md)を参照してください。
 projectはCLIのファイル選択設定です。自分のプログラムから完成定義を実行して結果を処理する `run(test)` との使い分けは、[実行方法の選び方](../reference/cli.md#実行方法の選び方)に記載しています。
 
-`package.json` の設定例。
+### 任意の型チェック
+
+テスト実行にTypeScriptの追加インストールやtsconfigは必須ではありません。CLIはTypeScriptを変換して実行しますが、型エラーの検出は行いません。
+型チェックもしたい場合は、既存のtscコマンドとtsconfigを使ってください。新規プロジェクト向けの設定例を以下に示します。
+
+```console
+npm install --save-dev typescript@^5.8
+```
+
+`package.json` のscripts例。npmが型チェックとテスト実行を順に起動します。hanamaruが読み込む設定ではありません。
 
 ```json
 {
-  "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsc --noEmit && hanamaru"
@@ -210,12 +227,11 @@ projectはCLIのファイル選択設定です。自分のプログラムから�
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true
   },
   "include": ["src/**/*.ts"]
@@ -223,8 +239,8 @@ projectはCLIのファイル選択設定です。自分のプログラムから�
 ```
 
 この例ではソースとテストを `src` 以下に置き、importに `.ts` 拡張子を付けます。
-ランナー単独では型チェックしないため、通常のtest scriptで両方を実行します。
-公開npmレジストリへの配布は未検証です。このページのサンプルは `docs/examples/` にあり、リポジトリでは `npm run test:examples` が全て実行します。`npm run check` はビルドを含めた全体を検証します。
+`npm test` で型チェックとテスト実行を続けて行えます。テスト実行だけを登録するなら、`scripts.test` は `"hanamaru"` で構いません。
+テストファイルは `registerTest` で登録されたルートだけを実行します。実行に成功すれば終了コード0、テスト失敗なら1、設定・収集のエラーなら2です。CIでは `npx hanamaru --ci` でonlyの混入を検出できます。
 
 複数の定義を合成し、共通設定や環境を用意する場合は[テストをグループにまとめる](grouping.md)を参照してください。
 
