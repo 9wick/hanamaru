@@ -140,49 +140,52 @@ OSはLinuxです。他のOSと公開npmレジストリ経由のインストー�
 
 ## リリース手順
 
-以下はnpmへの公開とGitHub Release作成を担当するメンテナー向けの手順です。
-リリース対象の変更がmainに入り、同じコミットのCIが全て成功していることを確認します。
-`package.json` / `package-lock.json` のversionと[変更履歴](CHANGELOG.md)を合わせてください。
+[Releaseワークフロー](.github/workflows/release.yml)と[release-it設定](.release-it.json)は、pathdencyの構成をもとにしています。
+GitHub Actionsからバージョンを指定して実行すると、検証後にnpm公開と `v<version>` タグの作成・pushを行います。
+リリース用のコミットは作らないため、`package.json` / `package-lock.json` のversionと[変更履歴](CHANGELOG.md)を先に揃え、mainへ入れてください。同じコミットのCIが全て成功していることも確認します。
 
-まず依存を固定した状態で検証します。
+### npm側の設定
+
+npmのhanamaruパッケージのSettingsで、Trusted Publisherを次の内容で登録します。
+
+| 項目 | 値 |
+|---|---|
+| Provider | GitHub Actions |
+| Organization or user | `9wick` |
+| Repository | `hanamaru` |
+| Workflow filename | `release.yml` |
+
+公開にはOIDCを使います。npmの長期トークンをGitHub Secretsへ登録する必要はありません。
+設定方法は[npmのTrusted Publishing](https://docs.npmjs.com/trusted-publishers/)を参照してください。
+
+### 実行する
+
+GitHubのActionsから **Release → Run workflow** を開き、branchに `main`、versionに `0.1.0` などの公開バージョンを指定します。
+
+ワークフローはNode.js 24とnpm 11.21.0を使い、`npm ci` の後に `npm run release -- "$RELEASE_VERSION" --ci` を実行します。
+release-itの `after:bump` で `npm run check` が動き、型・lint・format・テスト・文書検査に成功してから公開します。
+`prepack` でも配布物をビルドします。同時に複数のリリースが走らないよう、ワークフローを直列化しています。
+GitHub Releaseの本文や添付ファイルは、このワークフローでは作成しません。
+
+### ローカルで公開手順を確認する
+
+release-it 21.1.1の実行にはNode.js 22.22.2以上の22系、24.15.0以上の24系、または26以上が必要です。
+hanamaruを使う側のNode.js要件は22.18以上です。
+
+依存をインストールし、作業ツリーがクリーンな状態でdry-runを実行します。
 
 ```console
 npm ci
 npm run check
-HANAMARU_RUNTIME=bun npm run test:package
-HANAMARU_RUNTIME=deno npm run test:package
+npm run release -- 0.1.0 --ci --dry-run
 ```
 
-`test:package` はtarballを利用者プロジェクトへインストールし、公開API・型定義・CLIを検証します。
-入門ガイドの最初の例を、ES Modules指定やtsconfigのないプロジェクトで `npx hanamaru` から実行できることを確認します。任意の型チェック設定を追加した `npm test` の成功・失敗も確認します。
-Bun / Denoは事前にインストールしてください。対応環境の全CI jobの結果も確認します。
-
-実際に配るtarballを作り、公開内容を確認します。次の例は0.1.0用です。
+`--dry-run` ではversion変更・検証フック・タグ作成・pushの予定を表示し、npmは公開のdry-runを行います。公開はされませんが、`prepack` のビルドは実行します。検証フックは実行しないため、先に `npm run check` を実行してください。
+公開後はレジストリ上のversionと、新しい利用者プロジェクトからの実行を確認してください。
 
 ```console
-release_dir=$(mktemp -d)
-npm pack --pack-destination "$release_dir"
-tar -tzf "$release_dir/hanamaru-0.1.0.tgz"
-npm publish --dry-run "$release_dir/hanamaru-0.1.0.tgz"
-npm whoami
-npm owner ls hanamaru
-```
-
-tarballにJavaScript・型定義・CLIのworker・README・文書・LICENSE・第三者のライセンス表示が含まれることを確認します。
-`--dry-run` はレジストリへ公開しません。ここまでの検証に加え、利用者環境での依存監査も確認してください。
-開発依存の監査だけでは、bundlerで取り込むコードや利用者側の依存解決を判定できません。
-
-公開を決定したら、確認した同じtarballを公開します。
-
-```console
-npm publish "$release_dir/hanamaru-0.1.0.tgz"
 npm view hanamaru@0.1.0 version dist-tags
 ```
-
-新しい一時プロジェクトで `hanamaru@0.1.0` をレジストリからインストールし、入門ガイドの `npx hanamaru` と、任意で型チェックを加えた `npm test` を再確認します。
-成功後、リリース対象のコミットに `v0.1.0` タグを付け、GitHub Releaseへ変更履歴とtarballを添付します。
-タグのpushや公開操作は、リリースを行う担当者の判断で実施します。
-
 
 ## ソースコードの配置
 

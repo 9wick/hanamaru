@@ -43,7 +43,8 @@
     "format:check": "vp fmt --check src e2e scripts/docs.ts scripts/docs scripts/architecture.mjs vite.config.ts eslint.config.mjs eslint.config.test.ts",
     "build": "vp pack && tsc -p tsconfig.build.json",
     "prepack": "npm run build",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:docs"
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:docs",
+    "release": "release-it"
   },
   "engines": {
     "node": ">=22.18"
@@ -57,6 +58,7 @@
     "@zeltjs/core": "0.12.0-canary.2",
     "@zeltjs/testing": "0.12.0-canary.2",
     "eslint": "10.11.0",
+    "release-it": "21.1.1",
     "typescript": "5.8.3",
     "unplugin-swc": "1.5.9",
     "valibot": "1.5.0",
