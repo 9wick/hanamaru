@@ -1,4 +1,5 @@
 import type { Resource } from '../../domain/definition/resource.js'
+import { CallDescriptor, descriptor, plannedCalls } from '../../domain/definition/calls.js'
 import { Injectable } from '@zeltjs/core'
 import { indexExecutionNodes } from '../../application/execution/plan.js'
 import type { ModulePreparation } from '../../application/ports/module-loader.js'
@@ -103,7 +104,10 @@ export class ModuleRegistry {
               : null,
           }
         : {
-            target: node.bp.target.kind,
+            target:
+              node.bp.target.kind === 'relation'
+                ? { kind: 'relation', members: Object.keys(node.bp.target.members) }
+                : node.bp.target.kind,
             cases: node.bp.cases.map((item) => ({
               name: item.name,
               mode: item.mode,
@@ -113,7 +117,23 @@ export class ModuleRegistry {
               ...(item.mode === 'todo'
                 ? {}
                 : {
-                    args: item.args.kind,
+                    args:
+                      item.args.kind === 'calls'
+                        ? {
+                            kind: 'calls',
+                            invocations: plannedCalls(item.args, node.bp.target).map((call) => ({
+                              id: call.id,
+                              member: call.member,
+                              args: call.args.map((arg) => descriptor(arg)?.id ?? null),
+                            })),
+                            output:
+                              item.args.output instanceof CallDescriptor
+                                ? item.args.output.id
+                                : Object.fromEntries(
+                                    Object.entries(item.args.output).map(([name, call]) => [name, call.id]),
+                                  ),
+                          }
+                        : item.args.kind,
                     mocks: item.mocks.map((mock) => ({ ...reference(mock), behavior: behavior(mock.behavior) })),
                     calls: item.calls.map((call) => ({
                       ...reference(call),

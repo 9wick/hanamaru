@@ -1,4 +1,5 @@
 import type { Resource } from './resource.js'
+import { checkedRelation, relationTag } from './relation.js'
 import { checkedResources } from './resource.js'
 import type { Value } from '../../foundation/value.js'
 import { functionValue, objectValue, property } from '../../foundation/value.js'
@@ -85,13 +86,21 @@ export function selectTarget(data: DefinitionData, input: readonly Value[]): Def
   const [subject, key] = args
   let target: RuntimeTarget
   if (args.length === 1 && typeof subject === 'function') target = { kind: 'function', fn: functionValue(subject) }
+  else if (args.length === 1 && subject && typeof subject === 'object' && property(subject, relationTag) === true)
+    target = checkedRelation(subject)
   else if (args.length === 2 && subject && typeof key === 'string')
     target = { kind: 'method', object: objectValue(subject), key, fn: methodValue(subject, key) }
   else throw new TypeError('target requires a function or object method')
   return {
     ...data,
     stage: 'target',
-    name: name ?? (target.kind === 'method' ? target.key : functionValue(target.fn).name || '<anonymous>'),
+    name:
+      name ??
+      (target.kind === 'relation'
+        ? Object.keys(target.members).join(' / ')
+        : target.kind === 'method'
+          ? target.key
+          : functionValue(target.fn).name || '<anonymous>'),
     target,
   }
 }
@@ -173,6 +182,8 @@ export function caseDone(data: CaseData): true {
 }
 
 export function withArgs(data: CaseData, args: RuntimeArgs): CaseData {
+  if (data.args && (data.args.kind === 'calls' || args.kind === 'calls'))
+    throw new TypeError('args, argsFrom and calls are mutually exclusive')
   return { ...data, args }
 }
 

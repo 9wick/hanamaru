@@ -117,6 +117,8 @@ v0.1.0ではテストを直列に実行します。並列実行・watchモード
 ## ドキュメント
 
 - [入門ガイド](docs/guides/getting-started.md)
+- [複数の呼び出しで契約をテストする](docs/guides/multiple-calls.md)
+- [シナリオ全体を検証するflow](docs/guides/flow.md)（未実装・設計中）
 - API：[Test](docs/reference/api-test.md) / [ケース](docs/reference/api-it.md) / [マッチャ](docs/reference/api-expect.md) / [モック](docs/reference/api-mock.md)
 - [型推論](docs/reference/type-inference.md) / [実行の仕組み](docs/concepts/semantics.md)
 - [プラグイン向けblueprint](docs/reference/metadata.md)

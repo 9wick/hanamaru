@@ -1,4 +1,6 @@
 import * as v from 'valibot'
+import { plannedCalls } from './calls.js'
+import { checkedRelation } from './relation.js'
 import type { Value } from '../../foundation/value.js'
 import { arrayValue, functionValue, nonempty, objectValue, property } from '../../foundation/value.js'
 import type { RuntimeCallAssertion } from '../assertion/runtime.js'
@@ -119,8 +121,14 @@ export function validateBlueprint(bp: RuntimeBlueprint, ancestors = new Set<Runt
     throw new TypeError('invalid middleware steps')
   bp.steps.forEach((step) => step.timeout === undefined || positive(step.timeout, 'middleware timeout'))
   if (bp.kind === 'test') {
-    if (!bp.target || typeof bp.target.fn !== 'function' || !Array.isArray(bp.cases) || !bp.cases.length)
+    if (
+      !bp.target ||
+      (bp.target.kind !== 'relation' && typeof bp.target.fn !== 'function') ||
+      !Array.isArray(bp.cases) ||
+      !bp.cases.length
+    )
       throw new TypeError('invalid test blueprint')
+    if (bp.target.kind === 'relation') checkedRelation(bp.target)
     for (const item of bp.cases) {
       validOrigin(item.origin)
       validConfig(item.config)
@@ -130,10 +138,12 @@ export function validateBlueprint(bp: RuntimeBlueprint, ancestors = new Set<Runt
         validCalls(item.calls)
         if (
           !item.args ||
-          !['value', 'from-context'].includes(item.args.kind) ||
+          !['value', 'from-context', 'calls'].includes(item.args.kind) ||
           (item.args.kind === 'from-context' && typeof item.args.build !== 'function')
         )
           throw new TypeError('invalid case args')
+        if (item.args.kind === 'calls') plannedCalls(item.args, bp.target)
+        else if (bp.target.kind === 'relation') throw new TypeError('relation cases require calls()')
         if (!item.expect && !item.calls.length) throw new TypeError('case has no expectation')
       }
     }

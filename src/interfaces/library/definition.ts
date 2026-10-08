@@ -1,4 +1,5 @@
 import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
+import type { Relation } from '../../domain/definition/relation.js'
 import * as v from 'valibot'
 import type { CollectionEvent } from '../../application/collection/scope.js'
 import {
@@ -26,7 +27,7 @@ import type { ExtendContext, MiddlewareFn, MiddlewareOptions, SourceLocation } f
 import { positive } from '../../domain/execution/config.js'
 import type { AnyFn, FnKeys, MethodOf } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
-import { arrayValue, invoke } from '../../foundation/value.js'
+import { arrayValue, invoke, required } from '../../foundation/value.js'
 import { CaseBuilder, createMock } from './case-builder.js'
 import type {
   ChildrenPhase,
@@ -38,6 +39,7 @@ import type {
   ItDone,
   Middleware,
   MockDef,
+  RelationTestBuilder,
   Suite,
   TargetStage,
   TestBuilder,
@@ -117,6 +119,8 @@ export function createTest(location: () => SourceLocation, record: (event: Colle
     }
     target<T extends AnyFn>(fn: T): TestBuilder<T, C, R>
     target<T extends AnyFn>(name: string, fn: T): TestBuilder<T, C, R>
+    target<M extends Record<string, AnyFn>>(subject: Relation<M>): RelationTestBuilder<M, C, R>
+    target<M extends Record<string, AnyFn>>(name: string, subject: Relation<M>): RelationTestBuilder<M, C, R>
     target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
     target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
     target(...input: Value[]): object {
@@ -135,8 +139,11 @@ export function createTest(location: () => SourceLocation, record: (event: Colle
       if (mode === 'todo') item = todoCase(label, origin)
       else {
         if (!body) throw new TypeError('case requires a body')
-        const built = v.parse(v.instance(CaseBuilder), invoke(body, undefined, [new CaseBuilder<F, C>(emptyCase())]))
-        item = built.completed({ name: label, mode, origin, row })
+        const built = v.parse(
+          v.instance(CaseBuilder),
+          invoke(body, undefined, [new CaseBuilder<F, C>(emptyCase(), required(this.#data.target))]),
+        )
+        item = built.completed({ name: label, mode, origin, row }, required(this.#data.target))
       }
       return this.#next(addCase(this.#data, item), () => origin)
     }

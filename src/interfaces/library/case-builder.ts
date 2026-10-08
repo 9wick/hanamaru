@@ -1,4 +1,6 @@
 import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
+import { buildCallPlan } from '../../domain/definition/calls.js'
+import type { CallOutput, CallsResult, InvocationBuilder, NonemptyOutput } from '../../domain/definition/calls.js'
 import type {
   CallCheck,
   RuntimeCallAssertion,
@@ -27,6 +29,7 @@ import type {
   RuntimeBehavior,
   RuntimeCase,
   RuntimeMock,
+  RuntimeTarget,
 } from '../../domain/definition/runtime.js'
 import { assertionTag, behaviorTag, doneTag } from '../../domain/definition/tags.js'
 import type { BehaviorAction, SourceLocation, ExtendContext } from '../../domain/definition/types.js'
@@ -34,7 +37,7 @@ import { checkedBehavior } from '../../domain/definition/validation.js'
 import type { AnyFn, FnKeys, MethodOf } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
 import { arrayValue, invoke, nonempty } from '../../foundation/value.js'
-import type { ItBuilder, CallsBuilder, Expect, ItArgs, ItCalls, ItExpected, MockDef } from './types.js'
+import type { ItBuilder, CallsBuilder, Expect, ItArgs, ItCalls, ItExpected, ItInvocations, MockDef } from './types.js'
 
 function valueMatchers(subject: 'result' | 'error', negated?: true) {
   const assertion = (check: ValueCheck): RuntimeValueAssertion => ({
@@ -122,23 +125,30 @@ export function createMock(object: object, key: string, def: object): RuntimeMoc
 
 export class CaseBuilder<F extends AnyFn, C> {
   readonly #data: CaseData
-  constructor(data: CaseData) {
+  readonly #target: RuntimeTarget
+  constructor(data: CaseData, target: RuntimeTarget) {
     this.#data = data
+    this.#target = target
   }
   get [doneTag](): true {
     return caseDone(this.#data)
   }
   // 呼び出し元のチェーンは別クラスで #data を読めないため、完成検査と取り出しをここに置く。
-  completed(base: {
-    name: string
-    mode: RuntimeCase['mode']
-    origin: SourceLocation
-    row: CaseBlueprint['row']
-  }): RuntimeCase {
+  completed(
+    base: {
+      name: string
+      mode: RuntimeCase['mode']
+      origin: SourceLocation
+      row: CaseBlueprint['row']
+    },
+    target: RuntimeTarget,
+  ): RuntimeCase {
+    if (this.#data.args?.kind === 'calls' && this.#data.args.target !== target)
+      throw new TypeError('calls definition belongs to another target')
     return completedCase(this.#data, base)
   }
   #next(data: CaseData): CaseBuilder<F, C> {
-    return new CaseBuilder(data)
+    return new CaseBuilder(data, this.#target)
   }
   timeout(ms: number) {
     return this.#next(withTimeout(this.#data, ms))
@@ -149,14 +159,24 @@ export class CaseBuilder<F extends AnyFn, C> {
   mock<O extends object, K extends FnKeys<O>>(object: O, key: K, def: MockDef<MethodOf<O, K>>): CaseBuilder<F, C> {
     return this.#next(withMock(this.#data, createMock(object, key, def)))
   }
-  require<T extends Resource>(r: T): ItBuilder<F, ExtendContext<ResourceFields<T>, C>> {
-    return new CaseBuilder<F, ExtendContext<ResourceFields<T>, C>>(withResource(this.#data, r))
+  require<T extends Resource>(r: T): ItBuilder<F, ExtendContext<ResourceFields<T>, C>>
+  require(r: Resource): object {
+    return this.#next(withResource(this.#data, r))
   }
   args(...args: Parameters<F>): ItArgs<F, C> {
+    if (this.#target.kind === 'relation') throw new TypeError('relation cases require calls()')
     return this.#next(withArgs(this.#data, { kind: 'value', value: arrayValue(args) }))
   }
   argsFrom(build: (ctx: Readonly<C>) => Parameters<F>): ItArgs<F, C> {
+    if (this.#target.kind === 'relation') throw new TypeError('relation cases require calls()')
     return this.#next(withArgs(this.#data, { kind: 'from-context', build }))
+  }
+  calls<const O extends CallOutput>(
+    build: (c: InvocationBuilder<F>) => O & NonemptyOutput<O>,
+  ): ItInvocations<CallsResult<O>, C>
+  calls(build: object): object {
+    if (this.#data.args) throw new TypeError('args, argsFrom and calls are mutually exclusive')
+    return this.#next(withArgs(this.#data, buildCallPlan(this.#target, build)))
   }
   expect(build: (e: Expect<F, C>) => Assertions): ItExpected<C> {
     return this.#next(

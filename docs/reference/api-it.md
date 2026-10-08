@@ -34,9 +34,20 @@
 ```
 出典: [docs/examples/it-builder.test.ts](../examples/it-builder.test.ts)
 
-上記は二者択一です。引数は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
+`.args()` / `.argsFrom()` / `.calls()`は択一です。引数または呼び出し記述は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
 引数のない関数にも `.args()` を書きます。
 argsFromは各試行で、middlewareの前処理の後・テスト対象の呼び出し前に1回評価します。
+
+## calls
+
+`.calls(c => ...)`は、targetに宣言した関数への呼び出しと引数を定義します。
+一つの関数・メソッドなら`c.args(...)`、`relation({ encode, decode })`なら`c.encode.args(...)`等を使います。
+返した呼び出し記述、または名前付きレコードが、実行後の`e.result`の型と形を決めます。
+別の呼び出しの記述を引数へ渡すと、その正常な戻り値をawaitして渡します。
+詳しい例と依存・retry・失敗時の契約は[複数の呼び出しで契約をテストする](../guides/multiple-calls.md)を参照してください。
+
+callsのexpectにはresultとctxを提供します。途中のthrow / rejectはケースの失敗になり、expectは評価しません。
+mock・timeout・retry・expectCallsはケース全体へ適用できます。
 
 ## timeout / retry
 
