@@ -1,4 +1,4 @@
-import { cpSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as v from 'valibot'
 import { afterAll, beforeAll, expect, test } from 'vite-plus/test'
@@ -29,6 +29,68 @@ beforeAll(() => {
 })
 afterAll(() => {
   removePackage(installed)
+})
+
+test('installed CLI needs no module or TypeScript config and supports optional guide typechecking', () => {
+  const project = join(installed.root, 'readme-start')
+  const source = join(project, 'src')
+  mkdirSync(source, { recursive: true })
+  const packageDirectory = join(installed.consumer, 'node_modules/hanamaru')
+  const guide = readFileSync(join(packageDirectory, 'docs/guides/getting-started.md'), 'utf8')
+  const release = v.parse(
+    v.object({ version: v.string() }),
+    JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8')),
+  )
+  const [manifest, config] = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map((match) => match[1])
+  expect.assert(manifest !== undefined && config !== undefined)
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ private: true }))
+  cpSync(join(installed.consumer, 'examples/math.ts'), join(source, 'math.ts'))
+  cpSync(join(installed.consumer, 'examples/math.test.ts'), join(source, 'math.test.ts'))
+  const install = execute(
+    'npm',
+    [
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--save-dev',
+      join(installed.root, `hanamaru-${release.version}.tgz`),
+    ],
+    project,
+    120_000,
+  )
+  expect(install.status, install.stderr).toBe(0)
+  const help = execute('npx', ['--no-install', 'hanamaru', '--help'], project)
+  expect(help.status, help.stderr).toBe(0)
+  expect(help.stdout).toContain('hanamaru [files...]')
+  const version = execute('npx', ['--no-install', 'hanamaru', '--version'], project)
+  expect(version.status, version.stderr).toBe(0)
+  expect(version.stdout.trim()).toBe(release.version)
+  const output = jsonResult(
+    execute('npx', ['--no-install', 'hanamaru', 'src/math.test.ts', '--reporter', 'json'], project),
+    0,
+  )
+  expect(output.status).toBe('passed')
+  expect(testNode(output).cases).toHaveLength(1)
+  const projectManifest = v.parse(v.looseObject({}), JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')))
+  const scripts = v.parse(v.object({ scripts: v.record(v.string(), v.string()) }), JSON.parse(manifest))
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ ...projectManifest, ...scripts }))
+  writeFileSync(join(project, 'tsconfig.json'), config)
+  const typeScript = execute(
+    'npm',
+    ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', 'typescript@5.8.3'],
+    project,
+    120_000,
+  )
+  expect(typeScript.status, typeScript.stderr).toBe(0)
+  const passed = execute('npm', ['test'], project)
+  expect(passed.status, passed.stdout + passed.stderr).toBe(0)
+  expect(passed.stdout).toContain('2つの数を足す')
+  const testFile = join(source, 'math.test.ts')
+  writeFileSync(testFile, readFileSync(testFile, 'utf8').replace('toBe(3)', 'toBe(4)'))
+  const failed = execute('npm', ['test'], project)
+  expect(failed.status, failed.stdout + failed.stderr).toBe(1)
+  expect(failed.stdout).toContain('toBe')
 })
 
 test(`installed public API satisfies lifecycle and result contracts on ${runtime}`, () => {

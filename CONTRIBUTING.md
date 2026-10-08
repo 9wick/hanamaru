@@ -31,7 +31,7 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 | `npm run test:package` | tarballをインストールした利用者プロジェクトでの公開APIとCLI |
 | `npm run test:examples` | 公開文書のサンプルをhanamaru自身で実行した結果 |
 | `npm run check:docs` | リンク・アンカー・表・コードフェンスと、README.md / docs/**/*.md の全tsブロックが例と一致すること |
-| `npm run docs:sync` | 例に合わせて文書のtsブロックと出典行を書き換え |
+| `npm run docs:sync` | 例に合わせて文書のtsブロックと、出典行がある場合はそのリンクを書き換え |
 
 `test:e2e` / `test:package` / `test:examples` は単独実行でも先にビルドします。
 `test:unit` はビルドしないため、`dist/` がなくても実行できます。
@@ -84,8 +84,9 @@ CLIは `registerTest` で登録された完成定義だけを収集します。�
 <!-- example: none — 紐付けない理由 -->                  例外
 ```
 
-閉じフェンスの直後の1行は出典行で、`出典: [docs/examples/mock.test.ts](examples/mock.test.ts)`
-の形で `npm run docs:sync` が生成・更新します。
+例との紐付けと本文の同期には、この非表示のマーカーだけを使います。読者向けの出典表示は不要です。
+閉じフェンスの直後に `出典: [docs/examples/mock.test.ts](examples/mock.test.ts)` の行がある場合は、
+`npm run docs:sync` がリンクを更新します。出典行がない文書には追加しません。
 
 例ファイル側では `// #region 名前` 〜 `// #endregion 名前`（`[a-z0-9-]+`、入れ子可）で
 連続した範囲に名前を付けます。表示は範囲内の行そのままで、目印行の除去とインデントの調整だけを
@@ -137,6 +138,54 @@ Bun 1.3.5 / latest、Deno 2.9.2 / v2.xでは同じ配布物E2Eを実行します
 Bun / Denoのjobではunitテスト・lint・型検査を重複実行しません。
 OSはLinuxです。他のOSと公開npmレジストリ経由のインストールは未検証です。
 
+## リリース手順
+
+[Releaseワークフロー](.github/workflows/release.yml)と[release-it設定](.release-it.json)は、pathdencyの構成をもとにしています。
+GitHub Actionsからバージョンを指定して実行すると、検証後にnpm公開と `v<version>` タグの作成・pushを行います。
+リリース用のコミットは作らないため、`package.json` / `package-lock.json` のversionと[変更履歴](CHANGELOG.md)を先に揃え、mainへ入れてください。同じコミットのCIが全て成功していることも確認します。
+
+### npm側の設定
+
+npmのhanamaruパッケージのSettingsで、Trusted Publisherを次の内容で登録します。
+
+| 項目 | 値 |
+|---|---|
+| Provider | GitHub Actions |
+| Organization or user | `9wick` |
+| Repository | `hanamaru` |
+| Workflow filename | `release.yml` |
+
+公開にはOIDCを使います。npmの長期トークンをGitHub Secretsへ登録する必要はありません。
+設定方法は[npmのTrusted Publishing](https://docs.npmjs.com/trusted-publishers/)を参照してください。
+
+### 実行する
+
+GitHubのActionsから **Release → Run workflow** を開き、branchに `main`、versionに `0.1.0` などの公開バージョンを指定します。
+
+ワークフローはNode.js 24とnpm 11.21.0を使い、`npm ci` の後に `npm run release -- "$RELEASE_VERSION" --ci` を実行します。
+release-itの `after:bump` で `npm run check` が動き、型・lint・format・テスト・文書検査に成功してから公開します。
+`prepack` でも配布物をビルドします。同時に複数のリリースが走らないよう、ワークフローを直列化しています。
+GitHub Releaseの本文や添付ファイルは、このワークフローでは作成しません。
+
+### ローカルで公開手順を確認する
+
+release-it 21.1.1の実行にはNode.js 22.22.2以上の22系、24.15.0以上の24系、または26以上が必要です。
+hanamaruを使う側のNode.js要件は22.18以上です。
+
+依存をインストールし、作業ツリーがクリーンな状態でdry-runを実行します。
+
+```console
+npm ci
+npm run check
+npm run release -- 0.1.0 --ci --dry-run
+```
+
+`--dry-run` ではversion変更・検証フック・タグ作成・pushの予定を表示し、npmは公開のdry-runを行います。公開はされませんが、`prepack` のビルドは実行します。検証フックは実行しないため、先に `npm run check` を実行してください。
+公開後はレジストリ上のversionと、新しい利用者プロジェクトからの実行を確認してください。
+
+```console
+npm view hanamaru@0.1.0 version dist-tags
+```
 
 ## ソースコードの配置
 

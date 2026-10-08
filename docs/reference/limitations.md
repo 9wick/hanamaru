@@ -7,11 +7,12 @@
 | 対象 | 状態 |
 |---|---|
 | ビルダー・プラグイン向けblueprint・実行のAPI仕様 | 文書化済み |
-| 公開APIの型 | `src/api.ts` に定義し、`dist/` に型定義を生成。`docs/spec/hanamaru.d.ts` は公開APIを再export |
+| 公開APIの型 | `src/index.ts` から公開し、`dist/` に型定義を生成。`docs/spec/hanamaru.d.ts` は公開APIを再export |
 | 入門・グループ・middleware・each・実行設定のサンプルと型の負例 | `tsc -p docs/spec/tsconfig.json` で検証可能 |
 | ビルダー・ランナー・CLIの実装 | `src/` のTypeScript実装を `strict` で型検査。`npm test` がunit・e2e・文書サンプルの3層で実行を検証 |
 | 名前付きで読むファイルを選ぶproject | [機能の契約](../guides/projects.md)と[利用例](../guides/project-use-cases.md)を文書化。`projects`・`--project` を実装し、型とe2eで検証 |
 | 登録ベースのCLI収集 | [登録の契約](../guides/registration.md)を文書化。`registerTest` と登録収集を実装し、型とe2eで検証 |
+| 必要なテストだけで共有環境を準備するresource | [resource](../concepts/resources.md)の`perRun` / `perWorker`、依存順の準備と逆順の解放を実装し、型とe2eで検証 |
 | npmパッケージのインストールと実行 | ローカルtarballのインストール・型解決・CLI起動を確認。公開npmレジストリへの配布は未検証 |
 | モックの復元、middleware、失敗集約等の実行時保証 | 実行テストで主な経路を検証。全ての入力・環境は未検証 |
 
@@ -20,7 +21,7 @@
 ## 対応する環境
 
 初版の対応目標はNode.js 22.18以上、TypeScript 5.8以上。
-Nodeのtype strippingは22.18で既定有効になった。設定例では5.8で導入された `erasableSyntaxOnly` を使う。
+CLIは内蔵の変換器でTypeScriptを実行します。NodeでTypeScriptを直接実行する場合は、22.18で既定有効になったtype strippingの構文制約に従います。
 [Nodeの公式説明](https://nodejs.org/docs/latest-v22.x/api/typescript.html)、[TypeScript 5.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html)を参照。
 
 Bun 1.3以上での実行も対応目標とする。Nodeと同じblueprint・実行セマンティクスを使う。
@@ -42,7 +43,7 @@ Nodeでファイルを直接実行して `run(definition)` を呼ぶ場合は、
 
 ## importと設定
 
-入門例では `.ts` 拡張子、`import type`、`type: module` とNodeNextを使う。
+入門例では `.ts` 拡張子と `import type` を使います。CLIからTypeScriptのテストを実行するために、利用者プロジェクトの `type` をmoduleへ変更する必要はありません。型チェックの設定例はtsc向けで、CLIの必須設定ではありません。
 Nodeはtsconfigのpathsによる解決を行わない。
 CLIはViteの解決処理を使い、`.js` から `.ts`、拡張子省略、tsconfigの `paths` に対応します。
 BunとDenoでも、同じimportが同じ対象を読むことを受入条件にする。
@@ -113,13 +114,13 @@ timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継
 
 - 並列実行、自動的な実行順変更
 - watch、カバレッジ計測
-- process・run単位の共有資源の管理。group単位の共有資源は `group(middleware, [children])` で管理する
+- 任意のプロセス配置・複数workerでの共有資源管理。`resource` の `perRun` / `perWorker` は対応済みで、現行の実行workerは1つ。group単位では `group(middleware, [children])` も使える
 - fake timers / Date（次verで検討）、呼び出しの順序・部分一致（後続）
 - flow（今回の計画外）
 - each専用のonly/skip/todo表記（未採用）
 - signal、custom matcherの登録API、タグ・注記、snapshot
 - ビルダーコールバックや任意の述語の静的解析
-- 型チェックの内蔵（通常のtest scriptから `tsc` を実行する）
+- 型チェックの内蔵（必要な場合は既存のTypeScript環境で検査する）
 
 これらは標準の提供範囲であり、プラグインによるblueprintの利用方法を制限するものではありません。
 expectの事前構造化は書き心地を保つ方式が未決です。初版は`e.ctx`を含む現行の書き方と遅延評価を契約にします。

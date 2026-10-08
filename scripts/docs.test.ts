@@ -21,7 +21,13 @@ const regions = [
   '// #endregion mock-basics',
   '',
 ]
-const spec = ['// #region bad-args', '// @ts-expect-error 引数の型が違う', 'const wrong: number = "1"', '// #endregion bad-args', '']
+const spec = [
+  '// #region bad-args',
+  '// @ts-expect-error 引数の型が違う',
+  'const wrong: number = "1"',
+  '// #endregion bad-args',
+  '',
+]
 
 function documents(): Record<string, string> {
   const readme = [
@@ -227,13 +233,35 @@ test('an unused example file is reported while an imported helper is not', async
   expect(result.lines.some((line) => line.startsWith('docs/examples/calc.ts'))).toBe(false)
 })
 
-test.each([
-  ['missing', ''],
-  ['modified', '出典: [docs/examples/calc.ts](docs/examples/calc.ts)\n'],
-])('a %s source line is reported and repaired', async (_name, replacement) => {
+test('example bodies stay checked and synced without adding visible source lines', async () => {
+  const files = documents()
+  for (const path of ['README.md', 'docs/a.md']) {
+    files[path] = files[path].replace(/^出典: .*\n/gm, '')
+  }
+  const root = await tree(files)
+  try {
+    expect((await run([], { cwd: root })).code).toBe(0)
+    const stable = await run(['--write'], { cwd: root })
+    expect(stable.code).toBe(0)
+    expect(stable.lines.filter((line) => line.startsWith('updated '))).toStrictEqual([])
+    await writeFile(join(root, 'docs/examples/sample.test.ts'), sample.join('\n').replace('args(1, 2)', 'args(2, 3)'))
+    const changed = await run([], { cwd: root })
+    expect(changed.code).toBe(1)
+    expect(changed.lines.some((line) => line.includes('code block is out of sync'))).toBe(true)
+    expect((await run(['--write'], { cwd: root })).code).toBe(0)
+    const synced = await readFile(join(root, 'README.md'), 'utf8')
+    expect(synced).toContain('test(add).args(2, 3).expect(3)')
+    expect(synced).not.toContain('出典:')
+    expect((await run([], { cwd: root })).code).toBe(0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('an existing incorrect source line is reported and repaired', async () => {
   const files = documents()
   const original = '出典: [docs/examples/sample.test.ts](docs/examples/sample.test.ts)\n'
-  files['README.md'] = files['README.md'].replace(original, replacement)
+  files['README.md'] = files['README.md'].replace(original, '出典: [docs/examples/calc.ts](docs/examples/calc.ts)\n')
   const root = await tree(files)
   const before = await run([], { cwd: root })
   expect(before.code).toBe(1)

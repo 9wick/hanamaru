@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/release-it@21/schema/release-it.json",
+  "git": {
+    "commit": false,
+    "tagName": "v${version}",
+    "pushArgs": ["--tags"]
+  },
+  "npm": {
+    "skipChecks": true,
+    "publishPackageManager": "npm",
+    "versionArgs": ["--allow-same-version", "--ignore-scripts"]
+  },
+  "hooks": {
+    "after:bump": ["npm run check"]
+  }
+}

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { Config, createApp } from '@zeltjs/core'
 import { readFileSync } from 'node:fs'
 import * as v from 'valibot'

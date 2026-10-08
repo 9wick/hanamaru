@@ -268,8 +268,9 @@ function checkBlocks(
       })
     output.push(lines[block.open], ...expected, lines[block.close])
     index = block.close + 1
-    const expectedSource = sourceLine(document.path, marker.target)
     const actual = index < lines.length ? lines[index] : undefined
+    if (actual === undefined || !isSourceLine(actual)) continue
+    const expectedSource = sourceLine(document.path, marker.target)
     if (actual === expectedSource) {
       output.push(actual)
       index++
@@ -277,9 +278,7 @@ function checkBlocks(
     }
     errors.push({ kind: 'out-of-sync', file: document.path, line: index + 1, target: marker.target, part: 'source' })
     output.push(expectedSource)
-    if (actual !== undefined && isSourceLine(actual)) index++
-    // 直後が本文だと段落が繋がってしまうので空行を補う。
-    else if (actual !== undefined && actual.trim() !== '') output.push('')
+    index++
   }
   return { errors, lines: output, references, linked }
 }
