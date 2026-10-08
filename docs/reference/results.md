@@ -94,6 +94,7 @@ Promiseの完了を観測できない中断でもnullとし、成功の戻り値
 
 全てにphaseと人間向けmessageを保持します。messageを解析しなくても、条件・期待・観測・原因が分かります。
 アサーションの参照にはsource（expect / expectCalls）、その配列内の0始まりのindex、subject、matcherを持ちます。
+result/errorの否定条件には `negated: true` も含まれ、pretty表示では `result.not.toBe` のように表示します。
 callにはkeyも残し、sourceとindexからblueprint内のオブジェクト参照へ対応できます。同名メソッドを持つ別オブジェクトを混同しません。
 expectの配列は遅延するため、評価後に得た配列との対応です。呼び出し条件のindexはexpectの成功・失敗でずれません。
 

@@ -12,6 +12,7 @@ export type ValueCheck<V> =
 export type ResultAssertion<V = Value> = {
   readonly [assertionTag]: true
   readonly subject: 'result'
+  readonly negated?: true
   readonly check: ValueCheck<V>
 }
 
@@ -19,6 +20,7 @@ export type ResultAssertion<V = Value> = {
 export type ErasedResultAssertion = {
   readonly [assertionTag]: true
   readonly subject: 'result'
+  readonly negated?: true
   readonly check:
     | { readonly matcher: 'toBe' | 'toEqual' | 'toMatchObject'; readonly expected: Value | void }
     | { readonly matcher: 'toSatisfy'; readonly predicate: object }
@@ -28,6 +30,7 @@ export type ErasedResultAssertion = {
 export type ErrorAssertion = {
   readonly [assertionTag]: true
   readonly subject: 'error'
+  readonly negated?: true
   readonly check:
     | { readonly matcher: 'toBeInstanceOf'; readonly ctor: new (...args: never[]) => object }
     | { readonly matcher: 'toThrow'; readonly message: string | RegExp }

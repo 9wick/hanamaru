@@ -44,6 +44,7 @@ errorを含む配列は、対象がthrowまたはrejectすることを期待し�
 .expect(e => [
   e.error.toBeInstanceOf(Error),
   e.error.toThrow('save failed'),
+  e.error.not.toThrow('network failed'),
 ])
 .expectCalls(call => [
   call(mailService, 'send').notCalled(),
@@ -54,6 +55,26 @@ errorを含む配列は、対象がthrowまたはrejectすることを期待し�
 toThrowはErrorでない値には一致しません。文字列やundefinedをthrowする対象にはtoSatisfyを使えます。
 RegExpのlastIndexを検証結果へ影響させず、検証後も元の値を変更しません。
 resultとerrorを同じ配列へ入れることは型で防ぎます。
+
+## 否定
+
+`e.result.not` と `e.error.not` は、それぞれの全マッチャの一致・不一致を反転します。
+期待値とpredicateの型は通常のマッチャと同じです。
+
+<!-- example: docs/examples/matchers.test.ts#not -->
+```ts
+.expect(e => [e.result.not.toBe(0)])
+```
+
+<!-- example: docs/examples/matchers.test.ts#not-result -->
+```ts
+.expect(e => [e.result.not.toEqual({ id: 'missing' })])
+```
+
+`e.error.not.toThrow(message)` は、対象がthrowまたはrejectしたうえで、その値が指定したメッセージに一致しないことを期待します。
+正常終了を期待する条件ではありません。resultの否定も正常終了を要求します。
+比較やpredicateが例外を投げた場合は、否定でも検証失敗です。
+否定条件は通常の条件と同じ配列へ並べられ、通常の条件を変更しません。
 
 ## 呼び出し
 

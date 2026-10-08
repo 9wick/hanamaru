@@ -36,8 +36,13 @@ import type { Value } from '../../foundation/value.js'
 import { arrayValue, invoke, nonempty } from '../../foundation/value.js'
 import type { ItBuilder, CallsBuilder, Expect, ItArgs, ItCalls, ItExpected, MockDef } from './types.js'
 
-function valueAssertions(subject: 'result' | 'error') {
-  const assertion = (check: ValueCheck): RuntimeValueAssertion => ({ [assertionTag]: true, subject, check })
+function valueMatchers(subject: 'result' | 'error', negated?: true) {
+  const assertion = (check: ValueCheck): RuntimeValueAssertion => ({
+    [assertionTag]: true,
+    subject,
+    ...(negated === true ? { negated } : {}),
+    check,
+  })
   return {
     toBe: (value: Value) => assertion({ matcher: 'toBe', expected: value }),
     toEqual: (value: Value) => assertion({ matcher: 'toEqual', expected: value }),
@@ -46,6 +51,10 @@ function valueAssertions(subject: 'result' | 'error') {
     toBeInstanceOf: (ctor: new (...args: never[]) => object) => assertion({ matcher: 'toBeInstanceOf', ctor }),
     toThrow: (message: string | RegExp) => assertion({ matcher: 'toThrow', message }),
   }
+}
+
+function valueAssertions(subject: 'result' | 'error') {
+  return { ...valueMatchers(subject), not: valueMatchers(subject, true) }
 }
 
 function callMatchers(target: { object: object } | { objectFrom: object }, key: string) {

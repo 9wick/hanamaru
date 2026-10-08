@@ -58,6 +58,7 @@ export interface BehaviorBuilder<F extends AnyFn> {
 export type MockDef<F extends AnyFn> = (m: BehaviorBuilder<F>) => Behavior<F>
 
 export interface ValueAssertions<V> {
+  readonly not: Omit<ValueAssertions<V>, 'not'>
   toBe(value: V): ResultAssertion<V>
   toEqual(value: V): ResultAssertion<V>
   toMatchObject(value: V extends object ? Partial<V> : never): ResultAssertion<V>
@@ -65,6 +66,7 @@ export interface ValueAssertions<V> {
 }
 
 export interface ErrorAssertions {
+  readonly not: Omit<ErrorAssertions, 'not'>
   toBeInstanceOf(ctor: new (...args: never[]) => object): ErrorAssertion
   toThrow(message: string | RegExp): ErrorAssertion
   toMatchObject(value: Record<string, Value>): ErrorAssertion

@@ -31,6 +31,7 @@ function expectationReference(condition: RuntimeValueAssertion, index: number): 
     index,
     source: 'expect',
     subject: condition.subject,
+    ...(condition.negated === true ? { negated: true } : {}),
     matcher: condition.check.matcher,
   })
 }
@@ -150,7 +151,8 @@ export function evaluate(
       continue
     }
     try {
-      const okay = checkCondition(condition, rawValue, comparison)
+      const matches = checkCondition(condition, rawValue, comparison)
+      const okay = condition.negated === true ? !matches : matches
       const expectedValue = snapshotExpected(condition),
         actualValue = diagnostic(rawValue)
       assertions.push({
