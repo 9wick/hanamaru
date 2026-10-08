@@ -67,12 +67,14 @@ export const assertionReferenceSchema = v.union([
     index: v.number(),
     source: v.literal('expect'),
     subject: v.literal('result'),
+    negated: v.optional(v.literal(true)),
     matcher: v.picklist(['toBe', 'toEqual', 'toMatchObject', 'toSatisfy']),
   }),
   v.object({
     index: v.number(),
     source: v.literal('expect'),
     subject: v.literal('error'),
+    negated: v.optional(v.literal(true)),
     matcher: v.picklist(['toBeInstanceOf', 'toThrow', 'toMatchObject', 'toSatisfy']),
   }),
   v.object({

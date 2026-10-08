@@ -1,4 +1,6 @@
 import { expect, test } from 'vite-plus/test'
+import * as v from 'valibot'
+import { runResultSchema } from '../../domain/result/schemas.js'
 import type { Value } from '../../foundation/value.js'
 import type {
   CallAssertion,
@@ -10,6 +12,7 @@ import type {
   ValueAssertions,
 } from '../../index.js'
 import { Test, run } from '../../index.js'
+import { formatNode } from '../../interfaces/cli/reporters/pretty.js'
 
 type ResultValue = Awaited<Value>
 
@@ -33,14 +36,14 @@ function expectOutcome(result: RunResult, matches: boolean) {
 
 interface ResultRow {
   readonly actual: Value
-  readonly assert: (r: ValueAssertions<ResultValue>) => ResultAssertion<ResultValue>
+  readonly assert: (r: Omit<ValueAssertions<ResultValue>, 'not'>) => ResultAssertion<ResultValue>
   readonly matches: boolean
 }
 
 // matcher名ごとのアサーション生成をここ一箇所に閉じ込め、matcher名での動的アクセスをなくす。
 function resultGroup<E>(
   matcher: string,
-  apply: (r: ValueAssertions<ResultValue>, expected: E) => ResultAssertion<ResultValue>,
+  apply: (r: Omit<ValueAssertions<ResultValue>, 'not'>, expected: E) => ResultAssertion<ResultValue>,
   cases: readonly (readonly [actual: Value, expected: E, matches: boolean])[],
 ) {
   const rows: readonly ResultRow[] = cases.map(([actual, expected, matches]) => ({
@@ -76,21 +79,27 @@ const resultGroups = [
 
 test.for(resultGroups)('result.$matcher distinguishes matches from mismatches', async ({ rows }) => {
   for (const row of rows) {
-    const suite = new Test()
-      .target((): Value => row.actual)
-      .it('matcher', (t) => t.args().expect((e) => [row.assert(e.result)]))
-    expectOutcome(await run(suite), row.matches)
+    for (const negated of [false, true]) {
+      const suite = new Test()
+        .target((): Value => row.actual)
+        .it('matcher', (t) => t.args().expect((e) => [row.assert(negated ? e.result.not : e.result)]))
+      const result = await run(suite)
+      expectOutcome(result, negated ? !row.matches : row.matches)
+      expect(firstAttempt(result).assertions[0]?.assertion).toMatchObject(
+        negated ? { subject: 'result', negated: true } : { subject: 'result' },
+      )
+    }
   }
 })
 
 interface ErrorRow {
-  readonly assert: (a: ErrorAssertions) => ErrorAssertion
+  readonly assert: (a: Omit<ErrorAssertions, 'not'>) => ErrorAssertion
   readonly matches: boolean
 }
 
 function errorGroup<E>(
   matcher: string,
-  apply: (a: ErrorAssertions, expected: E) => ErrorAssertion,
+  apply: (a: Omit<ErrorAssertions, 'not'>, expected: E) => ErrorAssertion,
   actual: Value,
   matching: E,
   mismatching: E,
@@ -129,11 +138,100 @@ const errorGroups = [
 
 test.for(errorGroups)('error.$matcher distinguishes matches from mismatches', async ({ actual, rows }) => {
   for (const row of rows) {
-    const suite = new Test()
-      .target(() => Promise.reject(actual))
-      .it('matcher', (t) => t.args().expect((e) => [row.assert(e.error)]))
-    expectOutcome(await run(suite), row.matches)
+    for (const negated of [false, true]) {
+      const suite = new Test()
+        .target(() => Promise.reject(actual))
+        .it('matcher', (t) => t.args().expect((e) => [row.assert(negated ? e.error.not : e.error)]))
+      const result = await run(suite)
+      expectOutcome(result, negated ? !row.matches : row.matches)
+      expect(firstAttempt(result).assertions[0]?.assertion).toMatchObject(
+        negated ? { subject: 'error', negated: true } : { subject: 'error' },
+      )
+    }
   }
+})
+
+test('not leaves positive assertions independent and identifies failures in the report', async () => {
+  const result = await run(
+    new Test()
+      .target(() => 1)
+      .it('negation', (t) =>
+        t.args().expect((e) => {
+          const negative = e.result.not.toBe(1)
+          return [negative, e.result.toBe(1), e.result.not.toBe(2)]
+        }),
+      ),
+  )
+  const attempt = firstAttempt(result)
+  expect(attempt.assertions.map((a) => a.status)).toEqual(['failed', 'passed', 'passed'])
+  expect(attempt.assertions[1]?.assertion).not.toHaveProperty('negated')
+  expect(attempt.failures).toMatchObject([
+    { kind: 'assertion', assertion: { matcher: 'toBe', negated: true }, expected: { value: 1 }, actual: { value: 1 } },
+  ])
+  expect(formatNode(v.parse(runResultSchema, result).tests[0]).join('\n')).toContain('result.not.toBe')
+})
+
+test('not does not turn predicate or comparison exceptions into passing assertions', async () => {
+  const value = {
+    get value(): number {
+      throw new Error('getter failed')
+    },
+  }
+  const result = await run(
+    new Test()
+      .target(() => value)
+      .it('exceptions', (t) =>
+        t.args().expect((e) => [
+          e.result.not.toSatisfy(() => {
+            throw new Error('predicate failed')
+          }),
+          e.result.not.toEqual({ value: 1 }),
+        ]),
+      ),
+  )
+  const attempt = firstAttempt(result)
+  expect(result.status).toBe('failed')
+  expect(attempt.assertions.map((a) => a.status)).toEqual(['failed', 'failed'])
+  expect(attempt.failures).toMatchObject([
+    { kind: 'execution', phase: 'assertion', assertion: { negated: true } },
+    { kind: 'execution', phase: 'assertion', assertion: { negated: true } },
+  ])
+})
+
+test('not keeps the required target outcome and does not evaluate mismatched predicates', async () => {
+  let evaluated = 0
+  const returned = await run(
+    new Test()
+      .target(() => 1)
+      .it('return', (t) =>
+        t.args().expect((e) => [
+          e.error.not.toSatisfy(() => {
+            evaluated++
+            return false
+          }),
+        ]),
+      ),
+  )
+  const thrown = await run(
+    new Test()
+      .target((): number => {
+        throw new Error('boom')
+      })
+      .it('throw', (t) =>
+        t.args().expect((e) => [
+          e.result.not.toSatisfy(() => {
+            evaluated++
+            return false
+          }),
+        ]),
+      ),
+  )
+  for (const result of [returned, thrown]) {
+    expect(result.status).toBe('failed')
+    expect(firstAttempt(result).failures[0]?.kind).toBe('outcome')
+    expect(firstAttempt(result).assertions[0]).toMatchObject({ status: 'not-evaluated', assertion: { negated: true } })
+  }
+  expect(evaluated).toBe(0)
 })
 
 interface CallRow {

@@ -14,6 +14,12 @@ const created = new Test()
     ])
     // #endregion result
   )
+  .it('指定した値と深く一致しない', t => t
+    .args({ name: 'Alice' })
+    // #region not-result
+    .expect(e => [e.result.not.toEqual({ id: 'missing' })])
+    // #endregion not-result
+  )
   .it('保存に失敗したら通知しない', t => t
     .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
     .args({ name: 'Alice' })
@@ -21,6 +27,7 @@ const created = new Test()
     .expect(e => [
       e.error.toBeInstanceOf(Error),
       e.error.toThrow('save failed'),
+      e.error.not.toThrow('network failed'),
     ])
     .expectCalls(call => [
       call(mailService, 'send').notCalled(),
@@ -45,6 +52,15 @@ const withContext = new Test()
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 // #endregion context
 
-export const matchers = new Test().group([created, withContext])
+const withNegation = new Test()
+  .target(add)
+  .it('合計が0ではない', t => t
+    .args(1, 2)
+    // #region not
+    .expect(e => [e.result.not.toBe(0)])
+    // #endregion not
+  )
+
+export const matchers = new Test().group([created, withContext, withNegation])
 
 registerTest(matchers)

@@ -16,6 +16,7 @@ export type ResolvedCallCheck =
 export interface RuntimeValueAssertion {
   readonly [assertionTag]: true
   subject: 'result' | 'error'
+  readonly negated?: true
   check: ValueCheck
 }
 

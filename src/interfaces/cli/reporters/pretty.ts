@@ -13,7 +13,7 @@ function formatFailure(item: MutableCaseResult, depth: number, groupOrigins: Sou
     for (const issue of attempt.failures) {
       const ref = 'assertion' in issue ? issue.assertion : undefined
       const label = ref
-        ? `${ref.source === 'expectCalls' ? `call(${ref.key})` : ref.subject}.${ref.matcher}`
+        ? `${ref.source === 'expectCalls' ? `call(${ref.key})` : ref.subject}.${'negated' in ref && ref.negated ? 'not.' : ''}${ref.matcher}`
         : issue.message
       out.push(`${pad}${label}`)
       if ('expected' in issue) out.push(`${pad}  expected: ${formatValue(issue.expected)}`)

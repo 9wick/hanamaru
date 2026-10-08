@@ -25,28 +25,28 @@ export function checkedAssertion(input: Value): RuntimeValueAssertion {
   const value = objectValue(input)
   if (!validateAssertion(value)) throw new TypeError('invalid assertion')
   const subject = v.parse(v.picklist(['result', 'error']), property(value, 'subject'))
+  const negated = v.parse(v.optional(v.literal(true)), property(value, 'negated'))
+  const base = { [assertionTag]: true as const, subject, ...(negated === true ? { negated } : {}) }
   const check = objectValue(property(value, 'check'))
   const matcher = property(check, 'matcher')
   switch (matcher) {
     case 'toBe':
     case 'toEqual':
     case 'toMatchObject':
-      return { [assertionTag]: true, subject, check: { matcher, expected: property(check, 'expected') } }
+      return { ...base, check: { matcher, expected: property(check, 'expected') } }
     case 'toSatisfy':
       return {
-        [assertionTag]: true,
-        subject,
+        ...base,
         check: { matcher, predicate: functionValue(property(check, 'predicate')) },
       }
     case 'toThrow':
       return {
-        [assertionTag]: true,
-        subject,
+        ...base,
         check: { matcher, message: v.parse(v.union([v.string(), v.instance(RegExp)]), property(check, 'message')) },
       }
     case 'toBeInstanceOf': {
       const ctor = objectValue(property(check, 'ctor'))
-      return { [assertionTag]: true, subject, check: { matcher, ctor } }
+      return { ...base, check: { matcher, ctor } }
     }
     default:
       throw new TypeError('invalid assertion matcher')

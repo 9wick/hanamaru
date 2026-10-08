@@ -57,6 +57,15 @@ ready.it('返し忘れ', t => { t.args(1, 2).expect(e => [e.result.toBe(3)]) })
 ready.it('非同期述語', t => t.args(1, 2).expect(e => [e.result.toSatisfy(async () => true)]))
 // @ts-expect-error the expected value follows the awaited return type.
 ready.it('期待値型', t => t.args(1, 2).expect(e => [e.result.toBe('3')]))
+ready.it('否定', t => t.args(1, 2).expect(e => [e.result.not.toBe(0)]))
+// @ts-expect-error negated expected values retain the target return type.
+ready.it('否定の期待値型', t => t.args(1, 2).expect(e => [e.result.not.toBe('3')]))
+// @ts-expect-error negated predicates must return synchronous booleans.
+ready.it('否定の非同期述語', t => t.args(1, 2).expect(e => [e.result.not.toSatisfy(async () => true)]))
+// @ts-expect-error negation does not allow result and error assertions to coexist.
+ready.it('否定でも矛盾', t => t.args(1, 2).expect(e => [e.result.not.toBe(0), e.error.not.toThrow('bad')]))
+// @ts-expect-error negation still requires a matcher.
+ready.it('否定の未完了', t => t.args(1, 2).expect(e => [e.result.not]))
 // @ts-expect-error mock return values follow the original method.
 ready.mock(userRepository, 'save', m => m.resolves({ id: 1 }))
 // @ts-expect-error call assertion arguments follow the original method.
