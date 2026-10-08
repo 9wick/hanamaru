@@ -1,4 +1,6 @@
 import type { Resource } from './resource.js'
+import type { CallPlan } from './calls.js'
+import type { Relation } from './relation.js'
 import type { AnyFn } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
 import type { Assertions, CallAssertion, CallExpectations } from '../assertion/types.js'
@@ -118,7 +120,7 @@ export type ExecutableCase<F extends AnyFn, C> = {
   readonly row: RowBlueprint | null
   readonly config: ExecutionConfig
   readonly mocks: readonly MockBlueprint[]
-  readonly args: ValueBlueprint<Parameters<F>, C>
+  readonly args: ValueBlueprint<Parameters<F>, C> | CallPlan
 } & (
   | { readonly expect: ExpectationBlueprint<C>; readonly calls: readonly CallAssertion[] }
   | { readonly expect: null; readonly calls: CallExpectations }
@@ -171,7 +173,7 @@ export interface GroupEntry {
 export interface ErasedSuiteBlueprint<R extends object = {}> extends BlueprintBase<R> {
   readonly kind: 'test'
   readonly name: string
-  readonly target: TargetBlueprint<AnyFn>
+  readonly target: TargetBlueprint<AnyFn> | Relation
   readonly cases: readonly (
     | TodoCase
     | {
@@ -185,6 +187,7 @@ export interface ErasedSuiteBlueprint<R extends object = {}> extends BlueprintBa
         readonly args:
           | { readonly kind: 'value'; readonly value: readonly unknown[] }
           | { readonly kind: 'from-context'; readonly build: object }
+          | CallPlan
         readonly expect: object | null
         readonly calls: readonly CallAssertion[]
       }

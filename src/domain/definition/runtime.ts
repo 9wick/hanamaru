@@ -1,4 +1,6 @@
 import type { Resource } from './resource.js'
+import type { CallPlan } from './calls.js'
+import type { Relation } from './relation.js'
 import type { AnyFn } from '../../foundation/functions.js'
 import type { Value } from '../../foundation/value.js'
 import type { RuntimeCallAssertion } from '../assertion/runtime.js'
@@ -29,9 +31,12 @@ export interface RuntimeMock {
   sourceObject?: object
 }
 
-export type RuntimeTarget = { kind: 'function'; fn: AnyFn } | { kind: 'method'; object: object; key: string; fn: AnyFn }
+export type RuntimeTarget =
+  | { kind: 'function'; fn: AnyFn }
+  | { kind: 'method'; object: object; key: string; fn: AnyFn }
+  | Relation
 
-export type RuntimeArgs = { kind: 'value'; value: Value[] } | { kind: 'from-context'; build: object }
+export type RuntimeArgs = { kind: 'value'; value: Value[] } | { kind: 'from-context'; build: object } | CallPlan
 
 export interface RuntimeExpectation {
   kind: 'deferred'

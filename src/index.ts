@@ -1,4 +1,14 @@
 export { resource } from './interfaces/library/resource.js'
+export { relation } from './domain/definition/relation.js'
+export type { Relation } from './domain/definition/relation.js'
+export type {
+  CallRef,
+  CallArguments,
+  CallOutput,
+  CallsResult,
+  InvocationBuilder,
+  RelationCalls,
+} from './domain/definition/calls.js'
 export type {
   Resource,
   ResourceScope,
@@ -94,6 +104,13 @@ export type {
   ItCalls,
   ItDone,
   ItExpected,
+  InvocationExpect,
+  ItInvocations,
+  ItInvocationChecks,
+  RelationItBuilder,
+  RelationSuite,
+  RelationTestBuilder,
+  RelationCaseMethods,
   Middleware,
   MockDef,
   Suite,

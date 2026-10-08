@@ -1,5 +1,13 @@
 import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
 import type {
+  CallOutput,
+  CallsResult,
+  InvocationBuilder,
+  NonemptyOutput,
+  RelationCalls,
+} from '../../domain/definition/calls.js'
+import type { Relation } from '../../domain/definition/relation.js'
+import type {
   Assertions,
   CallAssertion,
   CallExpectations,
@@ -12,6 +20,7 @@ import type {
   Ctx,
   DefinitionBlueprint,
   DefinitionHandle,
+  ErasedSuiteBlueprint,
   ExtendContext,
   InputPhase,
   MiddlewareFn,
@@ -106,6 +115,62 @@ export interface ItBuilder<F extends AnyFn, C> extends ExecutionSettings<ItBuild
   require<T extends Resource>(r: T): ItBuilder<F, ExtendContext<ResourceFields<T>, C>>
   args(...args: Parameters<F>): ItArgs<F, C>
   argsFrom(build: (ctx: Ctx<C>) => Parameters<F>): ItArgs<F, C>
+  calls<const O extends CallOutput>(
+    build: (c: InvocationBuilder<F>) => O & NonemptyOutput<O>,
+  ): ItInvocations<CallsResult<O>, C>
+}
+
+export interface InvocationExpect<V, C> {
+  readonly result: ValueAssertions<V>
+  readonly ctx: Ctx<C>
+}
+
+export interface ItInvocations<V, C> extends ExecutionSettings<ItInvocations<V, C>> {
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItInvocations<V, C>
+  expect(build: (e: InvocationExpect<V, C>) => Assertions): ItExpected<C>
+  expectCalls(build: CallsBuilder<C>): ItInvocationChecks<V, C>
+}
+
+export interface ItInvocationChecks<V, C> extends ItDone {
+  expect(build: (e: InvocationExpect<V, C>) => Assertions): ItDone
+}
+
+export interface RelationItBuilder<M extends Record<string, AnyFn>, C> extends ExecutionSettings<
+  RelationItBuilder<M, C>
+> {
+  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): RelationItBuilder<M, C>
+  require<T extends Resource>(r: T): RelationItBuilder<M, ExtendContext<ResourceFields<T>, C>>
+  calls<const O extends CallOutput>(
+    build: (c: RelationCalls<M>) => O & NonemptyOutput<O>,
+  ): ItInvocations<CallsResult<O>, C>
+}
+
+export interface RelationCaseMethods<M extends Record<string, AnyFn>, C, R extends object = {}> {
+  each<const Row>(
+    name: string | ((row: NoInfer<Row>) => string),
+    rows: readonly Row[],
+    body: (t: RelationItBuilder<M, C>, row: NoInfer<Row>) => ItDone,
+  ): RelationSuite<M, C, R>
+  it(name: string, body: (t: RelationItBuilder<M, C>) => ItDone): RelationSuite<M, C, R>
+  only(name: string, body: (t: RelationItBuilder<M, C>) => ItDone): RelationSuite<M, C, R>
+  skip(name: string, body: (t: RelationItBuilder<M, C>) => ItDone): RelationSuite<M, C, R>
+  todo(name: string): RelationSuite<M, C, R>
+}
+
+export interface RelationSuite<M extends Record<string, AnyFn>, C, R extends object = {}>
+  extends RelationCaseMethods<M, C, R>, DefinitionHandle<R, 'attempt'> {
+  blueprint(): ErasedSuiteBlueprint<R> & { readonly target: Relation<M> }
+}
+
+export interface RelationTestBuilder<M extends Record<string, AnyFn>, C, R extends object = {}>
+  extends RelationCaseMethods<M, C, R>, ExecutionSettings<RelationTestBuilder<M, C, R>> {
+  require<T extends Resource>(r: T): RelationTestBuilder<M, ExtendContext<ResourceFields<T>, C>, R>
+  use<S extends object>(m: Middleware<C, S>): RelationTestBuilder<M, ExtendContext<C, S>, R>
+  mock<O extends object, K extends FnKeys<O>>(
+    obj: O,
+    key: K,
+    def: MockDef<MethodOf<O, K>>,
+  ): RelationTestBuilder<M, C, R>
 }
 
 export interface ItArgs<F extends AnyFn, C> extends ExecutionSettings<ItArgs<F, C>> {
@@ -198,6 +263,8 @@ export interface TargetStage<C extends object, R extends object = {}, G extends 
   mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R, G>
   target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
   target<F extends AnyFn>(name: string, fn: F): TestBuilder<F, C, R>
+  target<M extends Record<string, AnyFn>>(subject: Relation<M>): RelationTestBuilder<M, C, R>
+  target<M extends Record<string, AnyFn>>(name: string, subject: Relation<M>): RelationTestBuilder<M, C, R>
   target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
   target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
 }

@@ -75,6 +75,10 @@ const namedMethod = new Test().target('保存', userRepository, 'save')
 出典: [docs/examples/test-builder.test.ts](../examples/test-builder.test.ts)
 
 関数、またはオブジェクトとメソッド名を渡します。先頭に名前を付けることもできます。
+複数関数間の関係を対象にする場合は`target('codecの往復関係', relation({ encode, decode }))`と書けます。
+relationは空でない名前付きの関数群を保持し、そのケースでは`.calls()`で呼ぶ関数と引数を指定します。
+名前を省略すると、構成要素のキーを` / `でつないだ名前を使います。宣言するだけでは呼び出しや検証は行いません。
+[複数の呼び出しで契約をテストする](../guides/multiple-calls.md)を参照してください。
 後者は `this` をそのオブジェクトに束縛します。非関数のキーや省略可能なメソッドは型エラーです。
 関数の型から、argsの `Parameters<F>` とresultの `Awaited<ReturnType<F>>` が決まります。
 名前を省略すると関数名、メソッド形式ではメソッド名を使います。名前のない関数には `anonymous` を使います。

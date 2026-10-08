@@ -18,6 +18,7 @@ import { MethodPatch } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
 import { CallBinder, RunEvents, RunTracker, StageTimer } from './services.js'
+import { executeInvocations, InvocationFault } from './invocations.js'
 
 /** 1回のattemptが積み上げる観測結果。結果の形に変えるのは最後の1か所だけ。 */
 type AttemptRecord = {
@@ -42,7 +43,7 @@ function classifyAttemptError(error: Value, phase: ExecutionPhase): AttemptFault
     return {
       failures: error.errors
         .filter((issue) => !(issue instanceof CaseFailed))
-        .map((issue) => faultToFailure(issue, 'cleanup')),
+        .map((issue) => faultToFailure(issue, issue instanceof InvocationFault ? 'target' : 'cleanup')),
       cleanup: error.incomplete ? 'incomplete' : 'complete',
       retryable: false,
       abort: 'cleanup-failed',
@@ -57,7 +58,12 @@ function classifyAttemptError(error: Value, phase: ExecutionPhase): AttemptFault
       retryable: false,
       abort: 'cleanup-failed',
     }
-  return { failures: [faultToFailure(error, phase)], cleanup: 'complete', retryable: true, abort: null }
+  return {
+    failures: [faultToFailure(error, error instanceof InvocationFault ? 'target' : phase)],
+    cleanup: 'complete',
+    retryable: true,
+    abort: null,
+  }
 }
 
 /** 検証まで届かなかったcall期待は、結果から消さずに未評価として残す。 */
@@ -150,22 +156,32 @@ export class AttemptExecutor {
       try {
         timer.enter('args')
         const args =
-          item.args.kind === 'value' ? item.args.value : arrayValue(invoke(item.args.build, undefined, [ctx]))
+          item.args.kind === 'calls'
+            ? []
+            : item.args.kind === 'value'
+              ? item.args.value
+              : arrayValue(invoke(item.args.build, undefined, [ctx]))
         if (!Array.isArray(args)) throw new TypeError('argsFrom must return an array')
         timer.enter('target')
         let rawValue
         let outcomeKind: TargetOutcome['kind'] = 'return'
-        try {
-          const target = node.bp.target
-          rawValue = valueOf(
-            await (target.kind === 'method'
-              ? invoke(methodValue(target.object, target.key), target.object, args)
-              : invoke(target.fn, undefined, args)),
-          )
-        } catch (error) {
-          rawValue = valueOf(error)
-          outcomeKind = 'throw'
-        }
+        if (item.args.kind === 'calls') {
+          rawValue = (
+            await executeInvocations(item.args, node.bp.target, () => !timer.expired() && tracker.reason === null)
+          ).value
+        } else
+          try {
+            const target = node.bp.target
+            if (target.kind === 'relation') throw new TypeError('relation cases require calls()')
+            rawValue = valueOf(
+              await (target.kind === 'method'
+                ? invoke(methodValue(target.object, target.key), target.object, args)
+                : invoke(target.fn, undefined, args)),
+            )
+          } catch (error) {
+            rawValue = valueOf(error)
+            outcomeKind = 'throw'
+          }
         instruments.stopRecording()
         const outcome: TargetOutcome = { kind: outcomeKind, value: diagnostic(rawValue) }
         record.outcome = outcome

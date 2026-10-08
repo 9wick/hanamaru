@@ -145,6 +145,48 @@ registerTest(new Test().group('unknown arguments', [contextual]))
   expect(items.every((item) => item.attempts[0]?.status === 'passed')).toBe(true)
 })
 
+test('installed CLI executes relation dependencies and named results through workers', () => {
+  const file = consumerFixture(
+    installed,
+    'multiple-calls.test',
+    `
+import { relation } from 'hanamaru'
+const encode = async (value: string) => new TextEncoder().encode(value)
+const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
+const codec = new Test().target('codec', relation({ encode, decode }))
+  .it('round trip', t => t.calls(c => c.decode.args(c.encode.args('こんにちは')))
+    .expect(e => [e.result.toBe('こんにちは')]))
+const key = (a: string, b: string) => JSON.stringify([a, b])
+const keys = new Test().target(key).it('distinct', t => t.calls(c => ({ first: c.args('ab', 'c'), second: c.args('a', 'bc') }))
+  .expect(e => [e.result.toSatisfy(({ first, second }) => first !== second)]))
+registerTest(new Test().group('contracts', [codec, keys]))
+`,
+  )
+  const output = jsonResult(invoke(installed.env, file, '--reporter', 'json'), 0)
+  expect(output.status).toBe('passed')
+  expect(output.tests.flatMap(cases).map((item) => item.name)).toEqual(['round trip', 'distinct'])
+})
+
+test('installed CLI reports a failed invocation, its cause and unexecuted dependencies', () => {
+  const file = consumerFixture(
+    installed,
+    'failed-calls.test',
+    `
+import { relation } from 'hanamaru'
+const encode = async (_value: string): Promise<Uint8Array> => { throw new Error('broken codec') }
+const decode = (_bytes: Uint8Array): string => { throw new Error('decode must not run') }
+registerTest(new Test().target(relation({ encode, decode })).it('failure', t =>
+  t.calls(c => c.decode.args(c.encode.args('input'))).expect(e => [e.result.toBe('input')])))
+`,
+  )
+  const output = jsonResult(invoke(installed.env, file, '--reporter', 'json'), 1)
+  const attempt = testNode(output).cases[0].attempts[0]
+  expect(attempt?.failures[0]?.message).toContain('call encode #1 failed; not run: decode #2')
+  expect(attempt?.failures[0]?.phase).toBe('target')
+  expect(JSON.stringify(attempt?.failures)).toContain('broken codec')
+  expect(attempt?.assertions).toEqual([])
+})
+
 test('installed CLI loads typed consumers and reports group, each, skip and todo results', () => {
   const output = jsonResult(invoke(installed.env, 'contracts.test.ts', '--reporter', 'json'), 0)
   expect(output.status).toBe('passed')

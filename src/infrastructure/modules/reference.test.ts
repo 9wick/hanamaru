@@ -1,7 +1,7 @@
 import { createTestTarget } from '@zeltjs/testing/vitest'
 import { expect, test } from 'vite-plus/test'
 import type { TestDefinition } from '../../index.js'
-import { Test, middleware } from '../../index.js'
+import { Test, middleware, relation } from '../../index.js'
 import { createPlan } from '../../application/execution/plan.js'
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
@@ -115,4 +115,27 @@ test('execution plan shape materializes the default middleware timeout', async (
   // 収集workerと実行workerはこの文字列だけで定義の同一性を判定するため、
   // 既定値が展開されないと明示指定と暗黙指定が別物として扱われる。
   expect(implicit).toBe(await shapeOf(groupWith({ timeout: defaultMiddlewareTimeoutMs })))
+})
+
+test('execution plan shape distinguishes call dependencies, member names and output names', async () => {
+  const target = new Test().target(relation({ double: (n: number) => n * 2 }))
+  const dependent = target.it('calls', (t) =>
+    t.calls((c) => c.double.args(c.double.args(1))).expect((e) => [e.result.toBe(4)]),
+  )
+  const independent = target.it('calls', (t) =>
+    t
+      .calls((c) => ({ first: c.double.args(1), second: c.double.args(1) }))
+      .expect((e) => [e.result.toEqual({ first: 2, second: 2 })]),
+  )
+  const aliased = target.it('calls', (t) =>
+    t
+      .calls((c) => {
+        const first = c.double.args(1)
+        return { first, second: first }
+      })
+      .expect((e) => [e.result.toEqual({ first: 2, second: 2 })]),
+  )
+  expect(await shapeOf(dependent)).not.toBe(await shapeOf(independent))
+  expect(await shapeOf(independent)).not.toBe(await shapeOf(aliased))
+  expect(await shapeOf(dependent)).toContain('"members":["double"]')
 })
