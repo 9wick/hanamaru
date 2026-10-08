@@ -183,7 +183,7 @@ export interface ErasedSuiteBlueprint<R extends object = {}> extends BlueprintBa
         readonly config: ExecutionConfig
         readonly mocks: readonly MockBlueprint[]
         readonly args:
-          | { readonly kind: 'value'; readonly value: readonly Value[] }
+          | { readonly kind: 'value'; readonly value: readonly unknown[] }
           | { readonly kind: 'from-context'; readonly build: object }
         readonly expect: object | null
         readonly calls: readonly CallAssertion[]

@@ -120,6 +120,31 @@ test('installed declarations satisfy the public positive and negative type contr
   expect(checked.status, checked.stdout + checked.stderr).toBe(0)
 })
 
+test('installed CLI registers and runs targets with unknown arguments', () => {
+  const file = consumerFixture(
+    installed,
+    'unknown-arguments.test',
+    `
+const inspect = (value: unknown): string => typeof value
+const input: unknown = { id: 'u1' }
+const direct = new Test().target(inspect)
+  .it('direct unknown', t => t.args(input).expect(e => [e.result.toBe('object')]))
+  .it('undefined unknown', t => t.args(undefined).expect(e => [e.result.toBe('undefined')]))
+registerTest(direct)
+const contextual = new Test()
+  .use(middleware(async (_, next) => next({ input })))
+  .target(inspect)
+  .it('unknown from context', t => t.argsFrom(ctx => [ctx.input]).expect(e => [e.result.toBe('object')]))
+registerTest(new Test().group('unknown arguments', [contextual]))
+`,
+  )
+  const output = jsonResult(invoke(installed.env, file, '--reporter', 'json'), 0)
+  expect(output.status).toBe('passed')
+  const items = output.tests.flatMap(cases)
+  expect(items.map((item) => item.name)).toStrictEqual(['direct unknown', 'undefined unknown', 'unknown from context'])
+  expect(items.every((item) => item.attempts[0]?.status === 'passed')).toBe(true)
+})
+
 test('installed CLI loads typed consumers and reports group, each, skip and todo results', () => {
   const output = jsonResult(invoke(installed.env, 'contracts.test.ts', '--reporter', 'json'), 0)
   expect(output.status).toBe('passed')
