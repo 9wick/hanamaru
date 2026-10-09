@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { Config, createApp } from '@zeltjs/core'
+import { Config, command, createApp } from '@zeltjs/core'
+import { onNode } from '@zeltjs/adapter-node'
 import { readFileSync } from 'node:fs'
 import * as v from 'valibot'
 import { errorMessage } from './foundation/errors.js'
@@ -23,15 +24,20 @@ class PackageRelease extends CliRelease {
   override readonly version = version
 }
 
+const app = createApp([command([CliCommand])], {
+  configs: [ProcessEnvironment, PackageRelease, StdoutPresenter, CollectionSupervisor],
+})
+
 try {
-  // 1回のCLI起動が1回のscope。引数の解釈より先に組み立て、起こしたworkerの後片付けまで同じscopeで持つ。
-  const scope = await createApp([]).createRuntime({
-    configs: [ProcessEnvironment, PackageRelease, StdoutPresenter, CollectionSupervisor],
-  })
+  const nodeApp = await onNode(app)
   try {
-    process.exitCode = await (await scope.get(CliCommand)).run(process.argv.slice(2))
+    const result = await nodeApp.commands.execCommand(['run'])
+    if (result.exitCode === 1) {
+      process.stderr.write(`hanamaru: ${errorMessage(result.reason.cause ?? result.reason)}\n`)
+      process.exitCode = 2
+    }
   } finally {
-    await scope.shutdown()
+    await nodeApp.shutdown()
   }
 } catch (error) {
   process.stderr.write(`hanamaru: ${errorMessage(error)}\n`)

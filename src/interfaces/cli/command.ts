@@ -1,4 +1,4 @@
-import { Config, Injectable, inject } from '@zeltjs/core'
+import { CliConfig, Command, Config, inject } from '@zeltjs/core'
 import { CollectionRunner } from '../../application/ports/collection-runner.js'
 import { parseArgs } from './args.js'
 
@@ -9,29 +9,33 @@ export abstract class CliRelease {
 }
 
 /** 引数を解釈して、その場で答えられるものを答え、残りを収集へ渡す入口。 */
-@Injectable()
+@Command({ name: 'run', description: 'Collect and run hanamaru tests' })
 export class CliCommand {
   readonly #release: CliRelease
   readonly #runner: CollectionRunner
+  readonly #environment: CliConfig
 
-  constructor(release = inject(CliRelease), runner = inject(CollectionRunner)) {
+  constructor(release = inject(CliRelease), runner = inject(CollectionRunner), environment = inject(CliConfig)) {
     this.#release = release
     this.#runner = runner
+    this.#environment = environment
   }
 
-  run(argv: string[]): Promise<number> | number {
-    const { options, files } = parseArgs(argv)
+  async run(): Promise<void> {
+    const { options, files } = parseArgs(this.#environment.argv().slice(2))
     if (options.version) {
       process.stdout.write(`${this.#release.version}\n`)
-      return 0
+      this.#environment.setExitCode(0)
+      return
     }
     if (options.help) {
       process.stdout.write(
         'hanamaru [files...] [--project name] [--filter text] [--reporter pretty|json] [--config file] [--ci] [--fail-on-flaky] [--collection-timeout ms] [--shutdown-grace ms]\n',
       )
-      return 0
+      this.#environment.setExitCode(0)
+      return
     }
 
-    return this.#runner.run({ options, files })
+    this.#environment.setExitCode(await this.#runner.run({ options, files }))
   }
 }
