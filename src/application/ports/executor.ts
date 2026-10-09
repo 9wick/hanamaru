@@ -1,7 +1,7 @@
 import { Config } from '@zeltjs/core'
-import type { RunSettings } from '../execution/options.js'
-import type { Plan } from '../../domain/execution/model.js'
-import type { MutableAttempt, MutableGroupMiddleware, MutableRunResult, Reason } from '../../domain/result/mutable.js'
+import type { GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
+import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
+import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
 import type { ModuleInvoke, ModulePreparation, RootReference } from './module-loader.js'
 
 export interface AttemptReply {
@@ -30,9 +30,10 @@ export interface ExecutionServices {
   onLoading: (file: string) => void
 }
 
-/** 計画を実行して結果を返す。ローカルかworkerかに関わらず、走査も実行側の責務とする。 */
+/** 実行場所が提供する試行と囲みの操作。計画の走査はapplicationのサービスが担当する。 */
 export interface ExecutionHandle {
-  run(buildPlan: () => Plan, settings: RunSettings, signal?: AbortSignal): Promise<MutableRunResult>
+  attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply>
+  group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply>
   close(): Promise<void>
 }
 
@@ -44,6 +45,10 @@ export interface PreparedExecution {
 
 /** 計画が決まる前に実行環境を起こす口。openは起動完了を待たず、収集と並行して準備する。 */
 @Config({ abstract: true })
-export abstract class ExecutionLauncher {
+export abstract class ExecutionLauncher implements ExecutionHandle {
   abstract open(): PreparedExecution
+  abstract initialize(plan: Plan, roots: RootReference[], signal: AbortSignal, timeout: number): Promise<void>
+  abstract attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply>
+  abstract group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply>
+  abstract close(): Promise<void>
 }

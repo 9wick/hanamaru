@@ -2,7 +2,7 @@ import { createTestTarget } from '@zeltjs/testing/vitest'
 import { expect, test } from 'vite-plus/test'
 import type { TestDefinition } from '../../index.js'
 import { Test, middleware, relation } from '../../index.js'
-import { createPlan } from '../../application/execution/plan.js'
+import { ExecutionPlanner } from '../../application/planning/planner.js'
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import { collectBlueprints } from '../../interfaces/library/run.js'
 import { ModuleRegistry } from './reference.js'
@@ -97,8 +97,9 @@ test('context fixtures named by call.from are resolved at execution, not during 
 })
 
 async function shapeOf(definition: TestDefinition): Promise<string> {
-  const { target: registry } = await createTestTarget(ModuleRegistry)
-  return JSON.stringify(registry.describe(createPlan(collectBlueprints(definition)).allNodes))
+  const { target: registry, get } = await createTestTarget(ModuleRegistry)
+  const planner = await get(ExecutionPlanner)
+  return JSON.stringify(registry.describe(planner.create(collectBlueprints(definition)).allNodes))
 }
 
 function groupWith(options: { timeout?: number }): TestDefinition {

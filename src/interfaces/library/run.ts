@@ -1,10 +1,8 @@
 import { Injectable, inject } from '@zeltjs/core'
 import * as v from 'valibot'
 import type { RunOptions, RunSettings } from '../../application/execution/options.js'
-import { createPlan } from '../../application/execution/plan.js'
-import { LocalExecutor } from '../../application/execution/local.js'
+import { RunTests } from '../../application/usecases/run-tests.js'
 import { RunLifecycle } from '../../application/execution/lifecycle.js'
-import { RunContext } from '../../application/execution/context.js'
 import type { Deadline, Progress } from '../../application/execution/state.js'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import type { RuntimeBlueprint } from '../../domain/definition/runtime.js'
@@ -16,11 +14,15 @@ import type { Value } from '../../foundation/value.js'
 import { arrayValue } from '../../foundation/value.js'
 import { DefinitionBuilder, isDefinition } from './definition.js'
 
-export function collectBlueprints(input: Value): RuntimeBlueprint[] {
+function completedDefinitions(input: Value): DefinitionBuilder[] {
   const definitions = Array.isArray(input) ? arrayValue(input) : [input]
   if (!definitions.length || definitions.some((x) => !isDefinition(x)))
     throw new TypeError('run requires completed definitions')
-  return validatedBlueprints(definitions.map((def: Value) => v.parse(v.instance(DefinitionBuilder), def)))
+  return definitions.map((def: Value) => v.parse(v.instance(DefinitionBuilder), def))
+}
+
+export function collectBlueprints(input: Value): RuntimeBlueprint[] {
+  return validatedBlueprints(completedDefinitions(input))
 }
 
 /**
@@ -37,17 +39,15 @@ export interface RunInput extends RunSettings {
 @Injectable()
 export class LibraryRun {
   readonly #lifecycle: RunLifecycle
-  readonly #execution: LocalExecutor
-  readonly #context: RunContext
+  readonly #tests: RunTests
 
-  constructor(lifecycle = inject(RunLifecycle), execution = inject(LocalExecutor), context = inject(RunContext)) {
+  constructor(lifecycle = inject(RunLifecycle), tests = inject(RunTests)) {
     this.#lifecycle = lifecycle
-    this.#execution = execution
-    this.#context = context
+    this.#tests = tests
   }
 
   run(input: TestDefinition | readonly TestDefinition[], options: RunOptions = {}): Promise<RunResult> {
-    return this.#context.run(() => this.#run(input, options))
+    return this.#run(input, options)
   }
 
   async #run(input: TestDefinition | readonly TestDefinition[], options: RunOptions): Promise<RunResult> {
@@ -58,12 +58,9 @@ export class LibraryRun {
       else received.onTimeout?.(this.#lifecycle.capture('timeout'))
     })
     try {
-      return finalizeRun(
-        await this.#execution.run(() => createPlan(collectBlueprints(input), received), received, received.signal),
-      )
+      return finalizeRun(await this.#tests.execute(completedDefinitions(input), received, received.signal))
     } finally {
       stopObserving()
-      await this.#execution.close()
     }
   }
 }

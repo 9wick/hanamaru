@@ -1,7 +1,8 @@
 import { Injectable, inject } from '@zeltjs/core'
 import { collectWithin } from '../../application/collection/current-scope.js'
 import { CollectionLog } from '../../application/collection/scope.js'
-import { indexExecutionNodes, createPlan } from '../../application/execution/plan.js'
+import { indexExecutionNodes } from '../../application/execution/plan.js'
+import { ExecutionPlanner } from '../../application/planning/planner.js'
 import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
 import { validatedBlueprints } from '../../domain/definition/validation.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
@@ -18,15 +19,21 @@ import type { ExecutionWorkerData } from './protocol.js'
 export class ExecutionLoader {
   readonly #registry: ModuleRegistry
   readonly #channel: ExecutionChannel
+  readonly #planner: ExecutionPlanner
 
-  constructor(registry = inject(ModuleRegistry), channel = inject(ExecutionChannel)) {
+  constructor(
+    registry = inject(ModuleRegistry),
+    channel = inject(ExecutionChannel),
+    planner = inject(ExecutionPlanner),
+  ) {
     this.#registry = registry
     this.#channel = channel
+    this.#planner = planner
   }
 
   async load(runtime: RunningRuntime, workerData: ExecutionWorkerData): Promise<Map<string, ExecutionNode>> {
     const definitions = await this.#reimport(runtime, workerData)
-    const plan = createPlan(validatedBlueprints(definitions))
+    const plan = this.#planner.create(validatedBlueprints(definitions))
     if (JSON.stringify(this.#registry.describe(plan.allNodes)) !== workerData.shape)
       throw new TypeError('test definitions changed between collection and execution')
     return indexExecutionNodes(plan.allNodes)

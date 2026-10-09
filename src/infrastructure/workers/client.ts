@@ -1,10 +1,11 @@
-import { Config, inject } from '@zeltjs/core'
+import { Config, Injectable, inject } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
+import { CollectionModules } from '../../application/collection/module-session.js'
+import { CollectionReporter } from '../../application/collection/reporting.js'
+import type { RootReference } from '../../application/ports/module-loader.js'
 import { CaseFailed } from '../../application/execution/faults.js'
 import { RunLifecycle } from '../../application/execution/lifecycle.js'
-import { RunResources } from '../../application/execution/resources.js'
-import { RunWalker } from '../../application/execution/runner.js'
 import type {
   AttemptReply,
   ExecutionHandle,
@@ -15,7 +16,7 @@ import type {
 } from '../../application/ports/executor.js'
 import { ExecutionLauncher } from '../../application/ports/executor.js'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
-import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
+import type { GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
 import { errorStack } from '../../foundation/errors.js'
 import { CollectionEnvironment } from './environment.js'
 import { CollectionChannel } from './collection-channel.js'
@@ -39,7 +40,8 @@ function opening(): { settled: Promise<void>; open: () => void } {
  * 返信待ち・立ち上がりの約束・畳んだかどうかはこの1回に属し、
  * runの進み具合は開くときに受け取ったRunLifecycleへ渡す。
  */
-class RunningExecution extends RunWalker implements PreparedExecution {
+@Injectable()
+export class RunningExecution implements ExecutionHandle, PreparedExecution {
   readonly #requests = new PendingReplies<ReplyValue>()
   readonly #opening = opening()
   readonly #interrupt = () => this.#post({ type: 'interrupt' })
@@ -57,11 +59,15 @@ class RunningExecution extends RunWalker implements PreparedExecution {
   #closing: Promise<void> | undefined
   #fatal: { error: Value } | null = null
 
-  constructor(port: MessagePort, lifecycle: RunLifecycle, resources: RunResources, stop: () => Promise<void>) {
-    super(resources, lifecycle)
+  constructor(
+    environment = inject(CollectionEnvironment),
+    lifecycle = inject(RunLifecycle),
+    channel = inject(CollectionChannel),
+  ) {
+    const port = environment.executionPort
     this.#port = port
     this.#lifecycle = lifecycle
-    this.#stop = stop
+    this.#stop = () => channel.closeExecution()
     port.on('messageerror', this.#fail)
     port.on('close', () => {
       if (!this.#closing) this.#fail(new Error('execution worker disconnected'))
@@ -186,25 +192,49 @@ class RunningExecution extends RunWalker implements PreparedExecution {
  */
 @Config()
 export class WorkerExecutionLauncher extends ExecutionLauncher {
-  readonly #port: MessagePort
-  readonly #channel: CollectionChannel
-  readonly #resources: RunResources
-  readonly #lifecycle: RunLifecycle
+  readonly #execution: RunningExecution
+  readonly #modules: CollectionModules
+  readonly #reporter: CollectionReporter
 
   constructor(
-    environment = inject(CollectionEnvironment),
-    lifecycle = inject(RunLifecycle),
-    channel = inject(CollectionChannel),
-    resources = inject(RunResources),
+    execution = inject(RunningExecution),
+    modules = inject(CollectionModules),
+    reporter = inject(CollectionReporter),
   ) {
     super()
-    this.#port = environment.executionPort
-    this.#channel = channel
-    this.#resources = resources
-    this.#lifecycle = lifecycle
+    this.#execution = execution
+    this.#modules = modules
+    this.#reporter = reporter
   }
 
   open(): PreparedExecution {
-    return new RunningExecution(this.#port, this.#lifecycle, this.#resources, () => this.#channel.closeExecution())
+    return this.#execution
+  }
+
+  async initialize(plan: Plan, roots: RootReference[], signal: AbortSignal, timeout: number): Promise<void> {
+    await this.#execution.start(
+      {
+        roots,
+        preparation: this.#modules.prepare(plan.blueprints),
+        shape: JSON.stringify(this.#modules.describe(plan.allNodes)),
+      },
+      {
+        invoke: (name, args) => this.#modules.invoke(name, args),
+        signal,
+        onLoading: (file) => this.#reporter.loading(file, timeout),
+      },
+    )
+  }
+
+  attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply> {
+    return this.#execution.attempt(node, item, path, number)
+  }
+
+  group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {
+    return this.#execution.group(node, path, body)
+  }
+
+  close(): Promise<void> {
+    return this.#execution.close()
   }
 }

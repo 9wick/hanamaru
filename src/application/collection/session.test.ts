@@ -18,17 +18,15 @@ import type {
   PreparedExecution,
 } from '../ports/executor.js'
 import { ExecutionLauncher } from '../ports/executor.js'
+import type { RootReference } from '../ports/module-loader.js'
 import type { CliOptions } from './options.js'
 import type { Config as ProjectConfig } from './config.js'
 import { recordCollectionEvent } from './current-scope.js'
 import type { CliMessage } from './events.js'
 import { CollectionSink } from './events.js'
 import { CollectionSession } from './session.js'
-import { RunWalker } from '../execution/runner.js'
-import { RunResources } from '../execution/resources.js'
-import { RunLifecycle } from '../execution/lifecycle.js'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
-import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
+import type { GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
 
 function definition(): RuntimeDefinitionHandle {
   const suite = new Test().target((n: number) => n).it('case', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
@@ -122,12 +120,8 @@ function harness(options: Options = {}) {
 
   /** 走査は実物を使い、worker通信だけを観察できる実行に置き換える。 */
   @Injectable()
-  class TestExecution extends RunWalker implements PreparedExecution {
+  class TestExecution implements ExecutionHandle, PreparedExecution {
     #closing: Promise<void> | undefined
-
-    constructor(resources = inject(RunResources), lifecycle = inject(RunLifecycle)) {
-      super(resources, lifecycle)
-    }
 
     attempt(_node: SuiteNode, _item: RuntimeCase, _path: number[], number: number): Promise<AttemptReply> {
       return Promise.resolve({
@@ -177,6 +171,29 @@ function harness(options: Options = {}) {
     open(): PreparedExecution {
       opened.push('execution boot')
       return this.#execution
+    }
+
+    async initialize(_plan: Plan, _roots: RootReference[], signal: AbortSignal, _timeout: number): Promise<void> {
+      await this.#execution.start(
+        { roots: [], preparation: [], shape: '[]' },
+        {
+          invoke: () => Promise.resolve(undefined),
+          signal,
+          onLoading: () => messages.push('loading execution worker setup @' + _timeout),
+        },
+      )
+    }
+
+    attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply> {
+      return this.#execution.attempt(node, item, path, number)
+    }
+
+    group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {
+      return this.#execution.group(node, path, body)
+    }
+
+    close(): Promise<void> {
+      return this.#execution.close()
     }
   }
 

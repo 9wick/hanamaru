@@ -5,7 +5,7 @@ import { BroadcastChannel, MessageChannel, Worker } from 'node:worker_threads'
 import { expect, onTestFinished, test, vi } from 'vite-plus/test'
 import * as v from 'valibot'
 import type { ExecutionServices, ExecutionSpec } from '../../application/ports/executor.js'
-import { WorkerExecutionLauncher } from './client.js'
+import { RunningExecution } from './client.js'
 import { CollectionEnvironment } from './environment.js'
 import { CollectionChannel } from './collection-channel.js'
 
@@ -53,10 +53,10 @@ async function worker(source: string) {
       executionPorts.port1.close()
     }
   })
-  const { target: launcher } = await createTestTarget(WorkerExecutionLauncher, {
-    configs: [Environment, Channel, WorkerExecutionLauncher],
+  const { target: launcher } = await createTestTarget(RunningExecution, {
+    configs: [Environment, Channel],
   })
-  const prepared = launcher.open()
+  const prepared = launcher
   onTestFinished(async () => {
     await prepared.close()
   })

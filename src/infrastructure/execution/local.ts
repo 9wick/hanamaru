@@ -1,22 +1,28 @@
-import { Injectable, inject } from '@zeltjs/core'
+import { Config, inject } from '@zeltjs/core'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
-import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
+import type { GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
 import { required } from '../../foundation/value.js'
-import type { AttemptReply, GroupReply } from '../ports/executor.js'
-import { AttemptExecutor } from './attempt.js'
-import { now } from './clock.js'
-import { RunLifecycle } from './lifecycle.js'
-import { GroupMiddlewareExecutor } from './middleware.js'
-import { RunResources } from './resources.js'
-import { RunWalker } from './runner.js'
+import type { AttemptReply, GroupReply } from '../../application/ports/executor.js'
+import { AttemptExecutor } from '../../application/execution/attempt.js'
+import { now } from '../../application/execution/clock.js'
+import { RunLifecycle } from '../../application/execution/lifecycle.js'
+import { GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
+import type { RootReference } from '../../application/ports/module-loader.js'
+import { ExecutionLauncher } from '../../application/ports/executor.js'
+import type {
+  ExecutionHandle,
+  ExecutionServices,
+  ExecutionSpec,
+  PreparedExecution,
+} from '../../application/ports/executor.js'
 
 /**
  * 手元のプロセスで走らせる持ち場。節はそのまま実行サービスへ渡せるため、pathは見ない。
  * 囲みの区間は手元で測るため、期限の知らせもここから出す。
  */
-@Injectable()
-export class LocalExecutor extends RunWalker {
+@Config()
+export class LocalExecutor extends ExecutionLauncher implements PreparedExecution {
   readonly #attempts: AttemptExecutor
   readonly #groups: GroupMiddlewareExecutor
   readonly #lifecycle: RunLifecycle
@@ -25,12 +31,23 @@ export class LocalExecutor extends RunWalker {
     attempts = inject(AttemptExecutor),
     groups = inject(GroupMiddlewareExecutor),
     lifecycle = inject(RunLifecycle),
-    resources = inject(RunResources),
   ) {
-    super(resources, lifecycle)
+    super()
     this.#attempts = attempts
     this.#groups = groups
     this.#lifecycle = lifecycle
+  }
+
+  open(): PreparedExecution {
+    return this
+  }
+
+  start(_spec: ExecutionSpec, _services: ExecutionServices): Promise<ExecutionHandle> {
+    return Promise.resolve(this)
+  }
+
+  initialize(_plan: Plan, _roots: RootReference[], _signal: AbortSignal, _timeout: number): Promise<void> {
+    return Promise.resolve()
   }
 
   attempt(node: SuiteNode, item: RuntimeCase, _path: number[], number: number): Promise<AttemptReply> {
