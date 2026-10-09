@@ -3,7 +3,6 @@ import * as v from 'valibot'
 import type { RunOptions, RunSettings } from '../../application/execution/options.js'
 import { createPlan } from '../../application/execution/plan.js'
 import { LocalExecutor } from '../../application/execution/local.js'
-import { RunWalker } from '../../application/execution/runner.js'
 import { RunLifecycle } from '../../application/execution/lifecycle.js'
 import { RunContext } from '../../application/execution/context.js'
 import type { Deadline, Progress } from '../../application/execution/state.js'
@@ -38,18 +37,11 @@ export interface RunInput extends RunSettings {
 @Injectable()
 export class LibraryRun {
   readonly #lifecycle: RunLifecycle
-  readonly #walker: RunWalker
   readonly #execution: LocalExecutor
   readonly #context: RunContext
 
-  constructor(
-    lifecycle = inject(RunLifecycle),
-    walker = inject(RunWalker),
-    execution = inject(LocalExecutor),
-    context = inject(RunContext),
-  ) {
+  constructor(lifecycle = inject(RunLifecycle), execution = inject(LocalExecutor), context = inject(RunContext)) {
     this.#lifecycle = lifecycle
-    this.#walker = walker
     this.#execution = execution
     this.#context = context
   }
@@ -67,12 +59,7 @@ export class LibraryRun {
     })
     try {
       return finalizeRun(
-        await this.#walker.run(
-          this.#execution,
-          () => createPlan(collectBlueprints(input), received),
-          received,
-          received.signal,
-        ),
+        await this.#execution.run(() => createPlan(collectBlueprints(input), received), received, received.signal),
       )
     } finally {
       stopObserving()

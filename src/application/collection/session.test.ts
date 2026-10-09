@@ -1,5 +1,5 @@
 import type { ConfigClass } from '@zeltjs/core'
-import { Config, createApp } from '@zeltjs/core'
+import { Config, createApp, Injectable, inject } from '@zeltjs/core'
 import { expect, test } from 'vite-plus/test'
 import { Test } from '../../index.js'
 import type { RuntimeDefinitionHandle } from '../../domain/definition/runtime.js'
@@ -24,6 +24,11 @@ import { recordCollectionEvent } from './current-scope.js'
 import type { CliMessage } from './events.js'
 import { CollectionSink } from './events.js'
 import { CollectionSession } from './session.js'
+import { RunWalker } from '../execution/runner.js'
+import { RunResources } from '../execution/resources.js'
+import { RunLifecycle } from '../execution/lifecycle.js'
+import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
+import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 
 function definition(): RuntimeDefinitionHandle {
   const suite = new Test().target((n: number) => n).it('case', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
@@ -115,9 +120,16 @@ function harness(options: Options = {}) {
     }
   }
 
-  /** 実行の持ち場は1回のrunに属する。開いた回数と畳んだ回数は収集の流れから見える。 */
-  const testExecution: ExecutionHandle = {
-    attempt(_node, _item, _path, number): Promise<AttemptReply> {
+  /** 走査は実物を使い、worker通信だけを観察できる実行に置き換える。 */
+  @Injectable()
+  class TestExecution extends RunWalker implements PreparedExecution {
+    #closing: Promise<void> | undefined
+
+    constructor(resources = inject(RunResources), lifecycle = inject(RunLifecycle)) {
+      super(resources, lifecycle)
+    }
+
+    attempt(_node: SuiteNode, _item: RuntimeCase, _path: number[], number: number): Promise<AttemptReply> {
       return Promise.resolve({
         result: {
           attempt: number,
@@ -130,36 +142,41 @@ function harness(options: Options = {}) {
         },
         retryable: false,
       })
-    },
-    async group(_node, _path, body): Promise<GroupReply> {
+    }
+
+    async group(_node: GroupNode, _path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {
       await body({})
       return { middleware: { status: 'passed', durationMs: 0, failures: [], cleanup: 'complete' }, reason: null }
-    },
-    close: () => prepared.close(),
-  }
+    }
 
-  let closing: Promise<void> | undefined
-  const prepared: PreparedExecution = {
     start(_spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
       opened.push('execution start')
       services.onLoading('execution worker setup')
       options.startExecution?.()
-      return Promise.resolve(testExecution)
-    },
+      return Promise.resolve(this)
+    }
+
     close(): Promise<void> {
-      if (!closing) {
+      if (!this.#closing) {
         closed.push('execution')
-        closing = Promise.resolve()
+        this.#closing = Promise.resolve()
       }
-      return closing
-    },
+      return this.#closing
+    }
   }
 
   @Config()
   class TestExecutor extends ExecutionLauncher {
+    readonly #execution: TestExecution
+
+    constructor(execution = inject(TestExecution)) {
+      super()
+      this.#execution = execution
+    }
+
     open(): PreparedExecution {
       opened.push('execution boot')
-      return prepared
+      return this.#execution
     }
   }
 

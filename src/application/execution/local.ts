@@ -1,46 +1,40 @@
 import { Injectable, inject } from '@zeltjs/core'
-import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 import { required } from '../../foundation/value.js'
-import type { AttemptReply, ExecutionHandle, GroupReply } from '../ports/executor.js'
+import type { AttemptReply, GroupReply } from '../ports/executor.js'
 import { AttemptExecutor } from './attempt.js'
 import { now } from './clock.js'
 import { RunLifecycle } from './lifecycle.js'
 import { GroupMiddlewareExecutor } from './middleware.js'
-import { CallBinder } from './services.js'
-
-/** 差し替えを行うruntimeを持たない実行の繋ぎ方。対象をそのまま使う。 */
-export class DirectCalls extends CallBinder {
-  bind(call: ResolvedCallAssertion): ResolvedCallAssertion {
-    return call
-  }
-}
+import { RunResources } from './resources.js'
+import { RunWalker } from './runner.js'
 
 /**
  * 手元のプロセスで走らせる持ち場。節はそのまま実行サービスへ渡せるため、pathは見ない。
  * 囲みの区間は手元で測るため、期限の知らせもここから出す。
  */
 @Injectable()
-export class LocalExecutor implements ExecutionHandle {
+export class LocalExecutor extends RunWalker {
   readonly #attempts: AttemptExecutor
   readonly #groups: GroupMiddlewareExecutor
   readonly #lifecycle: RunLifecycle
-  readonly #calls = new DirectCalls()
 
   constructor(
     attempts = inject(AttemptExecutor),
     groups = inject(GroupMiddlewareExecutor),
     lifecycle = inject(RunLifecycle),
+    resources = inject(RunResources),
   ) {
+    super(resources, lifecycle)
     this.#attempts = attempts
     this.#groups = groups
     this.#lifecycle = lifecycle
   }
 
   attempt(node: SuiteNode, item: RuntimeCase, _path: number[], number: number): Promise<AttemptReply> {
-    return this.#attempts.execute(node, item, number, this.#calls)
+    return this.#attempts.execute(node, item, number)
   }
 
   group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {

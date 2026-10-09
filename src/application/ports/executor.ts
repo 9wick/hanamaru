@@ -1,7 +1,7 @@
 import { Config } from '@zeltjs/core'
-import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
-import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
-import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
+import type { RunSettings } from '../execution/options.js'
+import type { Plan } from '../../domain/execution/model.js'
+import type { MutableAttempt, MutableGroupMiddleware, MutableRunResult, Reason } from '../../domain/result/mutable.js'
 import type { ModuleInvoke, ModulePreparation, RootReference } from './module-loader.js'
 
 export interface AttemptReply {
@@ -30,13 +30,9 @@ export interface ExecutionServices {
   onLoading: (file: string) => void
 }
 
-/**
- * 1回のrunぶんの実行の持ち場。計画を辿る側は、手元で走らせるか別の場所へ渡すかを知らずに同じ形で頼む。
- * 節そのものは手元で走らせる側が、pathは別の場所へ渡す側が見る。どちらを使うかは持ち場が決める。
- */
+/** 計画を実行して結果を返す。ローカルかworkerかに関わらず、走査も実行側の責務とする。 */
 export interface ExecutionHandle {
-  attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply>
-  group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply>
+  run(buildPlan: () => Plan, settings: RunSettings, signal?: AbortSignal): Promise<MutableRunResult>
   close(): Promise<void>
 }
 

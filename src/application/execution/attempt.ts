@@ -17,7 +17,7 @@ import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
 import { MethodPatch } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
-import { CallBinder, StageTimer } from './services.js'
+import { StageTimer } from './services.js'
 import { RunLifecycle } from './lifecycle.js'
 import { executeInvocations, InvocationFault } from './invocations.js'
 
@@ -117,7 +117,7 @@ export class AttemptExecutor {
     this.#lifecycle = lifecycle
   }
 
-  async execute(node: SuiteNode, item: RuntimeCase, number: number, calls: CallBinder): Promise<AttemptReply> {
+  async execute(node: SuiteNode, item: RuntimeCase, number: number): Promise<AttemptReply> {
     const lifecycle = this.#lifecycle
     const config = configWith(node.config, item.config)
     const started = now()
@@ -142,7 +142,7 @@ export class AttemptExecutor {
         const check = condition.check
         const resolved =
           'argsFrom' in check ? { ...check, args: arrayValue(invoke(check.argsFrom, undefined, [ctx])) } : check
-        return calls.bind({ ...condition, object, check: resolved })
+        return { ...condition, object, check: resolved }
       })
       const instruments = new MethodPatch(overlayMocks(node.mocks, item.mocks), resolvedCalls, node.bp.target)
       let failed = false,

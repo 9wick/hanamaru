@@ -7,7 +7,6 @@ import { errorStack } from '../../foundation/errors.js'
 import type { RunSettings } from '../execution/options.js'
 import { runExclusively } from '../execution/current-run.js'
 import { createPlan } from '../execution/plan.js'
-import { RunWalker } from '../execution/runner.js'
 import type { ModuleSession } from '../ports/collection-host.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
@@ -73,7 +72,6 @@ export class CollectionSession {
   readonly #warnings: Warnings
   readonly #reporter: CollectionReporter
   readonly #executor: ExecutionLauncher
-  readonly #walker: RunWalker
 
   constructor(
     files = inject(ProjectFiles),
@@ -81,14 +79,12 @@ export class CollectionSession {
     warnings = inject(Warnings),
     reporter = inject(CollectionReporter),
     executor = inject(ExecutionLauncher),
-    walker = inject(RunWalker),
   ) {
     this.#files = files
     this.#modules = modules
     this.#warnings = warnings
     this.#reporter = reporter
     this.#executor = executor
-    this.#walker = walker
   }
 
   async run(request: CollectionRequest, signal: AbortSignal): Promise<void> {
@@ -217,7 +213,7 @@ export class CollectionSession {
     let result
     try {
       // 重なりの錠は走査より先に取る。読み込んだテストファイルから始まったrunも重なりとして弾く。
-      result = await runExclusively(() => this.#walker.run(execution, () => plan, settings, signal))
+      result = await runExclusively(() => execution.run(() => plan, settings, signal))
     } finally {
       await execution.close()
     }

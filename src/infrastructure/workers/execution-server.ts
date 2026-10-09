@@ -2,7 +2,6 @@ import { jsonFields } from '../../domain/definition/resource.js'
 import { Injectable, inject } from '@zeltjs/core'
 import { AttemptExecutor } from '../../application/execution/attempt.js'
 import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
-import type { CallBinder } from '../../application/execution/services.js'
 import { RunLifecycle } from '../../application/execution/lifecycle.js'
 import type { Fields } from '../../domain/definition/runtime.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
@@ -11,13 +10,11 @@ import type { RunningRuntime } from '../modules/runtime.js'
 import { CommandQueue } from './execution-session.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand } from './protocol.js'
-import { RuntimeCalls } from './runtime-calls.js'
 
 /** 1回ぶんの持ち場。読み直した計画と、その計画が指すmoduleを差し替えるruntimeは同じ1回に属する。 */
 interface Serving {
   nodes: Map<string, ExecutionNode>
   runtime: RunningRuntime
-  calls: CallBinder
 }
 
 /** 囲んでいる最中のgroup。開いた順に積み、閉じるまで子のframeとfieldsに効く。 */
@@ -67,7 +64,7 @@ export class ExecutionServer {
 
   /** 親が口を閉じるまで戻らない。差し替える相手はこのworkerが開いたruntimeに属する。 */
   async serve(nodes: Map<string, ExecutionNode>, runtime: RunningRuntime): Promise<void> {
-    await this.#serve({ nodes, runtime, calls: new RuntimeCalls(runtime) }, [])
+    await this.#serve({ nodes, runtime }, [])
   }
 
   async #serve(serving: Serving, groups: ActiveGroup[]): Promise<Extract<ExecutionCommand, { type: 'group-close' }>> {
@@ -94,7 +91,7 @@ export class ExecutionServer {
         )
           throw new TypeError('invalid attempt job')
         this.#lifecycle.markPhase('middleware')
-        const result = await this.#attempts.execute(node, serving.runtime.bindCase(item), command.number, serving.calls)
+        const result = await this.#attempts.execute(node, serving.runtime.bindCase(item), command.number)
         this.#lifecycle.end()
         this.#channel.reply(command.id, { ...result, reason: this.#lifecycle.reason })
       } else if (command.type === 'group-open') {

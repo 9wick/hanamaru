@@ -1,4 +1,3 @@
-import type { ResolvedCallAssertion } from '../../domain/assertion/runtime.js'
 import { now } from './clock.js'
 
 /**
@@ -70,13 +69,4 @@ export class StageTimer<S> {
     if (this.#startedAt !== null && now() - this.#startedAt > this.#timeoutMs) return { stage: this.#stage }
     return null
   }
-}
-
-/**
- * call期待の対象を、module runtimeが差し替えた関数へ繋ぎ直す手。
- * 差し替えを行うruntimeを持つ実行workerだけが繋ぎ直し、host側は対象をそのまま使う。
- * 繋ぎ替える相手は1回のrunで開いたruntimeに属するため、実行の持ち場が値として受け取る。
- */
-export abstract class CallBinder {
-  abstract bind(call: ResolvedCallAssertion): ResolvedCallAssertion
 }

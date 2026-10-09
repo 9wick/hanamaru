@@ -1,7 +1,6 @@
 import { checkedResources, jsonFields } from '../../domain/definition/resource.js'
 import { RunResources } from './resources.js'
-import { Injectable, inject } from '@zeltjs/core'
-import type { CaseBlueprint, Fields } from '../../domain/definition/runtime.js'
+import type { CaseBlueprint, Fields, RuntimeCase } from '../../domain/definition/runtime.js'
 import type { ExecutionNode, GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
 import type {
   MutableAttempt,
@@ -12,7 +11,7 @@ import type {
   MutableTestResult,
 } from '../../domain/result/mutable.js'
 import { required } from '../../foundation/value.js'
-import type { ExecutionHandle } from '../ports/executor.js'
+import type { AttemptReply, ExecutionHandle, GroupReply } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed } from './faults.js'
 import { allCases } from './plan.js'
@@ -20,36 +19,31 @@ import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, 
 import type { RunSettings } from './options.js'
 import { RunLifecycle } from './lifecycle.js'
 
-/** 1回のrunを辿る間ずっと同じ相手。実行の持ち場・onlyの有無は走り出す前に決まる。 */
-interface Walk {
-  execution: ExecutionHandle
-  only: boolean
-}
-
 /**
- * 計画を辿って1回のrunを進める。
- * 進捗と中断はRunLifecycle、資源の寿命はRunResourcesが担う。計画・設定・中断の合図は引数で受け取る。
+ * 計画走査の共通手順。ローカル実行とworker実行が、それぞれ自分のattempt/groupを使って辿る。
+ * 進捗・中断と資源の管理はconstructorの依存、計画・設定・中断の合図はrunの引数に置く。
  */
-@Injectable()
-export class RunWalker {
+export abstract class RunWalker implements ExecutionHandle {
   readonly #resources: RunResources
   readonly #lifecycle: RunLifecycle
 
-  constructor(resources = inject(RunResources), lifecycle = inject(RunLifecycle)) {
+  protected constructor(resources: RunResources, lifecycle: RunLifecycle) {
     this.#resources = resources
     this.#lifecycle = lifecycle
   }
 
+  protected abstract attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply>
+  protected abstract group(
+    node: GroupNode,
+    path: number[],
+    body: (fields: Fields) => Promise<void>,
+  ): Promise<GroupReply>
+  abstract close(): Promise<void>
+
   /** 重なりの錠は入口が持つ。この走査が始まる時点で錠は取られている。 */
-  async run(
-    execution: ExecutionHandle,
-    buildPlan: () => Plan,
-    settings: RunSettings,
-    signal?: AbortSignal,
-  ): Promise<MutableRunResult> {
+  async run(buildPlan: () => Plan, settings: RunSettings, signal?: AbortSignal): Promise<MutableRunResult> {
     const { nodes, only, resources: graph = [] } = buildPlan()
     const resources = this.#resources
-    const walk: Walk = { execution, only }
     const lifecycle = this.#lifecycle
     // 走り出す前に中断されていた実行は、1件も動かさずに打ち切った姿で返す。
     if (signal?.aborted) lifecycle.interrupt()
@@ -72,11 +66,11 @@ export class RunWalker {
         tests.push(
           lifecycle.reason
             ? cancelledTree(node, [node.originalIndex ?? index], only)
-            : await this.#node(walk, node, [node.originalIndex ?? index]),
+            : await this.#node(only, node, [node.originalIndex ?? index]),
         )
     } finally {
       try {
-        await execution.close()
+        await this.close()
       } finally {
         await resources.close()
       }
@@ -96,26 +90,25 @@ export class RunWalker {
     }
   }
 
-  async #node(walk: Walk, node: ExecutionNode, path: number[]): Promise<MutableNodeResult> {
+  async #node(only: boolean, node: ExecutionNode, path: number[]): Promise<MutableNodeResult> {
     // testの中身はcaseごとに通知済みなので、節として追加で知らせるのはgroupのmiddlewareだけ。
-    if (node.kind === 'test') return this.#test(walk, node, path)
-    const value = await this.#group(walk, node, path)
+    if (node.kind === 'test') return this.#test(only, node, path)
+    const value = await this.#group(only, node, path)
     this.#lifecycle.publish({ kind: 'group', path, middleware: value.middleware })
     return value
   }
 
-  async #test(walk: Walk, node: SuiteNode, path: number[]): Promise<MutableTestResult> {
+  async #test(only: boolean, node: SuiteNode, path: number[]): Promise<MutableTestResult> {
     const cases: MutableCaseResult[] = []
     for (const [index, item] of node.bp.cases.entries()) {
-      const value = await this.#case(walk, node, item, index, path)
+      const value = await this.#case(only, node, item, index, path)
       cases.push(value)
       this.#lifecycle.publish({ kind: 'case', result: value })
     }
     return { kind: 'test', name: node.bp.name, path, cases }
   }
 
-  async #group(walk: Walk, node: GroupNode, path: number[]): Promise<MutableGroupResult> {
-    const { execution, only } = walk
+  async #group(only: boolean, node: GroupNode, path: number[]): Promise<MutableGroupResult> {
     const lifecycle = this.#lifecycle
     const children: MutableGroupResult['children'] = []
     const childPath = (child: ExecutionNode, index: number) => [...path, child.originalIndex ?? index]
@@ -136,7 +129,7 @@ export class RunWalker {
           origin: required(child.entryOrigin),
           result: lifecycle.reason
             ? cancelledTree(prepared, childPath(child, index), only)
-            : await this.#node(walk, prepared, childPath(child, index)),
+            : await this.#node(only, prepared, childPath(child, index)),
         })
       }
       if (resultFailed(children.map((entry) => entry.result))) throw new CaseFailed()
@@ -171,7 +164,7 @@ export class RunWalker {
       stable: { ...supplied, ...node.stable },
       frames: [{ steps: [], fields: supplied }, ...node.frames],
     }
-    const reply = await execution.group(prepared, path, executeChildren)
+    const reply = await this.group(prepared, path, executeChildren)
     if (reply.reason) lifecycle.abort(reply.reason)
     // middlewareが落ちた時点で残りの子は動かないため、実行しなかった姿で埋める。
     if (reply.middleware.status === 'failed')
@@ -187,13 +180,12 @@ export class RunWalker {
   }
 
   async #case(
-    walk: Walk,
+    only: boolean,
     node: SuiteNode,
     item: CaseBlueprint,
     index: number,
     path: number[],
   ): Promise<MutableCaseResult> {
-    const { execution, only } = walk
     const lifecycle = this.#lifecycle
     const base = caseBase(node.config, item, index, path)
     const mode = executableMode(item, only)
@@ -209,7 +201,7 @@ export class RunWalker {
       const prepared = Object.keys(fields).length
         ? { ...node, resourceFields: fields, frames: [{ steps: [], fields }, ...node.frames] }
         : node
-      const { result, retryable } = await execution.attempt(prepared, item, base.path, number)
+      const { result, retryable } = await this.attempt(prepared, item, base.path, number)
       lifecycle.deadline({ kind: 'end' })
       lifecycle.end()
       attempts.push(result)

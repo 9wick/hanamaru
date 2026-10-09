@@ -3,6 +3,8 @@ import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CaseFailed } from '../../application/execution/faults.js'
 import { RunLifecycle } from '../../application/execution/lifecycle.js'
+import { RunResources } from '../../application/execution/resources.js'
+import { RunWalker } from '../../application/execution/runner.js'
 import type {
   AttemptReply,
   ExecutionHandle,
@@ -37,7 +39,7 @@ function opening(): { settled: Promise<void>; open: () => void } {
  * 返信待ち・立ち上がりの約束・畳んだかどうかはこの1回に属し、
  * runの進み具合は開くときに受け取ったRunLifecycleへ渡す。
  */
-class RunningExecution implements PreparedExecution, ExecutionHandle {
+class RunningExecution extends RunWalker implements PreparedExecution {
   readonly #requests = new PendingReplies<ReplyValue>()
   readonly #opening = opening()
   readonly #interrupt = () => this.#post({ type: 'interrupt' })
@@ -55,7 +57,8 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
   #closing: Promise<void> | undefined
   #fatal: { error: Value } | null = null
 
-  constructor(port: MessagePort, lifecycle: RunLifecycle, stop: () => Promise<void>) {
+  constructor(port: MessagePort, lifecycle: RunLifecycle, resources: RunResources, stop: () => Promise<void>) {
+    super(resources, lifecycle)
     this.#port = port
     this.#lifecycle = lifecycle
     this.#stop = stop
@@ -185,20 +188,23 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
 export class WorkerExecutionLauncher extends ExecutionLauncher {
   readonly #port: MessagePort
   readonly #channel: CollectionChannel
+  readonly #resources: RunResources
   readonly #lifecycle: RunLifecycle
 
   constructor(
     environment = inject(CollectionEnvironment),
     lifecycle = inject(RunLifecycle),
     channel = inject(CollectionChannel),
+    resources = inject(RunResources),
   ) {
     super()
     this.#port = environment.executionPort
     this.#channel = channel
+    this.#resources = resources
     this.#lifecycle = lifecycle
   }
 
   open(): PreparedExecution {
-    return new RunningExecution(this.#port, this.#lifecycle, () => this.#channel.closeExecution())
+    return new RunningExecution(this.#port, this.#lifecycle, this.#resources, () => this.#channel.closeExecution())
   }
 }
