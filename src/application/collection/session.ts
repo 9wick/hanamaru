@@ -8,7 +8,6 @@ import type { RunSettings } from '../execution/options.js'
 import { runExclusively } from '../execution/current-run.js'
 import { createPlan } from '../execution/plan.js'
 import { RunWalker } from '../execution/runner.js'
-import { RunSnapshot } from '../execution/services.js'
 import type { ModuleSession } from '../ports/collection-host.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
@@ -18,10 +17,10 @@ import type { RootReference } from '../ports/module-loader.js'
 import type { Config } from './config.js'
 import { collectWithin } from './current-scope.js'
 import type { Reporter } from './events.js'
-import { CollectionEvents } from './events.js'
+import { CollectionReporter } from './reporting.js'
 import type { CliOptions } from './options.js'
-import type { TestSource } from './run-events.js'
-import { CollectionRunEvents, nodeSources, withSources } from './run-events.js'
+import type { TestSource } from './sources.js'
+import { nodeSources, withSources } from './sources.js'
 import { CollectionLog } from './scope.js'
 import type { SelectedFile } from './select-files.js'
 import { selectFiles } from './select-files.js'
@@ -72,27 +71,24 @@ export class CollectionSession {
   readonly #files: ProjectFiles
   readonly #modules: ModuleToolchain
   readonly #warnings: Warnings
-  readonly #events: CollectionEvents
+  readonly #reporter: CollectionReporter
   readonly #executor: ExecutionLauncher
   readonly #walker: RunWalker
-  readonly #snapshot: RunSnapshot
 
   constructor(
     files = inject(ProjectFiles),
     modules = inject(ModuleToolchain),
     warnings = inject(Warnings),
-    events = inject(CollectionEvents),
+    reporter = inject(CollectionReporter),
     executor = inject(ExecutionLauncher),
     walker = inject(RunWalker),
-    snapshot = inject(RunSnapshot),
   ) {
     this.#files = files
     this.#modules = modules
     this.#warnings = warnings
-    this.#events = events
+    this.#reporter = reporter
     this.#executor = executor
     this.#walker = walker
-    this.#snapshot = snapshot
   }
 
   async run(request: CollectionRequest, signal: AbortSignal): Promise<void> {
@@ -106,7 +102,7 @@ export class CollectionSession {
       const execution = this.#executor.open()
       let modules: ModuleSession | undefined
       try {
-        this.#events.loading('test runtime setup', limits.timeout)
+        this.#reporter.loading('test runtime setup', limits.timeout)
         modules = await this.#modules.open(config.vite)
         const collected = await this.#collect(modules, files, limits.timeout, collecting)
         await this.#execute(execution, modules, this.#plan(modules, collected, request), limits, signal)
@@ -122,7 +118,7 @@ export class CollectionSession {
       const context = collecting.file
         ? `while collecting ${this.#files.relative(collecting.file.file)}${projectsOf(collecting.file.projects)}: `
         : ''
-      this.#events.error(context + errorStack(error))
+      this.#reporter.error(context + errorStack(error))
     }
   }
 
@@ -133,7 +129,7 @@ export class CollectionSession {
   #loadConfig(options: CliOptions): Promise<Config> {
     const timeout = options.collectionTimeout ?? 30_000
     positive(timeout, 'collectionTimeout')
-    return this.#files.readConfig(options, (file) => this.#events.loading(file, timeout))
+    return this.#files.readConfig(options, (file) => this.#reporter.loading(file, timeout))
   }
 
   #select(request: CollectionRequest, config: Config): SelectedFile[] {
@@ -157,7 +153,7 @@ export class CollectionSession {
     await collectWithin(log, async () => {
       for (const { file, projects } of files) {
         collecting.file = { file, projects }
-        this.#events.loading(file, timeout)
+        this.#reporter.loading(file, timeout)
         await modules.import(file)
         const registered = log.registrationsIn(file)
         if (!registered.length)
@@ -211,20 +207,20 @@ export class CollectionSession {
     signal: AbortSignal,
   ) {
     // 1回のrunの通知は収集のprotocolへ出す。出どころを付けられるのは計画が組み上がったこの時点から。
-    const events = new CollectionRunEvents(this.#events, sources, this.#snapshot)
-    const execution = await prepared.start(events, spec, {
+    this.#reporter.sources(sources)
+    const execution = await prepared.start(spec, {
       invoke: (name, args) => modules.invoke(name, args),
       signal,
-      onLoading: (file) => this.#events.loading(file, limits.timeout),
+      onLoading: (file) => this.#reporter.loading(file, limits.timeout),
     })
-    this.#events.running(limits.reporter, limits.shutdownGrace)
+    this.#reporter.running(limits.reporter, limits.shutdownGrace)
     let result
     try {
       // 重なりの錠は走査より先に取る。読み込んだテストファイルから始まったrunも重なりとして弾く。
-      result = await runExclusively(() => this.#walker.run(execution, () => plan, settings, events, signal))
+      result = await runExclusively(() => this.#walker.run(execution, () => plan, settings, signal))
     } finally {
       await execution.close()
     }
-    this.#events.result(withSources(result, sources), limits.reporter)
+    this.#reporter.result(withSources(result, sources), limits.reporter)
   }
 }

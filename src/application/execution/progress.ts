@@ -1,9 +1,13 @@
-import { Injectable } from '@zeltjs/core'
+import { Injectable, inject } from '@zeltjs/core'
+import { required } from '../../foundation/value.js'
+import { RunContext } from './context.js'
+import type { RunData } from './run-data.js'
 import type {
   MutableCaseResult,
   MutableGroupResult,
   MutableNodeResult,
   MutableRunResult,
+  Reason,
   MutableTestResult,
 } from '../../domain/result/mutable.js'
 import type { Progress } from './state.js'
@@ -46,48 +50,78 @@ function statusOf(failed: ReadonlySet<string>, reason: MutableRunResult['reason'
   return failed.size || reason === 'timeout' ? 'failed' : 'cancelled'
 }
 
+function indexRunResult(result: MutableRunResult): ResultIndex {
+  const index = indexResult(result.tests)
+  for (const resource of result.resources ?? [])
+    if (resource.middleware.status === 'failed') index.failed.add(`resource:${resource.id}`)
+  return index
+}
+
 /**
- * 経路で引ける部分結果ツリーの唯一の持ち主。初期ツリーを一度索引化し、完了した結果を差分で反映する。
- * 実行中のプロセスも受け取り側のプロセスも、同じprogressを同じ手順で当てて同じ木に行き着く。
+ * 経路で引ける部分結果ツリーの持ち主。初期ツリーを索引化し、完了した結果を差分で反映する。
+ * 実行側と受信側が同じprogressから同じ木を作り、打ち切り時には独立した複製を返す。
  */
 @Injectable()
 export class ProgressStore {
-  result: MutableRunResult | null = null
-  #index: ResultIndex = { cases: new Map(), groups: new Map(), failed: new Set() }
+  readonly #context: RunContext
+  readonly #indexes = new WeakMap<RunData, ResultIndex>()
+
+  constructor(context = inject(RunContext)) {
+    this.#context = context
+  }
+
+  get result(): MutableRunResult | null {
+    return this.#context.data.result
+  }
+
+  get #index(): ResultIndex {
+    return required(this.#indexes.get(this.#context.data), 'progress index requested before initialization')
+  }
 
   apply(progress: Progress): void {
     if (progress.kind === 'init') {
-      this.result = progress.result
-      this.#index = indexResult(progress.result.tests)
-      for (const resource of progress.result.resources ?? [])
-        if (resource.middleware.status === 'failed') this.#index.failed.add(`resource:${resource.id}`)
+      this.#context.data.result = progress.result
+      this.#indexes.set(this.#context.data, indexRunResult(progress.result))
       return
     }
-    const result = this.result
-    if (!result) throw new Error('progress received before initialization')
-    if (progress.kind === 'resource') {
-      result.resources ??= []
-      const index = result.resources.findIndex((r) => r.id === progress.result.id)
-      if (index < 0) result.resources.push(progress.result)
-      else result.resources[index] = progress.result
-      if (progress.result.middleware.status === 'failed') this.#index.failed.add(`resource:${progress.result.id}`)
-      else this.#index.failed.delete(`resource:${progress.result.id}`)
-    } else if (progress.kind === 'case') {
-      const slot = this.#index.cases.get(pathKey(progress.result.path))
-      if (!slot) throw new Error('progress references an unknown case')
-      slot.node.cases[slot.index] = progress.result
-      this.#markFailure(progress.result.path, caseFailed(progress.result))
-    } else {
-      const node = this.#index.groups.get(pathKey(progress.path))
-      if (!node) throw new Error('progress references an unknown group')
-      node.middleware = progress.middleware
-      this.#markFailure(progress.path, progress.middleware?.status === 'failed')
-    }
-    result.status = statusOf(this.#index.failed, result.reason)
+    if (!this.result) throw new Error('progress received before initialization')
+    this.#applyProgress(this.result, this.#index, progress)
   }
 
-  #markFailure(path: number[], failed: boolean): void {
-    if (failed) this.#index.failed.add(pathKey(path))
-    else this.#index.failed.delete(pathKey(path))
+  capture(reason: Reason, active?: Exclude<Progress, { kind: 'init' }>): MutableRunResult {
+    if (!this.result) throw new Error('snapshot requested before initialization')
+    const snapshot: MutableRunResult = structuredClone({
+      ...this.result,
+      status: reason === 'timeout' ? 'failed' : this.result.status,
+      reason,
+    })
+    if (active) this.#applyProgress(snapshot, indexRunResult(snapshot), structuredClone(active))
+    return snapshot
+  }
+  #markFailure(index: ResultIndex, path: number[], failed: boolean): void {
+    if (failed) index.failed.add(pathKey(path))
+    else index.failed.delete(pathKey(path))
+  }
+
+  #applyProgress(result: MutableRunResult, index: ResultIndex, progress: Exclude<Progress, { kind: 'init' }>): void {
+    if (progress.kind === 'resource') {
+      result.resources ??= []
+      const position = result.resources.findIndex((r) => r.id === progress.result.id)
+      if (position < 0) result.resources.push(progress.result)
+      else result.resources[position] = progress.result
+      if (progress.result.middleware.status === 'failed') index.failed.add(`resource:${progress.result.id}`)
+      else index.failed.delete(`resource:${progress.result.id}`)
+    } else if (progress.kind === 'case') {
+      const slot = index.cases.get(pathKey(progress.result.path))
+      if (!slot) throw new Error('progress references an unknown case')
+      slot.node.cases[slot.index] = progress.result
+      this.#markFailure(index, progress.result.path, caseFailed(progress.result))
+    } else {
+      const node = index.groups.get(pathKey(progress.path))
+      if (!node) throw new Error('progress references an unknown group')
+      node.middleware = progress.middleware
+      this.#markFailure(index, progress.path, progress.middleware?.status === 'failed')
+    }
+    result.status = statusOf(index.failed, result.reason)
   }
 }

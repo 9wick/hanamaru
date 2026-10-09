@@ -1,6 +1,5 @@
 import { Config, Injectable, inject } from '@zeltjs/core'
-import { RunEvents, RunTracker } from '../../application/execution/services.js'
-import type { Deadline, Progress } from '../../application/execution/state.js'
+import { RunLifecycle } from '../../application/execution/lifecycle.js'
 import { ModuleTransport } from '../../application/ports/module-loader.js'
 import type { Value } from '../../foundation/value.js'
 import { ExecutionChannel } from './execution-channel.js'
@@ -33,28 +32,6 @@ export class CompileRequests extends ModuleTransport {
   }
 }
 
-/**
- * 実行workerが外へ出せる通知。進捗の組み立てと結果ツリーはhost側が持つため、
- * workerが知らせるのはtimeoutと、そのとき見ていたphaseだけになる。
- */
-export class ChannelRunEvents extends RunEvents {
-  readonly #channel: ExecutionChannel
-  readonly #tracker: RunTracker
-
-  constructor(channel: ExecutionChannel, tracker: RunTracker) {
-    super()
-    this.#channel = channel
-    this.#tracker = tracker
-  }
-
-  progress(_progress: Progress): void {}
-  deadline(_deadline: Deadline): void {}
-
-  timedOut(): void {
-    this.#channel.timedOut(this.#tracker.phase ?? undefined)
-  }
-}
-
 /** hostから届くcommandの待ち行列。受信と取り出しのどちらが先行しても取りこぼさない。 */
 @Injectable()
 export class CommandQueue {
@@ -83,12 +60,12 @@ export class CommandQueue {
 export class ExecutionSession {
   readonly #compiles: CompileRequests
   readonly #commands: CommandQueue
-  readonly #tracker: RunTracker
+  readonly #lifecycle: RunLifecycle
 
-  constructor(compiles = inject(CompileRequests), commands = inject(CommandQueue), tracker = inject(RunTracker)) {
+  constructor(compiles = inject(CompileRequests), commands = inject(CommandQueue), lifecycle = inject(RunLifecycle)) {
     this.#compiles = compiles
     this.#commands = commands
-    this.#tracker = tracker
+    this.#lifecycle = lifecycle
   }
 
   /**
@@ -98,7 +75,7 @@ export class ExecutionSession {
   receive(message: Exclude<ExecutionIncoming, { type: 'initialize' }>): boolean {
     if (message.type === 'compiled') return this.#compiles.settle(message)
     if (message.type === 'interrupt') {
-      this.#tracker.interrupt()
+      this.#lifecycle.interrupt()
       return true
     }
     this.#commands.push(message)

@@ -2,7 +2,6 @@ import { Config } from '@zeltjs/core'
 import type { Fields, RuntimeCase } from '../../domain/definition/runtime.js'
 import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
-import type { RunEvents } from '../execution/services.js'
 import type { ModuleInvoke, ModulePreparation, RootReference } from './module-loader.js'
 
 export interface AttemptReply {
@@ -41,18 +40,9 @@ export interface ExecutionHandle {
   close(): Promise<void>
 }
 
-/**
- * 実行の持ち場を開く口。
- * 通知の受け取り手も何を走らせるかも外との繋ぎ方も収集が終わるまで決まらないため、どれもstartで受け取る。
- */
-@Config({ abstract: true })
-export abstract class Executor {
-  abstract start(events: RunEvents, spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle>
-}
-
 /** 計画を待つ実行の持ち場。収集中の失敗でも開いた側が畳む。closeは何度呼んでも同じ終了を待つ。 */
 export interface PreparedExecution {
-  start(events: RunEvents, spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle>
+  start(spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle>
   close(): Promise<void>
 }
 

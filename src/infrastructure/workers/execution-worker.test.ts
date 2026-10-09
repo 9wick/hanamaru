@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { MessageChannel } from 'node:worker_threads'
 import * as v from 'valibot'
 import { expect, onTestFinished, test, vi } from 'vite-plus/test'
-import { RunTracker } from '../../application/execution/services.js'
+import { RunLifecycle } from '../../application/execution/lifecycle.js'
 import { ValueComparison } from '../comparison.js'
 import { ExecutionEnvironment } from './environment.js'
 import { ExecutionLoader } from './execution-loader.js'
@@ -21,7 +21,7 @@ async function wired() {
   const scope = await createApp([]).createRuntime({ configs: [Environment, ValueComparison, CompileRequests] })
   const loaded = vi.spyOn(await scope.get(ExecutionLoader), 'load').mockResolvedValue(new Map())
   const served = vi.spyOn(await scope.get(ExecutionServer), 'serve').mockResolvedValue()
-  const tracker = await scope.get(RunTracker)
+  const lifecycle = await scope.get(RunLifecycle)
   ;(await scope.get(ExecutionWorker)).serve()
   onTestFinished(async () => {
     port1.close()
@@ -34,11 +34,11 @@ async function wired() {
     const inputs: unknown[] = await once(port2, 'message')
     return v.parse(executionMessageSchema, inputs[0])
   }
-  return { port: port2, loaded, served, tracker, receive }
+  return { port: port2, loaded, served, lifecycle, receive }
 }
 
 test('the worker waits for a plan, preserves an early interrupt, and rejects repeated initialization', async () => {
-  const { port, loaded, served, tracker, receive } = await wired()
+  const { port, loaded, served, lifecycle, receive } = await wired()
   expect(loaded).not.toHaveBeenCalled()
   port.postMessage({ type: 'interrupt' })
   const ready = receive()
@@ -48,7 +48,7 @@ test('the worker waits for a plan, preserves an early interrupt, and rejects rep
   expect(loaded).toHaveBeenCalledTimes(1)
   expect(loaded.mock.calls[0][1]).toStrictEqual(spec)
   expect(served).toHaveBeenCalledTimes(1)
-  expect(tracker.reason).toBe('interrupted')
+  expect(lifecycle.reason).toBe('interrupted')
   const failure = receive()
   port.postMessage({ type: 'initialize', spec })
   const repeated = await failure

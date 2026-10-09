@@ -1,12 +1,44 @@
 import { expect, test } from 'vite-plus/test'
 import type { MutableRunResult } from '../../domain/result/mutable.js'
 import type { RunOptions } from '../../index.js'
-import { Test, middleware, run } from '../../index.js'
+import { Test, middleware, resource, run } from '../../index.js'
 import type { RunInput } from '../../interfaces/library/run.js'
 import type { Deadline, Progress } from './state.js'
 
 // 進捗・期限・タイムアウトの通知は公開RunOptionsにない内部オプション。
 const internalOptions = (options: RunInput): RunOptions => options
+
+test('later runs have fresh interruption state and reopen resources on the shared runtime', async () => {
+  const log: string[] = []
+  const connection = resource({
+    name: 'connection',
+    scope: 'perRun',
+    async setup(_, next) {
+      log.push('open')
+      try {
+        return await next({ value: 1 })
+      } finally {
+        log.push('close')
+      }
+    },
+  })
+  const suite = new Test()
+    .require(connection)
+    .target((value: number) => value)
+    .it('case', (t) => t.argsFrom((ctx) => [ctx.value]).expect((e) => [e.result.toBe(1)]))
+  const controller = new AbortController()
+  controller.abort()
+  const interrupted = await run(suite, internalOptions({ signal: controller.signal }))
+  expect(interrupted.reason).toBe('interrupted')
+  expect(log).toStrictEqual([])
+  const first = await run(suite)
+  const second = await run(suite)
+  expect([first.status, second.status]).toStrictEqual(['passed', 'passed'])
+  expect(first.resources).toHaveLength(1)
+  expect(second.resources).toHaveLength(1)
+  expect(log).toStrictEqual(['open', 'close', 'open', 'close'])
+  expect(interrupted.resources?.[0].middleware.status).toBe('not-run')
+})
 
 function caseProgress(progress: Progress) {
   expect.assert(progress.kind === 'case')
@@ -79,7 +111,7 @@ test('a timeout snapshot keeps the results finished before it', async () => {
     middleware(async (_, next) => next()),
     [cases],
   )
-  const result = await run(root, internalOptions({ onTimeout: (value) => snapshots.push(structuredClone(value)) }))
+  const result = await run(root, internalOptions({ onTimeout: (value) => snapshots.push(value) }))
   expect(result.reason).toBe('timeout')
   expect(snapshots.length).toBe(1)
   const node = snapshots[0]?.tests[0]
@@ -91,6 +123,33 @@ test('a timeout snapshot keeps the results finished before it', async () => {
   expect(child.cases.map((item) => item.attempts[0]?.status ?? null)).toStrictEqual(['passed', 'failed', null])
   expect(child.cases.map((item) => item.notRun ?? null)).toStrictEqual([null, null, 'todo'])
   expect(child.cases[1]?.attempts[0]?.failures[0]?.kind).toBe('timeout')
+})
+
+test('changing a timeout snapshot cannot change completed or active execution results', async () => {
+  const suite = new Test()
+    .timeout(20)
+    .target(async (n: number) => {
+      if (n === 2) await new Promise<void>((resolve) => setTimeout(resolve, 80))
+      return n
+    })
+    .it('fast', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
+    .it('slow', (t) => t.args(2).expect((e) => [e.result.toBe(2)]))
+  const result = await run(
+    suite,
+    internalOptions({
+      onTimeout(snapshot) {
+        const node = snapshot.tests[0]
+        expect.assert(node?.kind === 'test')
+        node.cases[0].attempts.length = 0
+        node.cases[1].path[1] = 99
+      },
+    }),
+  )
+  const node = result.tests[0]
+  expect.assert(node.kind === 'test')
+  expect(node.cases[0].attempts[0]?.status).toBe('passed')
+  expect(node.cases[1].path).toStrictEqual([0, 1])
+  expect(node.cases[1].config.timeout).toBe(20)
 })
 
 test('an attempt timeout reports the phase it reached', async () => {

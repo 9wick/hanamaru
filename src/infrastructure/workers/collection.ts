@@ -1,7 +1,7 @@
 import { Config, createApp } from '@zeltjs/core'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 import * as v from 'valibot'
-import { CollectionEvents } from '../../application/collection/events.js'
+import { CollectionReporter } from '../../application/collection/reporting.js'
 import { errorStack } from '../../foundation/errors.js'
 import { ProjectFilesystem } from '../filesystem/project-files.js'
 import { ModuleEntry } from '../modules/entry.js'
@@ -48,13 +48,13 @@ export function startCollection(runtimeURL: URL): void {
       ],
     })
     .then(async (scope) => {
-      const events = await scope.get(CollectionEvents)
+      const reporter = await scope.get(CollectionReporter)
       const worker = await scope.get(CollectionWorker)
       try {
         await worker.run(workerData)
       } finally {
         // scopeを畳む途中の失敗も収集の失敗と同じ通り道で伝える。
-        await scope.shutdown().catch((error: unknown) => events.error(errorStack(released(error))))
+        await scope.shutdown().catch((error: unknown) => reporter.error(errorStack(released(error))))
       }
     })
     .catch((error: unknown) => process.stderr.write(`${errorStack(error)}\n`))

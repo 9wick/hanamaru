@@ -45,7 +45,11 @@ export type ActiveExecution =
   | { kind: 'group'; path: number[]; stage: 'before' | 'after' | 'contract'; started: number; timeoutMs: number }
 
 /** 実行中の1件を、いま与えられた理由で打ち切った場合の結果として表す。 */
-export function progressOf(active: ActiveExecution, phase: ExecutionPhase | null, reason: Reason): Progress {
+export function progressOf(
+  active: ActiveExecution,
+  phase: ExecutionPhase | null,
+  reason: Reason,
+): Exclude<Progress, { kind: 'init' }> {
   if (active.kind === 'attempt') {
     const { base, attempts, number, started, timeoutMs } = active
     return {
@@ -124,3 +128,9 @@ export function progressOf(active: ActiveExecution, phase: ExecutionPhase | null
     },
   }
 }
+
+/** 実行で起きたこと。振る舞いや通知先は持たない。 */
+export type RunEvent =
+  | { readonly kind: 'progress'; readonly progress: Progress }
+  | { readonly kind: 'deadline'; readonly deadline: Deadline }
+  | { readonly kind: 'timeout'; readonly phase: ExecutionPhase | null }

@@ -2,7 +2,7 @@ import { Injectable, inject } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
 import type { Stage } from '../../application/execution/state.js'
-import type { ExecutionPhase } from '../../domain/result/types.js'
+import { RunLifecycle } from '../../application/execution/lifecycle.js'
 import { errorStack } from '../../foundation/errors.js'
 import type { Value } from '../../foundation/value.js'
 import type { ExecutionIncoming, ExecutionMessage, ReplyValue } from './protocol.js'
@@ -14,8 +14,11 @@ import { executionIncomingSchema } from './schemas.js'
 export class ExecutionChannel {
   readonly #port: MessagePort
 
-  constructor(environment = inject(ExecutionEnvironment)) {
+  constructor(environment = inject(ExecutionEnvironment), lifecycle = inject(RunLifecycle)) {
     this.#port = environment.port
+    lifecycle.observe((event) => {
+      if (event.kind === 'timeout') this.#post({ type: 'timeout', phase: event.phase ?? undefined })
+    })
   }
 
   #post(message: ExecutionMessage): void {
@@ -33,9 +36,6 @@ export class ExecutionChannel {
   }
   reply(id: number, value: ReplyValue): void {
     this.#post({ type: 'reply', id, value })
-  }
-  timedOut(phase: ExecutionPhase | undefined): void {
-    this.#post({ type: 'timeout', phase })
   }
   groupStage(path: number[], stage: Stage, timeoutMs: number): void {
     this.#post({ type: 'group-stage', path, stage, timeoutMs })

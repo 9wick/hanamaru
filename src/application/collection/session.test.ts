@@ -9,7 +9,6 @@ import { collectBlueprints } from '../../interfaces/library/run.js'
 import type { ModuleSession } from '../ports/collection-host.js'
 import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
-import type { RunEvents } from '../execution/services.js'
 import type {
   AttemptReply,
   ExecutionHandle,
@@ -141,7 +140,7 @@ function harness(options: Options = {}) {
 
   let closing: Promise<void> | undefined
   const prepared: PreparedExecution = {
-    start(_events: RunEvents, _spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
+    start(_spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
       opened.push('execution start')
       services.onLoading('execution worker setup')
       options.startExecution?.()

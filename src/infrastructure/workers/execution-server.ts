@@ -2,13 +2,13 @@ import { jsonFields } from '../../domain/definition/resource.js'
 import { Injectable, inject } from '@zeltjs/core'
 import { AttemptExecutor } from '../../application/execution/attempt.js'
 import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
-import type { CallBinder, RunEvents } from '../../application/execution/services.js'
-import { RunTracker } from '../../application/execution/services.js'
+import type { CallBinder } from '../../application/execution/services.js'
+import { RunLifecycle } from '../../application/execution/lifecycle.js'
 import type { Fields } from '../../domain/definition/runtime.js'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
 import { required } from '../../foundation/value.js'
 import type { RunningRuntime } from '../modules/runtime.js'
-import { CommandQueue, ChannelRunEvents } from './execution-session.js'
+import { CommandQueue } from './execution-session.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand } from './protocol.js'
 import { RuntimeCalls } from './runtime-calls.js'
@@ -46,25 +46,23 @@ function withGroups<N extends ExecutionNode>(node: N, groups: ActiveGroup[], sup
 @Injectable()
 export class ExecutionServer {
   readonly #commands: CommandQueue
-  readonly #tracker: RunTracker
+  readonly #lifecycle: RunLifecycle
   readonly #attempts: AttemptExecutor
   readonly #groupMiddleware: GroupMiddlewareExecutor
   readonly #channel: ExecutionChannel
-  readonly #events: RunEvents
 
   constructor(
     commands = inject(CommandQueue),
-    tracker = inject(RunTracker),
+    lifecycle = inject(RunLifecycle),
     attempts = inject(AttemptExecutor),
     groupMiddleware = inject(GroupMiddlewareExecutor),
     channel = inject(ExecutionChannel),
   ) {
     this.#commands = commands
-    this.#tracker = tracker
+    this.#lifecycle = lifecycle
     this.#attempts = attempts
     this.#groupMiddleware = groupMiddleware
     this.#channel = channel
-    this.#events = new ChannelRunEvents(channel, tracker)
   }
 
   /** 親が口を閉じるまで戻らない。差し替える相手はこのworkerが開いたruntimeに属する。 */
@@ -95,16 +93,10 @@ export class ExecutionServer {
           command.number < 1
         )
           throw new TypeError('invalid attempt job')
-        this.#tracker.markPhase('middleware')
-        const result = await this.#attempts.execute(
-          node,
-          serving.runtime.bindCase(item),
-          command.number,
-          serving.calls,
-          this.#events,
-        )
-        this.#tracker.end()
-        this.#channel.reply(command.id, { ...result, reason: this.#tracker.reason })
+        this.#lifecycle.markPhase('middleware')
+        const result = await this.#attempts.execute(node, serving.runtime.bindCase(item), command.number, serving.calls)
+        this.#lifecycle.end()
+        this.#channel.reply(command.id, { ...result, reason: this.#lifecycle.reason })
       } else if (command.type === 'group-open') {
         if (node.kind !== 'group' || !node.bp.middleware) throw new TypeError('invalid group job')
         const closeState: { command?: Extract<ExecutionCommand, { type: 'group-close' }> } = {}
@@ -119,7 +111,6 @@ export class ExecutionServer {
             if (closeState.command.failed) failChildren()
           },
           (stage, timeoutMs) => this.#channel.groupStage(command.path, stage, timeoutMs),
-          this.#events,
         )
         this.#channel.reply(closeState.command ? closeState.command.id : command.id, { ...result, entered: false })
       } else throw new TypeError('unknown execution command')

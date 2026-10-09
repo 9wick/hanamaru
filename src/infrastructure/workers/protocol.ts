@@ -2,7 +2,7 @@ import type { Fields } from '../../domain/definition/runtime.js'
 import type { CliOptions } from '../../application/collection/options.js'
 import type { MessagePort } from 'node:worker_threads'
 import type { Stage } from '../../application/execution/state.js'
-import type { AttemptReply, Executor, GroupReply } from '../../application/ports/executor.js'
+import type { AttemptReply, PreparedExecution, GroupReply } from '../../application/ports/executor.js'
 import type { ModulePreparation, RootReference } from '../../application/ports/module-loader.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
 import type { Value } from '../../foundation/value.js'
@@ -49,4 +49,4 @@ export type ExecutionIncoming =
   | { type: 'interrupt' }
   | { type: 'compiled'; id: number; result?: Value; error?: string }
 
-export type ExecutionClient = Executor
+export type ExecutionClient = PreparedExecution

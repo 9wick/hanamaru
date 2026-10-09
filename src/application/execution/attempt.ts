@@ -17,7 +17,8 @@ import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
 import { MethodPatch } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
-import { CallBinder, RunEvents, RunTracker, StageTimer } from './services.js'
+import { CallBinder, StageTimer } from './services.js'
+import { RunLifecycle } from './lifecycle.js'
 import { executeInvocations, InvocationFault } from './invocations.js'
 
 /** 1回のattemptが積み上げる観測結果。結果の形に変えるのは最後の1か所だけ。 */
@@ -104,26 +105,20 @@ function finalizeAttempt(
 
 /**
  * 1回のattemptを走らせる。どの節のどのcaseを何回目に走らせるかは、実行ごとの指定として引数で受け取る。
- * call期待の繋ぎ替えと通知の受け取り手は1回のrunに属するため、これも引数で受け取る。
+ * 実行状態の更新と観測は、同じruntimeのRunLifecycleに委ねる。
  */
 @Injectable()
 export class AttemptExecutor {
   readonly #comparison: Comparison
-  readonly #tracker: RunTracker
+  readonly #lifecycle: RunLifecycle
 
-  constructor(comparison = inject(Comparison), tracker = inject(RunTracker)) {
+  constructor(comparison = inject(Comparison), lifecycle = inject(RunLifecycle)) {
     this.#comparison = comparison
-    this.#tracker = tracker
+    this.#lifecycle = lifecycle
   }
 
-  async execute(
-    node: SuiteNode,
-    item: RuntimeCase,
-    number: number,
-    calls: CallBinder,
-    events: RunEvents,
-  ): Promise<AttemptReply> {
-    const tracker = this.#tracker
+  async execute(node: SuiteNode, item: RuntimeCase, number: number, calls: CallBinder): Promise<AttemptReply> {
+    const lifecycle = this.#lifecycle
     const config = configWith(node.config, item.config)
     const started = now()
     const record: AttemptRecord = {
@@ -134,9 +129,8 @@ export class AttemptExecutor {
       retryable: true,
     }
     const timer = new StageTimer<ExecutionPhase>(config.timeout, 'middleware', (phase) => {
-      tracker.markPhase(phase)
-      tracker.abort('timeout')
-      events.timedOut()
+      lifecycle.markPhase(phase)
+      lifecycle.timedOut()
     })
     const core = async (ctx: Readonly<Fields>) => {
       if (timer.expired()) return
@@ -167,7 +161,7 @@ export class AttemptExecutor {
         let outcomeKind: TargetOutcome['kind'] = 'return'
         if (item.args.kind === 'calls') {
           rawValue = (
-            await executeInvocations(item.args, node.bp.target, () => !timer.expired() && tracker.reason === null)
+            await executeInvocations(item.args, node.bp.target, () => !timer.expired() && lifecycle.reason === null)
           ).value
         } else
           try {
@@ -216,7 +210,7 @@ export class AttemptExecutor {
           frame.steps[stepIndex],
           Object.freeze(current),
           (fields) => walkSteps(stepIndex + 1, { ...current, ...fields }),
-          () => events.timedOut(),
+          () => lifecycle.timedOut(),
         )
       }
       return walkSteps(0, ctx)
@@ -229,13 +223,13 @@ export class AttemptExecutor {
       record.cleanup = fault.cleanup
       record.retryable = fault.retryable
       // タイムアウトはrunを打ち切る理由として強く、後処理の失敗で上書きしない。
-      if (fault.abort && tracker.reason !== 'timeout') tracker.abort(fault.abort)
+      if (fault.abort && lifecycle.reason !== 'timeout') lifecycle.abort(fault.abort)
     } finally {
       timer.clear()
     }
     const overdue = timer.overdue()
     if (overdue) {
-      tracker.abort('timeout')
+      lifecycle.abort('timeout')
       record.failures.push(
         failure('timeout', overdue.stage, `attempt exceeded ${config.timeout}ms`, {
           timeoutMs: config.timeout,
@@ -243,9 +237,9 @@ export class AttemptExecutor {
         }),
       )
     }
-    if (record.failures.some((x) => x.kind === 'timeout')) tracker.abort('timeout')
+    if (record.failures.some((x) => x.kind === 'timeout')) lifecycle.abort('timeout')
     return {
-      result: finalizeAttempt(record, item.calls, number, now() - started, tracker.reason),
+      result: finalizeAttempt(record, item.calls, number, now() - started, lifecycle.reason),
       retryable: record.retryable,
     }
   }

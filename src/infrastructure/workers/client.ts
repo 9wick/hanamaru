@@ -2,8 +2,7 @@ import { Config, inject } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
 import { CaseFailed } from '../../application/execution/faults.js'
-import type { RunEvents } from '../../application/execution/services.js'
-import { RunTracker } from '../../application/execution/services.js'
+import { RunLifecycle } from '../../application/execution/lifecycle.js'
 import type {
   AttemptReply,
   ExecutionHandle,
@@ -36,7 +35,7 @@ function opening(): { settled: Promise<void>; open: () => void } {
 /**
  * 立ち上げた実行workerに繋がった、run 1回ぶんの持ち場。
  * 返信待ち・立ち上がりの約束・畳んだかどうかはこの1回に属し、
- * runの進み具合は開くときに受け取ったtrackerとeventsへ渡す。
+ * runの進み具合は開くときに受け取ったRunLifecycleへ渡す。
  */
 class RunningExecution implements PreparedExecution, ExecutionHandle {
   readonly #requests = new PendingReplies<ReplyValue>()
@@ -51,15 +50,14 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
   }
   readonly #port: MessagePort
   readonly #stop: () => Promise<void>
-  readonly #tracker: RunTracker
+  readonly #lifecycle: RunLifecycle
   #services: ExecutionServices | undefined
-  #events: RunEvents | undefined
   #closing: Promise<void> | undefined
   #fatal: { error: Value } | null = null
 
-  constructor(port: MessagePort, tracker: RunTracker, stop: () => Promise<void>) {
+  constructor(port: MessagePort, lifecycle: RunLifecycle, stop: () => Promise<void>) {
     this.#port = port
-    this.#tracker = tracker
+    this.#lifecycle = lifecycle
     this.#stop = stop
     port.on('messageerror', this.#fail)
     port.on('close', () => {
@@ -69,12 +67,11 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
   }
 
   /** 計画が決まるまでworkerはテストを読まない。起動時の失敗もここで呼び出し側に返す。 */
-  async start(events: RunEvents, spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
+  async start(spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle> {
     if (this.#closing) throw new Error('execution worker is closed')
     if (this.#services) throw new Error('execution worker is already initialized')
     this.#throwFailure()
     this.#services = services
-    this.#events = events
     services.onLoading('execution worker setup')
     services.signal.addEventListener('abort', this.#interrupt)
     if (services.signal.aborted) this.#interrupt()
@@ -98,7 +95,7 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
     if (!parsed.success) return this.#fail(new Error(`invalid execution message: ${v.summarize(parsed.issues)}`))
     const message = parsed.output
     if (message.type === 'error') return this.#fail(new Error(message.message))
-    if (!this.#services || !this.#events) return this.#fail(new Error('execution message before initialization'))
+    if (!this.#services) return this.#fail(new Error('execution message before initialization'))
     if (message.type === 'compile') {
       this.#services
         .invoke(message.name, message.args)
@@ -115,26 +112,20 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
     else if (message.type === 'loading') this.#services.onLoading(message.file)
     else if (message.type === 'reply') {
       if (!this.#requests.has(message.id)) return this.#fail(new Error('unexpected execution reply'))
-      if ('reason' in message.value && message.value.reason) this.#tracker.abort(message.value.reason)
+      if ('reason' in message.value && message.value.reason) this.#lifecycle.abort(message.value.reason)
       this.#requests.settle(message.id, message.value)
     } else if (message.type === 'timeout') {
-      this.#tracker.abort('timeout')
-      if (message.phase) this.#tracker.markPhase(message.phase)
-      this.#events.timedOut()
+      if (message.phase) this.#lifecycle.markPhase(message.phase)
+      this.#lifecycle.timedOut()
     } else if (message.type === 'group-stage') {
-      if (message.stage === 'inside' || message.stage === 'end') this.#events.deadline({ kind: 'end' })
+      if (message.stage === 'inside' || message.stage === 'end') this.#lifecycle.deadline({ kind: 'end' })
       else {
-        this.#tracker.begin({
+        this.#lifecycle.begin({
           kind: 'group',
           path: message.path,
           stage: message.stage,
           started: performance.now(),
           timeoutMs: message.timeoutMs,
-        })
-        this.#events.deadline({
-          kind: 'start',
-          timeoutMs: message.timeoutMs,
-          progress: this.#tracker.activeProgress('timeout'),
         })
       }
     } else this.#fail(new Error('unknown execution message'))
@@ -194,20 +185,20 @@ class RunningExecution implements PreparedExecution, ExecutionHandle {
 export class WorkerExecutionLauncher extends ExecutionLauncher {
   readonly #port: MessagePort
   readonly #channel: CollectionChannel
-  readonly #tracker: RunTracker
+  readonly #lifecycle: RunLifecycle
 
   constructor(
     environment = inject(CollectionEnvironment),
-    tracker = inject(RunTracker),
+    lifecycle = inject(RunLifecycle),
     channel = inject(CollectionChannel),
   ) {
     super()
     this.#port = environment.executionPort
     this.#channel = channel
-    this.#tracker = tracker
+    this.#lifecycle = lifecycle
   }
 
   open(): PreparedExecution {
-    return new RunningExecution(this.#port, this.#tracker, () => this.#channel.closeExecution())
+    return new RunningExecution(this.#port, this.#lifecycle, () => this.#channel.closeExecution())
   }
 }

@@ -126,13 +126,18 @@ import { recordCollectionEvent } from './application/collection/current-scope.js
 import { createSourceLocation } from './infrastructure/source-location.js'
 import { createTest } from './interfaces/library/definition.js'
 import { createRegisterTest } from './interfaces/library/registration.js'
-import { createRun } from './interfaces/library/run.js'
+import type { RunOptions } from './application/execution/options.js'
+import { runExclusively } from './application/execution/current-run.js'
+import type { TestDefinition } from './domain/definition/types.js'
+import type { RunResult } from './domain/result/types.js'
 import type { Test as TestType } from './interfaces/library/types.js'
 const location = createSourceLocation(dirname(fileURLToPath(import.meta.url)))
 export type Test<R extends object = {}> = TestType<R>
 export const Test = createTest(location, recordCollectionEvent)
 export const registerTest = createRegisterTest(location, recordCollectionEvent)
-export const run = createRun(async () => (await import('./infrastructure/comparison.js')).ValueComparison)
+export function run(input: TestDefinition | readonly TestDefinition[], options: RunOptions = {}): Promise<RunResult> {
+  return runExclusively(async () => (await import('./library.js')).run(input, options))
+}
 export function defineConfig(config: Config): Config {
   return config
 }

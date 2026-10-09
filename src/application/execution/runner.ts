@@ -16,41 +16,28 @@ import type { ExecutionHandle } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed } from './faults.js'
 import { allCases } from './plan.js'
-import { ProgressStore } from './progress.js'
 import { caseBase, cancelledTree, executableMode, notRunCase, notRunMiddleware, resultFailed } from './results.js'
 import type { RunSettings } from './options.js'
-import { RunEvents, RunTracker } from './services.js'
-import type { Progress } from './state.js'
+import { RunLifecycle } from './lifecycle.js'
 
-/** 1回のrunを辿る間ずっと同じ相手。実行の持ち場・通知の受け取り手・onlyの有無は走り出す前に決まる。 */
+/** 1回のrunを辿る間ずっと同じ相手。実行の持ち場・onlyの有無は走り出す前に決まる。 */
 interface Walk {
   execution: ExecutionHandle
-  events: RunEvents
   only: boolean
-  resources: RunResources
 }
 
 /**
  * 計画を辿って1回のrunを進める。
- * 実行の持ち場・何を辿るか・設定・通知の受け取り手・中断の合図は実行ごとに決まるため、引数で受け取る。
+ * 進捗と中断はRunLifecycle、資源の寿命はRunResourcesが担う。計画・設定・中断の合図は引数で受け取る。
  */
 @Injectable()
 export class RunWalker {
-  readonly #results: ProgressStore
-  readonly #tracker: RunTracker
+  readonly #resources: RunResources
+  readonly #lifecycle: RunLifecycle
 
-  constructor(results = inject(ProgressStore), tracker = inject(RunTracker)) {
-    this.#results = results
-    this.#tracker = tracker
-  }
-
-  /**
-   * 確定した結果は、手元の部分結果ツリーと外向きの通知の両方に同じprogressで渡す。
-   * 打ち切り時の結果は受け取り手がprogressから組み立てた木と一致していなければならないため、片方だけを更新しない。
-   */
-  #publish(walk: Walk, progress: Progress): void {
-    this.#results.apply(progress)
-    walk.events.progress(progress)
+  constructor(resources = inject(RunResources), lifecycle = inject(RunLifecycle)) {
+    this.#resources = resources
+    this.#lifecycle = lifecycle
   }
 
   /** 重なりの錠は入口が持つ。この走査が始まる時点で錠は取られている。 */
@@ -58,17 +45,16 @@ export class RunWalker {
     execution: ExecutionHandle,
     buildPlan: () => Plan,
     settings: RunSettings,
-    events: RunEvents,
     signal?: AbortSignal,
   ): Promise<MutableRunResult> {
     const { nodes, only, resources: graph = [] } = buildPlan()
-    const resources = new RunResources(graph, this.#tracker, events, (progress) => this.#publish(walk, progress))
-    const walk: Walk = { execution, events, only, resources }
-    const tracker = this.#tracker
+    const resources = this.#resources
+    const walk: Walk = { execution, only }
+    const lifecycle = this.#lifecycle
     // 走り出す前に中断されていた実行は、1件も動かさずに打ち切った姿で返す。
-    if (signal?.aborted) tracker.interrupt()
+    if (signal?.aborted) lifecycle.interrupt()
     // 実行前の結果は、全てを実行しなかった姿。ここから完了したものだけを差し替えていく。
-    this.#publish(walk, {
+    this.#lifecycle.publish({
       kind: 'init',
       result: {
         version: 1,
@@ -77,14 +63,14 @@ export class RunWalker {
         tests: nodes.map((node, index) => cancelledTree(node, [node.originalIndex ?? index], only)),
       },
     })
-    const interrupt = () => tracker.interrupt()
+    const interrupt = () => lifecycle.interrupt()
     signal?.addEventListener('abort', interrupt)
     const tests: MutableNodeResult[] = []
     try {
-      await resources.prepare(signal)
+      await resources.prepare(graph, signal)
       for (const [index, node] of nodes.entries())
         tests.push(
-          tracker.reason
+          lifecycle.reason
             ? cancelledTree(node, [node.originalIndex ?? index], only)
             : await this.#node(walk, node, [node.originalIndex ?? index]),
         )
@@ -99,12 +85,12 @@ export class RunWalker {
     const failed =
       resultFailed(tests, settings.failOnFlaky) ||
       resources.results.some((r) => r.middleware.status === 'failed') ||
-      tracker.reason === 'timeout' ||
-      tracker.reason === 'cleanup-failed'
+      lifecycle.reason === 'timeout' ||
+      lifecycle.reason === 'cleanup-failed'
     return {
       version: 1,
-      status: failed ? 'failed' : tracker.reason === 'interrupted' ? 'cancelled' : 'passed',
-      reason: tracker.reason ?? 'completed',
+      status: failed ? 'failed' : lifecycle.reason === 'interrupted' ? 'cancelled' : 'passed',
+      reason: lifecycle.reason ?? 'completed',
       tests,
       ...(resources.results.length ? { resources: resources.results } : {}),
     }
@@ -114,7 +100,7 @@ export class RunWalker {
     // testの中身はcaseごとに通知済みなので、節として追加で知らせるのはgroupのmiddlewareだけ。
     if (node.kind === 'test') return this.#test(walk, node, path)
     const value = await this.#group(walk, node, path)
-    this.#publish(walk, { kind: 'group', path, middleware: value.middleware })
+    this.#lifecycle.publish({ kind: 'group', path, middleware: value.middleware })
     return value
   }
 
@@ -123,14 +109,14 @@ export class RunWalker {
     for (const [index, item] of node.bp.cases.entries()) {
       const value = await this.#case(walk, node, item, index, path)
       cases.push(value)
-      this.#publish(walk, { kind: 'case', result: value })
+      this.#lifecycle.publish({ kind: 'case', result: value })
     }
     return { kind: 'test', name: node.bp.name, path, cases }
   }
 
   async #group(walk: Walk, node: GroupNode, path: number[]): Promise<MutableGroupResult> {
     const { execution, only } = walk
-    const tracker = this.#tracker
+    const lifecycle = this.#lifecycle
     const children: MutableGroupResult['children'] = []
     const childPath = (child: ExecutionNode, index: number) => [...path, child.originalIndex ?? index]
     const group = (middleware: MutableGroupResult['middleware']): MutableGroupResult => ({
@@ -148,7 +134,7 @@ export class RunWalker {
         const prepared = { ...child, stable, frames }
         children.push({
           origin: required(child.entryOrigin),
-          result: tracker.reason
+          result: lifecycle.reason
             ? cancelledTree(prepared, childPath(child, index), only)
             : await this.#node(walk, prepared, childPath(child, index)),
         })
@@ -161,7 +147,7 @@ export class RunWalker {
       await executeChildren({})
       return group(middleware)
     }
-    if (!node.bp.middleware || tracker.reason) {
+    if (!node.bp.middleware || lifecycle.reason) {
       const middleware = node.bp.middleware ? notRunMiddleware('cancelled') : null
       try {
         await executeChildren({})
@@ -170,7 +156,7 @@ export class RunWalker {
       }
       return group(middleware)
     }
-    const supplied = walk.resources.fields(node.resources)
+    const supplied = this.#resources.fields(node.resources)
     if (supplied === null) {
       for (const [index, child] of node.children.entries())
         children.push({
@@ -186,7 +172,7 @@ export class RunWalker {
       frames: [{ steps: [], fields: supplied }, ...node.frames],
     }
     const reply = await execution.group(prepared, path, executeChildren)
-    if (reply.reason) tracker.abort(reply.reason)
+    if (reply.reason) lifecycle.abort(reply.reason)
     // middlewareが落ちた時点で残りの子は動かないため、実行しなかった姿で埋める。
     if (reply.middleware.status === 'failed')
       for (let index = children.length; index < node.children.length; index++) {
@@ -196,7 +182,7 @@ export class RunWalker {
           result: cancelledTree(child, childPath(child, index), only),
         })
       }
-    tracker.end()
+    lifecycle.end()
     return group(reply.middleware)
   }
 
@@ -207,30 +193,27 @@ export class RunWalker {
     index: number,
     path: number[],
   ): Promise<MutableCaseResult> {
-    const { execution, events, only } = walk
-    const tracker = this.#tracker
+    const { execution, only } = walk
+    const lifecycle = this.#lifecycle
     const base = caseBase(node.config, item, index, path)
     const mode = executableMode(item, only)
     // todoを先に外すことで、以降のitemが実行に必要な定義を備えたcaseだと型でも決まる。
-    if (item.mode === 'todo' || mode || tracker.reason) return notRunCase(base, mode ?? 'cancelled')
-    const supplied = walk.resources.fields(checkedResources([...(node.resources ?? []), ...(item.resources ?? [])]))
+    if (item.mode === 'todo' || mode || lifecycle.reason) return notRunCase(base, mode ?? 'cancelled')
+    const supplied = this.#resources.fields(checkedResources([...(node.resources ?? []), ...(item.resources ?? [])]))
     if (supplied === null) return notRunCase(base, 'cancelled')
     const started = now(),
       attempts: MutableAttempt[] = []
     for (let number = 1; number <= base.config.retry + 1; number++) {
-      tracker.begin({ kind: 'attempt', base, attempts, number, started: now(), timeoutMs: base.config.timeout })
-      // 走り出す前に、いま中断されたらどう見えるかを知らせる。確定した結果ではないので手元には残さない。
-      events.progress(tracker.activeProgress('interrupted'))
-      events.deadline({ kind: 'start', timeoutMs: base.config.timeout, progress: tracker.activeProgress('timeout') })
+      lifecycle.begin({ kind: 'attempt', base, attempts, number, started: now(), timeoutMs: base.config.timeout })
       const fields = jsonFields(supplied)
       const prepared = Object.keys(fields).length
         ? { ...node, resourceFields: fields, frames: [{ steps: [], fields }, ...node.frames] }
         : node
       const { result, retryable } = await execution.attempt(prepared, item, base.path, number)
-      events.deadline({ kind: 'end' })
-      tracker.end()
+      lifecycle.deadline({ kind: 'end' })
+      lifecycle.end()
       attempts.push(result)
-      if (result.status === 'passed' || tracker.reason || !retryable) break
+      if (result.status === 'passed' || lifecycle.reason || !retryable) break
     }
     return { ...base, durationMs: now() - started, attempts }
   }

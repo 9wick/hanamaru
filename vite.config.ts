@@ -106,6 +106,8 @@ export default defineConfig({
         '@vitest/expect',
         '@standard-schema/spec',
         '@zeltjs/core',
+        '@zeltjs/adapter-node',
+        '@hono/node-server',
         '@zeltjs/decorator-metadata',
         'hono',
         /^@swc\/helpers\//,

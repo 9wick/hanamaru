@@ -1,3 +1,4 @@
+import { Injectable, inject } from '@zeltjs/core'
 import type { Resource } from '../../domain/definition/resource.js'
 import { checkedResources, freezeFields, jsonFields, mergeResourceFields } from '../../domain/definition/resource.js'
 import type { Fields, RuntimeMiddleware } from '../../domain/definition/runtime.js'
@@ -6,8 +7,9 @@ import type { MutableResourceResult } from '../../domain/result/mutable.js'
 import { invoke, required, valueOf } from '../../foundation/value.js'
 import { now } from './clock.js'
 import { groupMiddlewareOutcome, withMiddleware } from './middleware.js'
-import type { RunEvents, RunTracker } from './services.js'
-import type { Progress } from './state.js'
+import { RunLifecycle } from './lifecycle.js'
+import { RunContext } from './context.js'
+import type { RunData } from './run-data.js'
 
 function deferred<T>() {
   const callbacks: { resolve?: (value: T) => void } = {}
@@ -26,30 +28,35 @@ interface OpenResource {
 }
 
 /** 定義値をキーにした1runの資源台帳。実行workerごとの資源もbrainが保持しデータだけを渡す。 */
+@Injectable()
 export class RunResources {
-  readonly #graph: readonly Resource[]
-  readonly #tracker: RunTracker
-  readonly #events: RunEvents
-  readonly #publish: (progress: Progress) => void
-  readonly #opened = new Map<Resource, OpenResource>()
-  readonly results: MutableResourceResult[] = []
+  readonly #lifecycle: RunLifecycle
+  readonly #context: RunContext
+  readonly #ledgers = new WeakMap<RunData, Map<Resource, OpenResource>>()
 
-  constructor(
-    graph: readonly Resource[],
-    tracker: RunTracker,
-    events: RunEvents,
-    publish: (progress: Progress) => void,
-  ) {
-    this.#graph = graph
-    this.#tracker = tracker
-    this.#events = events
-    this.#publish = publish
+  constructor(lifecycle = inject(RunLifecycle), context = inject(RunContext)) {
+    this.#lifecycle = lifecycle
+    this.#context = context
   }
 
-  async prepare(signal?: AbortSignal): Promise<void> {
-    for (const [id, resource] of this.#graph.entries()) {
+  get results(): MutableResourceResult[] {
+    return this.#context.data.resources
+  }
+
+  get #opened(): Map<Resource, OpenResource> {
+    const data = this.#context.data
+    let opened = this.#ledgers.get(data)
+    if (!opened) {
+      opened = new Map()
+      this.#ledgers.set(data, opened)
+    }
+    return opened
+  }
+
+  async prepare(graph: readonly Resource[], signal?: AbortSignal): Promise<void> {
+    for (const [id, resource] of graph.entries()) {
       const fields = this.fields(resource.require)
-      if (this.#tracker.reason || fields === null) {
+      if (this.#lifecycle.reason || fields === null) {
         const result: MutableResourceResult = {
           id,
           name: resource.name,
@@ -57,7 +64,7 @@ export class RunResources {
           middleware: { status: 'not-run', reason: 'cancelled', durationMs: 0, failures: [], cleanup: 'complete' },
         }
         this.results.push(result)
-        this.#publish({ kind: 'resource', result })
+        this.#lifecycle.publish({ kind: 'resource', result })
         continue
       }
       await this.#open(resource, id, fields, signal)
@@ -100,11 +107,11 @@ export class RunResources {
     const interrupt = () => {
       if (open.fields !== null || expired) return
       expired = true
-      this.#tracker.interrupt()
+      this.#lifecycle.interrupt()
       cancellation.abort()
       result.middleware = { status: 'cancelled', durationMs: now() - started, failures: [], cleanup: 'incomplete' }
-      this.#publish({ kind: 'resource', result })
-      this.#events.deadline({ kind: 'end' })
+      this.#lifecycle.publish({ kind: 'resource', result })
+      this.#lifecycle.deadline({ kind: 'end' })
       ready.resolve()
       timeout.resolve()
     }
@@ -127,28 +134,28 @@ export class RunResources {
       freezeFields(fields),
       async (provided) => {
         open.fields = freezeFields(provided)
-        this.#tracker.end()
+        this.#lifecycle.end()
         ready.resolve()
         await lifetime.promise
       },
       () => {
         if (expired) return
         expired = true
-        this.#tracker.abort('timeout')
-        const progress = this.#tracker.activeProgress('timeout')
+        this.#lifecycle.abort('timeout')
+        const progress = this.#lifecycle.activeProgress('timeout')
         if (progress.kind !== 'resource') throw new Error('resource timeout without active resource')
         result.middleware = progress.result.middleware
         open.fields = null
-        this.#publish(progress)
-        this.#events.timedOut()
+        this.#lifecycle.publish(progress)
+        this.#lifecycle.timedOut()
         ready.resolve()
         timeout.resolve()
       },
       (stage, timeoutMs) => {
         if (expired) return
-        if (stage === 'inside' || stage === 'end') this.#events.deadline({ kind: 'end' })
+        if (stage === 'inside' || stage === 'end') this.#lifecycle.deadline({ kind: 'end' })
         else {
-          this.#tracker.begin({
+          this.#lifecycle.begin({
             kind: 'resource',
             id,
             name: resource.name,
@@ -157,7 +164,6 @@ export class RunResources {
             started,
             timeoutMs,
           })
-          this.#events.deadline({ kind: 'start', timeoutMs, progress: this.#tracker.activeProgress('timeout') })
         }
       },
       cancellation.signal,
@@ -172,17 +178,17 @@ export class RunResources {
             const outcome = groupMiddlewareOutcome(valueOf(error), now() - started)
             result.middleware = outcome.middleware
             open.fields = null
-            if (outcome.abort && this.#tracker.reason !== 'timeout') this.#tracker.abort(outcome.abort)
+            if (outcome.abort && this.#lifecycle.reason !== 'timeout') this.#lifecycle.abort(outcome.abort)
           }
         },
       )
       .then(() => {
         ready.resolve()
-        if (!expired) this.#publish({ kind: 'resource', result })
-        if (!expired) this.#tracker.end()
+        if (!expired) this.#lifecycle.publish({ kind: 'resource', result })
+        if (!expired) this.#lifecycle.end()
       })
     open.done = Promise.race([execution, timeout.promise])
-    this.#publish({ kind: 'resource', result })
+    this.#lifecycle.publish({ kind: 'resource', result })
     if (signal?.aborted) interrupt()
     await ready.promise
     signal?.removeEventListener('abort', interrupt)

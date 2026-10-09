@@ -13,7 +13,8 @@ import { invoke, required, valueOf } from '../../foundation/value.js'
 import type { GroupReply } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
-import { RunEvents, RunTracker, StageTimer } from './services.js'
+import { StageTimer } from './services.js'
+import { RunLifecycle } from './lifecycle.js'
 import type { Stage } from './state.js'
 
 /** nextを呼ぶまでがbefore、下流の実行中がinside、下流が終わってからがafter。 */
@@ -208,23 +209,22 @@ export function groupMiddlewareOutcome(
 
 /**
  * group middlewareで子を囲む。
- * 囲む相手・区間の変わり目を見る相手・通知の受け取り手は呼び出しごとに決まるため引数で受け取る。
+ * 子の実行と区間の観測は今回の囲みの指定。実行状態はRunLifecycleと共有する。
  */
 @Injectable()
 export class GroupMiddlewareExecutor {
-  readonly #tracker: RunTracker
+  readonly #lifecycle: RunLifecycle
 
-  constructor(tracker = inject(RunTracker)) {
-    this.#tracker = tracker
+  constructor(lifecycle = inject(RunLifecycle)) {
+    this.#lifecycle = lifecycle
   }
 
   async execute(
     node: GroupNode,
     body: (fields: Fields) => Promise<void>,
     onStage: (stage: Stage, timeoutMs: number) => void,
-    events: RunEvents,
   ): Promise<GroupReply> {
-    const tracker = this.#tracker
+    const lifecycle = this.#lifecycle
     const started = now()
     try {
       await withMiddleware(
@@ -232,16 +232,15 @@ export class GroupMiddlewareExecutor {
         Object.freeze(node.stable ?? {}),
         body,
         () => {
-          tracker.abort('timeout')
-          events.timedOut()
+          lifecycle.timedOut()
         },
         onStage,
       )
-      return { middleware: passedMiddleware(now() - started), reason: tracker.reason }
+      return { middleware: passedMiddleware(now() - started), reason: lifecycle.reason }
     } catch (error) {
       const outcome = groupMiddlewareOutcome(valueOf(error), now() - started)
-      if (outcome.abort) tracker.abort(outcome.abort)
-      return { middleware: outcome.middleware, reason: tracker.reason }
+      if (outcome.abort) lifecycle.abort(outcome.abort)
+      return { middleware: outcome.middleware, reason: lifecycle.reason }
     }
   }
 }

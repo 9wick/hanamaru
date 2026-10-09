@@ -7,7 +7,7 @@ import { LocalExecutor } from './local.js'
 import { createPlan } from './plan.js'
 import { ProgressStore } from './progress.js'
 import { RunWalker } from './runner.js'
-import type { RunEvents } from './services.js'
+import { RunLifecycle } from './lifecycle.js'
 import type { Progress } from './state.js'
 
 // 契約: 実物の実行サービスと連携して、計画の結果を部分結果ツリーへ反映する。
@@ -15,7 +15,7 @@ import type { Progress } from './state.js'
 
 test('walker publishes proportionate progress data and retains completed nested results', async () => {
   async function measure(count: number) {
-    const { target: walker, get } = await createTestTarget(RunWalker, { configs: [ValueComparison, LocalExecutor] })
+    const { target: walker, get } = await createTestTarget(RunWalker, { configs: [ValueComparison] })
     const store = await get(ProgressStore)
     const executor = await get(LocalExecutor)
     let bytes = 0
@@ -31,18 +31,13 @@ test('walker publishes proportionate progress data and retains completed nested 
       middleware(async (_, next) => next()),
       [cases],
     )
-    const events: RunEvents = {
-      progress(progress) {
-        bytes += JSON.stringify(progress).length
-      },
-      deadline(deadline) {
-        bytes += JSON.stringify(deadline).length
-      },
-      timedOut() {
-        throw new Error('unexpected timeout')
-      },
-    }
-    const result = await walker.run(await executor.start(events), () => createPlan(collectBlueprints(root)), {}, events)
+    const lifecycle = await get(RunLifecycle)
+    lifecycle.observe((event) => {
+      if (event.kind === 'progress') bytes += JSON.stringify(event.progress).length
+      else if (event.kind === 'deadline') bytes += JSON.stringify(event.deadline).length
+      else throw new Error('unexpected timeout')
+    })
+    const result = await walker.run(executor, () => createPlan(collectBlueprints(root)), {})
     expect(result.status).toBe('passed')
     const group = store.result?.tests[0]
     expect.assert(group?.kind === 'group')
@@ -59,7 +54,7 @@ test('walker publishes proportionate progress data and retains completed nested 
 })
 
 test('walker retains nested group, skipped and retried results in its progress store', async () => {
-  const { target: walker, get } = await createTestTarget(RunWalker, { configs: [ValueComparison, LocalExecutor] })
+  const { target: walker, get } = await createTestTarget(RunWalker, { configs: [ValueComparison] })
   const store = await get(ProgressStore)
   const executor = await get(LocalExecutor)
   let attempts = 0
@@ -80,18 +75,13 @@ test('walker retains nested group, skipped and retried results in its progress s
   const root = new Test().group('root', [inner, steady])
   const notifications: Progress[] = []
   let deadlines = 0
-  const events: RunEvents = {
-    progress(value) {
-      notifications.push(structuredClone(value))
-    },
-    deadline() {
-      deadlines++
-    },
-    timedOut() {
-      throw new Error('unexpected timeout')
-    },
-  }
-  const result = await walker.run(await executor.start(events), () => createPlan(collectBlueprints(root)), {}, events)
+  const lifecycle = await get(RunLifecycle)
+  lifecycle.observe((event) => {
+    if (event.kind === 'progress') notifications.push(structuredClone(event.progress))
+    else if (event.kind === 'deadline') deadlines++
+    else throw new Error('unexpected timeout')
+  })
+  const result = await walker.run(executor, () => createPlan(collectBlueprints(root)), {})
   expect(result.status).toBe('passed')
   const group = store.result?.tests[0]
   expect.assert(group?.kind === 'group')
@@ -116,7 +106,7 @@ test('walker retains nested group, skipped and retried results in its progress s
 
 test('walker retains the interrupted tree and leaves pending cases unexecuted', async () => {
   const controller = new AbortController()
-  const { target: walker, get } = await createTestTarget(RunWalker, { configs: [ValueComparison, LocalExecutor] })
+  const { target: walker, get } = await createTestTarget(RunWalker, { configs: [ValueComparison] })
   const store = await get(ProgressStore)
   const executor = await get(LocalExecutor)
   const active = new Test()
@@ -133,24 +123,13 @@ test('walker retains the interrupted tree and leaves pending cases unexecuted', 
   )
   const notifications: Progress[] = []
   let deadlines = 0
-  const events: RunEvents = {
-    progress(value) {
-      notifications.push(structuredClone(value))
-    },
-    deadline() {
-      deadlines++
-    },
-    timedOut() {
-      throw new Error('unexpected timeout')
-    },
-  }
-  const result = await walker.run(
-    await executor.start(events),
-    () => createPlan(collectBlueprints([root, pending])),
-    {},
-    events,
-    controller.signal,
-  )
+  const lifecycle = await get(RunLifecycle)
+  lifecycle.observe((event) => {
+    if (event.kind === 'progress') notifications.push(structuredClone(event.progress))
+    else if (event.kind === 'deadline') deadlines++
+    else throw new Error('unexpected timeout')
+  })
+  const result = await walker.run(executor, () => createPlan(collectBlueprints([root, pending])), {}, controller.signal)
   expect(result.reason).toBe('interrupted')
   expect(result.status).toBe('cancelled')
   const group = store.result?.tests[0]
@@ -164,4 +143,19 @@ test('walker retains the interrupted tree and leaves pending cases unexecuted', 
   expect(store.result?.tests).toStrictEqual(result.tests)
   expect(notifications[0].kind).toBe('init')
   expect(deadlines).toBeGreaterThan(0)
+})
+
+test('disconnecting an observer stops delivery while execution keeps recording results', async () => {
+  const { target: walker, get } = await createTestTarget(RunWalker, { configs: [ValueComparison] })
+  const lifecycle = await get(RunLifecycle)
+  const received: string[] = []
+  const disconnect = lifecycle.observe((event) => {
+    received.push(event.kind)
+    disconnect()
+  })
+  const suite = new Test().target(() => 1).it('case', (t) => t.args().expect((e) => [e.result.toBe(1)]))
+  const result = await walker.run(await get(LocalExecutor), () => createPlan(collectBlueprints(suite)), {})
+  expect(received).toStrictEqual(['progress'])
+  expect(result.status).toBe('passed')
+  expect((await get(ProgressStore)).result?.tests).toStrictEqual(result.tests)
 })
