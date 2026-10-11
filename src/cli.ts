@@ -3,11 +3,11 @@ import { Config, command, createApp } from '@zeltjs/core'
 import { onNode } from '@zeltjs/adapter-node'
 import { readFileSync } from 'node:fs'
 import * as v from 'valibot'
-import { errorMessage } from './foundation/errors.js'
-import { CliEnvironment } from './infrastructure/workers/environment.js'
-import { CollectionSupervisor } from './infrastructure/workers/supervisor.js'
-import { CliCommand, CliRelease } from './interfaces/cli/command.js'
-import { StdoutPresenter } from './interfaces/cli/presenter.js'
+import { errorMessage } from '@hanamaru/cli/application/collection/failure'
+import { CliEnvironment } from '@hanamaru/cli/infrastructure/workers/environment'
+import { CollectionSupervisor } from '@hanamaru/cli/infrastructure/workers/supervisor'
+import { CliCommand, CliRelease } from '@hanamaru/cli/interfaces/cli/command'
+import { StdoutPresenter } from '@hanamaru/cli/interfaces/cli/presenter'
 const { version } = v.parse(
   v.object({ version: v.string() }),
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')),

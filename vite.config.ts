@@ -28,7 +28,7 @@ function noticeOf(root: string): string {
 
 // 標準デコレータはOxcの変換を素通りして配布JSに残るため、DIのdecoratorを使うsrcだけSWCに通す。
 const decoratorTransform = {
-  include: /\/src\/.*\.ts$/,
+  include: /\/(?:src|packages\/[^/]+\/src)\/.*\.ts$/,
   jsc: {
     target: 'es2022',
     // デコレータの展開helperはファイルごとに数百行ある。取り込みにして配布物へ1つだけ入れる。
@@ -55,7 +55,7 @@ export default defineConfig({
         oxc: false,
         test: {
           name: 'unit',
-          include: ['src/**/*.test.ts', 'scripts/**/*.test.ts', 'eslint.config.test.ts'],
+          include: ['src/**/*.test.ts', 'packages/*/src/**/*.test.ts', 'scripts/**/*.test.ts', 'eslint.config.test.ts'],
         },
       },
       {
@@ -102,6 +102,7 @@ export default defineConfig({
     // 配布物の依存はpublishの時点で同梱する。利用者側のnode_modules解決を1回の起動から取り除く。
     deps: {
       alwaysBundle: [
+        /^@hanamaru\/(blueprint|execution|module-runtime|cli)(\/|$)/,
         'valibot',
         '@vitest/expect',
         '@standard-schema/spec',
