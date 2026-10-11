@@ -1,0 +1,33 @@
+{
+  "name": "@hanamaru/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./application/collection/config": "./src/application/collection/config.ts",
+    "./infrastructure/filesystem/project-files": "./src/infrastructure/filesystem/project-files.ts",
+    "./infrastructure/workers/client": "./src/infrastructure/workers/client.ts",
+    "./infrastructure/workers/collection-channel": "./src/infrastructure/workers/collection-channel.ts",
+    "./infrastructure/workers/environment": "./src/infrastructure/workers/environment.ts",
+    "./infrastructure/workers/features": "./src/infrastructure/workers/features.ts",
+    "./infrastructure/workers/module-toolchain": "./src/infrastructure/workers/module-toolchain.ts",
+    "./infrastructure/workers/schemas": "./src/infrastructure/workers/schemas.ts",
+    "./infrastructure/workers/stderr-log": "./src/infrastructure/workers/stderr-log.ts",
+    "./infrastructure/workers/supervisor": "./src/infrastructure/workers/supervisor.ts",
+    "./interfaces/cli/command": "./src/interfaces/cli/command.ts",
+    "./interfaces/cli/presenter": "./src/interfaces/cli/presenter.ts",
+    "./interfaces/cli/reporters/pretty": "./src/interfaces/cli/reporters/pretty.ts",
+    "./application/collection/failure": "./src/application/collection/failure.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hanamaru/blueprint": "0.0.0",
+    "@hanamaru/execution": "0.0.0",
+    "@hanamaru/module-runtime": "0.0.0",
+    "@hanamaru/vite": "npm:vite@8.3.0",
+    "@zeltjs/core": "0.12.0-canary.2",
+    "valibot": "1.5.0"
+  }
+}

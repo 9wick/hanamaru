@@ -29,7 +29,7 @@
     "CONTRIBUTING.md"
   ],
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json && tsc -p e2e/tsconfig.json && tsc -p scripts/tsconfig.json",
+    "typecheck": "npm run typecheck --workspaces && tsc -p tsconfig.json && tsc -p docs/spec/tsconfig.json && tsc -p e2e/tsconfig.json && tsc -p scripts/tsconfig.json",
     "test": "npm run build && vp test run && npm run test:examples:run",
     "test:unit": "vp test run --project unit",
     "test:e2e": "npm run build && vp test run --project e2e-workspace --project e2e-package",
@@ -38,10 +38,10 @@
     "test:examples:run": "node dist/cli.js --ci docs/examples/*.test.ts",
     "check:docs": "node --disable-warning=ExperimentalWarning scripts/docs.ts",
     "docs:sync": "node --disable-warning=ExperimentalWarning scripts/docs.ts --write",
-    "lint": "vp lint --deny-warnings src e2e docs/examples scripts/docs.ts scripts/docs scripts/architecture.mjs eslint.config.test.ts && eslint . --max-warnings 0",
-    "format": "vp fmt src e2e scripts/docs.ts scripts/docs scripts/architecture.mjs vite.config.ts eslint.config.mjs eslint.config.test.ts",
-    "format:check": "vp fmt --check src e2e scripts/docs.ts scripts/docs scripts/architecture.mjs vite.config.ts eslint.config.mjs eslint.config.test.ts",
-    "build": "vp pack && tsc -p tsconfig.build.json",
+    "lint": "vp lint --deny-warnings src packages e2e docs/examples scripts/docs.ts scripts/docs scripts/architecture.mjs scripts/declarations.mjs eslint.config.test.ts && eslint . --max-warnings 0",
+    "format": "vp fmt src packages e2e scripts/docs.ts scripts/docs scripts/architecture.mjs scripts/declarations.mjs vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "format:check": "vp fmt --check src packages e2e scripts/docs.ts scripts/docs scripts/architecture.mjs scripts/declarations.mjs vite.config.ts eslint.config.mjs eslint.config.test.ts",
+    "build": "vp pack && tsc -p tsconfig.build.json && node scripts/declarations.mjs",
     "prepack": "npm run build",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:docs",
     "release": "release-it"
@@ -52,9 +52,11 @@
   "devDependencies": {
     "@swc/core": "1.15.33",
     "@swc/helpers": "0.5.19",
+    "@types/ws": "8.18.2",
     "@typescript-eslint/eslint-plugin": "8.70.1",
     "@typescript-eslint/parser": "8.70.1",
     "@vitest/expect": "5.0.2",
+    "@zeltjs/adapter-node": "0.12.0-canary.2",
     "@zeltjs/core": "0.12.0-canary.2",
     "@zeltjs/testing": "0.12.0-canary.2",
     "eslint": "10.11.0",
@@ -69,5 +71,8 @@
     "@hanamaru/vite": "npm:vite@8.3.0",
     "@types/node": "22.18.0",
     "acorn": "8.15.0"
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

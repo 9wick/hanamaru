@@ -1,0 +1,17 @@
+{
+  "name": "@hanamaru/blueprint",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./model": "./src/domain/model.ts",
+    "./declarations": "./src/application/observer.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "valibot": "1.5.0"
+  }
+}

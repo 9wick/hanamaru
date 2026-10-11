@@ -40,18 +40,18 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 
 | 層 | 実行系 | 置き場所 |
 | --- | --- | --- |
-| unit | Vitest | テスト対象の横の `src/<layer>/**/*.test.ts`、ルートの `eslint.config.test.ts`、`scripts/**/*.test.ts` |
+| unit | Vitest | テスト対象の横の `packages/<package>/src/<layer>/**/*.test.ts`、ルートの `eslint.config.test.ts`、`scripts/**/*.test.ts` |
 | e2e | Vitest | `e2e/` |
 | examples | hanamaru CLI | `docs/examples/*.test.ts` |
 
-unitは対象モジュールをプロセス内で直接importし、blueprintの構築・実行・診断・CLI引数解析・
+unitは対象モジュールをプロセス内で直接importし、blueprintの構築・LibraryRunの実行契約・診断・CLI引数解析・
 worker間メッセージのスキーマを検証します。`scripts/**/*.test.ts` は文書検査ツールの純関数を
 同じ層で検証します。テストは実装と同じlint・型ルールの対象です。
-`src/**/*.test.ts` も `npm run typecheck` と `npm run lint` が検査し、配布物には含めません。
+`packages/*/src/**/*.test.ts` も `npm run typecheck` と `npm run lint` が検査し、配布物には含めません。
 
 e2eは `vite.config.ts` の `e2e-workspace` と `e2e-package` の2プロジェクトに分かれます。
 `e2e/workspace-cli.test.ts` はリポジトリの `dist/cli.js` を子プロセスとして起動し、
-installed packageでは構築しにくい環境固有シナリオ（node_modules構築、TDZ、worker内部の観測、
+installed packageでは構築しにくい環境固有シナリオ（node_modules構築、TDZ、worker分離の観測、
 定義変更の検出など）を扱います。`e2e/installed-package.test.ts` はtarballを一時プロジェクトへ
 インストールし、利用者から見える公開APIとCLIだけを観測します。
 
@@ -126,7 +126,7 @@ Vite等の実行時依存はnpmレジストリから取得するため、ネッ�
 | CLIの結果と終了コード | 成功0・実行失敗1・収集エラー2、filterとonly、retryとfail-on-flaky |
 | CLIは期限超過・中断後に終了する | stuck importの収集期限、非同期・同期のstuck targetの終了猶予、Ctrl+Cの終了コード130と未完了cleanup |
 
-unitとE2Eのテストは公開APIから検証し、freezeの実装方式を参照しません。
+unitは対象の契約を実物から検証し、E2EはCLIの公開出力から検証します。freezeの実装方式を参照しません。
 lintと通信境界のテストは、禁止コードと不正な受信値を直接入力して検証します。
 時間・スタック全文・診断参照の採番を固定せず、公開結果のフィールドを検証します。
 
@@ -189,35 +189,49 @@ npm view hanamaru@0.1.0 version dist-tags
 
 ## ソースコードの配置
 
-第一階層は責務のlayer、その下は同じ責務の中の関心で分けます。
+外部へは引き続き一つの `hanamaru` を配布し、内部をprivateなnpm workspaceに分けます。
+パッケージは責務の独立性を守る単位、パッケージ内のInjectable serviceは仕事を取りまとめる単位です。
 
-| 配置 | 責務・探すもの |
-| --- | --- |
-| `src/interfaces/library/` | TestのBuilder、公開APIから内部定義への変換 |
-| `src/interfaces/cli/` | 引数の解釈、pretty/JSON表示 |
-| `src/application/collection/` | 登録、projectの選択、収集から実行までの手順 |
-| `src/application/execution/` | 計画、attempt、middleware、retry、進捗 |
-| `src/application/ports/` | Worker実行・モジュール読込・比較など、外部実装に要求する契約 |
-| `src/domain/` | 定義・期待条件・実行設定・結果のモデルと妥当性 |
-| `src/infrastructure/` | Vite、Worker、ファイル探索、比較ライブラリ、宣言位置の取得 |
-| `src/foundation/` | 特定の業務や実行環境を知らないJavaScript値・関数・エラーの操作 |
+| 配置 | 所有する責務 | 依存できる内部パッケージ |
+| --- | --- | --- |
+| `packages/blueprint/` | Testを入口にしたテスト記述、blueprintのモデル・成立条件、宣言・登録の通知 | なし |
+| `packages/module-runtime/` | module変換・読み込み、namespaceの出自、exportの差し替え | なし |
+| `packages/execution/` | 計画、試行・検証・資源管理、結果、実行workerの受信 | blueprint、module-runtime |
+| `packages/cli/` | ファイル選択・収集UseCase、worker監督、設定、CLIの表示 | blueprint、execution、module-runtime |
+| `src/` | 公開APIと各processの起動・具体構成 | 全て |
 
-`interfaces → application → domain → foundation` と `infrastructure → application/domain/foundation` の向きを守ります。
-各layer内の参照も許可します。起動ファイル `index.ts`・`cli.ts`・`cli-worker.ts`・`execution-worker.ts` が具体実装を接続します。
-内部実装からこれらの入口を逆にimportしません。`npm run lint` のESLintルールが、型参照・再export・動的importも含めて検査します。
-公開設定 `Config.vite` のVite型だけは既存API互換性のためapplicationに残し、実行時のVite依存はinfrastructureに置きます。
+各パッケージは `package.json` の依存・明示的な `exports` と、個別の `tsconfig.json` を持ちます。
+`npm run typecheck` は全workspaceを個別に型検査したあと、公開型契約・テスト・例も検査します。
+パッケージをまたぐ参照は所有パッケージのexportsだけを使い、別パッケージのsrcへの相対importは禁止です。
+逆方向の依存・未公開の入口・型参照・再export・動的importも `npm run lint` が検査します。
+パッケージ内では `interfaces → application → domain → foundation` と
+`infrastructure → application/domain/foundation` の向きを維持します。
+
+module-runtimeはblueprintやPlanを知りません。参照の出自とobject/keyの差し替えを提供し、
+executionの `ExecutionModules` がblueprintを走査してmodule準備と計画の指紋を作ります。
+実行node/caseの参照を結び直す処理もexecutionに置きます。
+宣言の通知はblueprintが所有し、CLI収集と実行workerの再読込が同じ通知契約を購読します。
+登録順・ファイル別の問い合わせ・未登録検出はexecutionのCollectionLogが所有します。
+blueprintの通常入口はTest・resource・relation・middleware・registerTestとその型です。
+内部のBuilder・JavaScript操作・例外表示はexportしません。収集/実行側はmodel、宣言通知の接続側はdeclarationsの入口を使います。
+実行既定値と継承、resourceの実行時JSON contextはexecution、CLIの失敗表示はcliが所有します。
+
+配布JSはルートでまとめてビルドし、同じprocessの定義クラス・Symbol・DI基盤を共有します。
+公開入口・bin・workerのURLは従来どおりです。`scripts/declarations.mjs` がworkspaceを参照する型宣言を
+同梱ファイルへの相対参照に変換するため、利用者にprivate workspaceのインストールを要求しません。
 
 ## サービスの組み立て
 
 サービスは `@zeltjs/core` のDIコンテナが組み立てます。`@Injectable()` を付けたクラスが
 constructorの `inject()` で依存を受け取り、`@Config({ abstract: true })` の抽象クラスが
 applicationからinfrastructureへ求める契約の宛名になります。実装の選択は起動ファイルが
-`createRuntime({ configs })` へ具体クラスを渡して行い、`src/application` だけは宛名を書くために
+`createRuntime({ configs })` へ具体クラスを渡して行い、`packages/*/src/application` だけは宛名を書くために
 `@zeltjs/core` をimportできます（domain・foundationは引き続きValibotのみ）。
 
-scopeは1回のrunにつき1つです。CLIの親プロセスは1回の起動ごとに、収集worker・実行workerはworkerごとに、
-ライブラリの `run()` は呼び出しごとにscopeを立てて畳みます。結果の表示先(`ResultPresenter`)や
-実行の持ち場を開く口(`Executor`)は宛名で、繋ぎ先は各起動ファイルが `configs` で選びます。公開APIの利用者がコンテナに触ることはありません。
+AppとNode runtimeはprocessの構成入口で一度だけ起動します。パッケージのimportはAppを作りません。
+CLIの親process・収集worker・実行workerはそれぞれのprocessの入口で構成し、libraryは最初のrunで起動したものを共有します。
+runごとの状態は `RunContext` へ隔離し、メソッド引数にはその仕事の入力を渡します。
+公開APIの利用者がコンテナに触ることはありません。
 
 サービスのunitテストは `@zeltjs/testing/vitest` の `createTestTarget(Service, { configs, overrides })` を使います。
 対象は返り値の `target`、同じDIスコープの依存は `get()` で取得し、`new` で手動構築しません。
@@ -247,16 +261,21 @@ mockが必要な例外では、置き換える依存と、そのテストで保�
 
 unitテストは責務の所有者のそばに置き、サービスの契約をDIで取得した対象から検証します。
 公開 `run()` の組み立てを通してunitテストの範囲を広げません。たとえば `ProgressStore` の状態保持の契約は
-`progress.test.ts`、実物の実行サービスと連携して進捗を更新する `RunWalker` の契約は `runner.*.test.ts` に置きます。
+`progress.test.ts`、実物の実行サービスと連携して進捗を更新する `PlanExecutor` の契約は `runner.*.test.ts` に置きます。
 実装同士の結果が一致することに加え、契約から定めた期待結果も確認します。
 
-E2Eは `e2e/` に置き、ライブラリは配布された公開API、CLIはインストール済みbinを入口として検証します。
+E2Eは `e2e/` に置き、workspaceではビルド済みCLI、installed packageではインストール済みbinから呼びます。
+ライブラリの直接実行は `LibraryRun` の横の `run.*.test.ts` で、公式DI adapterから取得した実物を使って検証します。
+公開入口の起動・再入禁止は `src/index.test.ts`、結果のtransport schemaは `schemas.test.ts` がそれぞれ対象の横で検証します。
+E2Eは内部workspaceやsrcをimportしません。stdout・stderr・終了コードと、利用者側のファイルや後処理を観測します。
+JSONは公開型と独立した観測用readerで検査し、本体のschema・Mutable型を判定基準に使いません。
+配布物と型宣言の検査もconsumerへのインストール・型検査・CLI実行という利用手順で検証します。
 Worker間の進捗通知を保証する場合は、本番の送信・通信・受信・表示まで通します。
 テスト側で通知を直接別サービスへ渡す接続は、本番の通信経路を検証したことにはなりません。
 実行環境固有のシナリオはworkspaceの配布物で検証できます。
 
 型・schema・unitテストは責務の所有者のそばに置きます。共通という理由だけで `shared.ts` や全体の `types/` に集めません。
-宣言位置の取得は起動ファイルのディレクトリを基準に実装フレームを除外します。
+宣言位置の取得はblueprintの公開入口とworkspaceの実装ディレクトリを基準に実装フレームを除外します。
 Workerと公開APIのURLも起動ファイルで組み立てるため、内部ファイルの階層が配布物の探索に影響しません。
 
 文書は `docs/guides/`（使い方）、`docs/reference/`（仕様）、`docs/concepts/`（考え方）で分けます。

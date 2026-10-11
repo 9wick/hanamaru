@@ -1,0 +1,51 @@
+{
+  "name": "@hanamaru/execution",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./application/collection/definitions": "./src/application/collection/definitions.ts",
+    "./application/execution/context": "./src/application/execution/context.ts",
+    "./application/execution/current-run": "./src/application/execution/current-run.ts",
+    "./application/execution/faults": "./src/application/execution/faults.ts",
+    "./application/execution/lifecycle": "./src/application/execution/lifecycle.ts",
+    "./application/execution/options": "./src/application/execution/options.ts",
+    "./application/execution/progress": "./src/application/execution/progress.ts",
+    "./application/execution/progress-schema": "./src/application/execution/progress-schema.ts",
+    "./application/execution/runner": "./src/application/execution/runner.ts",
+    "./application/execution/state": "./src/application/execution/state.ts",
+    "./application/planning/planner": "./src/application/planning/planner.ts",
+    "./application/ports/executor": "./src/application/ports/executor.ts",
+    "./application/ports/root-reference": "./src/application/ports/root-reference.ts",
+    "./domain/execution/model": "./src/domain/execution/model.ts",
+    "./domain/result/diagnostic": "./src/domain/result/diagnostic.ts",
+    "./domain/result/mutable": "./src/domain/result/mutable.ts",
+    "./domain/result/schemas": "./src/domain/result/schemas.ts",
+    "./domain/result/types": "./src/domain/result/types.ts",
+    "./infrastructure/comparison": "./src/infrastructure/comparison.ts",
+    "./infrastructure/execution/local": "./src/infrastructure/execution/local.ts",
+    "./infrastructure/execution/modules": "./src/infrastructure/execution/modules.ts",
+    "./infrastructure/workers/execution-environment": "./src/infrastructure/workers/execution-environment.ts",
+    "./infrastructure/workers/execution-feature": "./src/infrastructure/workers/execution-feature.ts",
+    "./infrastructure/workers/execution-schemas": "./src/infrastructure/workers/execution-schemas.ts",
+    "./infrastructure/workers/execution-session": "./src/infrastructure/workers/execution-session.ts",
+    "./infrastructure/workers/protocol": "./src/infrastructure/workers/protocol.ts",
+    "./infrastructure/workers/requests": "./src/infrastructure/workers/requests.ts",
+    "./interfaces/library/run": "./src/interfaces/library/run.ts",
+    "./interfaces/library/run-feature": "./src/interfaces/library/run-feature.ts",
+    "./domain/execution/config": "./src/domain/execution/config.ts",
+    "./domain/result/exception": "./src/domain/result/exception.ts",
+    "./application/collection/scope": "./src/application/collection/scope.ts",
+    "./application/collection/current-scope": "./src/application/collection/current-scope.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hanamaru/blueprint": "0.0.0",
+    "@hanamaru/module-runtime": "0.0.0",
+    "@vitest/expect": "5.0.2",
+    "@zeltjs/core": "0.12.0-canary.2",
+    "valibot": "1.5.0"
+  }
+}
