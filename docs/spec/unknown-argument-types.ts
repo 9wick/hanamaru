@@ -1,4 +1,4 @@
-import { Test, middleware, registerTest, run } from 'hanamaru'
+import { Test, middleware, registerTest } from 'hanamaru'
 import type { TestBlueprint, TestDefinition } from 'hanamaru'
 
 declare const input: unknown
@@ -9,15 +9,15 @@ const suite = new Test().target(inspect)
   .it('unknown を遅延して渡す', t => t.argsFrom(() => [input]).expect(e => [e.result.toBe('object')]))
 
 registerTest(suite)
-run(suite)
-run([suite])
+registerTest(suite)
+registerTest(new Test().group([suite]))
 const definition: TestDefinition = suite
 const blueprint: TestBlueprint = suite.blueprint()
 void [definition, blueprint]
 
 const grouped = new Test().group('unknown の対象', [suite])
 registerTest(grouped)
-run(grouped)
+registerTest(grouped)
 
 const mixed = new Test().target((prefix: string, value?: unknown): string => prefix + typeof value)
   .it('具体型と unknown を混ぜる', t => t.args('type:', input).expect(e => [e.result.toBe('type:object')]))
@@ -32,7 +32,7 @@ const child = new Test<{ input: unknown }>().target(inspect)
   .it('親から unknown を受け取る', t => t.argsFrom(ctx => [ctx.input]).expect(e => [e.result.toBe('object')]))
 const parent = new Test().use(middleware(async (_, next) => next({ input }))).group([child])
 registerTest(parent)
-run(parent)
+registerTest(parent)
 
 // @ts-expect-error an unknown argument must not erase the other parameter types.
 mixed.it('具体型への誤った引数', t => t.args(1, input).expect(e => [e.result.toBe('1object')]))
@@ -43,4 +43,4 @@ registerTest(new Test().target(inspect))
 // @ts-expect-error an unknown argument must not erase required parent context.
 registerTest(child)
 // @ts-expect-error an unknown argument must not erase required parent context at execution.
-run(child)
+registerTest(child)

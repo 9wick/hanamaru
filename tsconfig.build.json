@@ -5,12 +5,13 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "."
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "packages/*/src/**/*.ts"
   ],
   "exclude": [
-    "src/**/*.test.ts"
+    "**/*.test.ts"
   ]
 }

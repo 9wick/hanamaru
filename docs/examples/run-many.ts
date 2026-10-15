@@ -1,10 +1,8 @@
-import { run } from 'hanamaru'
+import { registerTest } from 'hanamaru'
 import { addition } from './math.test.ts'
 import { users } from './user.test.ts'
 
 // #region accept
-const result = await run(users)
-const results = await run([addition, users])
+registerTest(addition)
+registerTest(users)
 // #endregion accept
-
-console.log(result.status, results.status)

@@ -219,5 +219,4 @@ const blueprint = users.blueprint()
 1ケース以上あるテスト、または完成済みの子を1つ以上持つグループから、読み取り専用のblueprintを取得します。
 todoだけの定義も含みます。
 middleware・テスト対象は実行しません。戻り値の構造は[プラグイン向けblueprint](metadata.md)を参照してください。
-親のコンテキストを要求する定義でもblueprintは取得できますが、`run()` へ渡せるのは親のコンテキストを要求しない完成したテストです。blueprintは `run()` の入力ではありません。
 CLIに収集させるファイルでは、必要なコンテキストを用意したルートを `registerTest` に渡します。詳しくは[テストの登録](../guides/registration.md)を参照してください。

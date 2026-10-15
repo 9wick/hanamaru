@@ -1,4 +1,4 @@
-import { Test, middleware, registerTest, run } from 'hanamaru'
+import { Test, middleware, registerTest } from 'hanamaru'
 import type { Ctx, GroupEntry, GroupMiddlewareResult, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
 import { add } from '../examples/math.ts'
 import { mailService } from '../examples/user.ts'
@@ -20,12 +20,12 @@ const parent = new Test()
   .use(middleware(async (_, next) => next({ seed: 2, extra: true })))
   .group([child])
   .group('同じ子をもう一度使う', [child])
-run(parent)
 registerTest(parent)
-run([parent, registrations])
+registerTest(parent)
+registerTest(new Test().group([parent, registrations]))
 
 const nested = new Test<{ seed: number }>().group([child])
-run(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group([nested]))
+registerTest(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group([nested]))
 const independent = new Test().target(add)
   .it('ctxを要求しない', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
 const nestedGroups = new Test().group('外側', [
@@ -42,7 +42,7 @@ if (nestedDefinition.kind === 'definition') {
   expectType<string | null>(innerGroup.name)
 }
 const combined = new Test<{ seed: number }>().group('複数の対象をまとめる', [child, independent])
-run(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group([combined]))
+registerTest(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).group([combined]))
 new Test().group([independent])
 new Test().use(middleware(async (_, next) => next({ seed: 1 }))).group([independent])
 new Test()
@@ -68,17 +68,17 @@ new Test().group([nested])
 // @ts-expect-error type annotations must not erase required context.
 const erasedDefinition: TestDefinition = child
 // @ts-expect-error the child cannot run without its parent.
-run(child)
+registerTest(child)
 // @ts-expect-error a registered root must not require parent context.
 registerTest(child)
 // @ts-expect-error an incomplete builder cannot be registered.
 registerTest(new Test().target(add))
 // @ts-expect-error arrays cannot hide a missing context provider.
-run([independent, child])
+registerTest(new Test().group([independent, child]))
 // @ts-expect-error a group's declared input is still required at the root.
-run(nested)
+registerTest(nested)
 // @ts-expect-error even locally shadowing an input does not remove an input contract.
-run(new Test<{ seed: number }>().use(middleware(async (_, next) => next({ seed: 1 }))).target(add).todo('後で'))
+registerTest(new Test<{ seed: number }>().use(middleware(async (_, next) => next({ seed: 1 }))).target(add).todo('後で'))
 
 // @ts-expect-error middleware is fixed after the first group.
 parent.use(middleware(async (_, next) => next({ seed: 4 })))
@@ -101,7 +101,7 @@ new Test().group(independent)
 // @ts-expect-error named groups also require an array.
 new Test().group('名前付き', independent)
 // @ts-expect-error an empty container cannot be run.
-run(new Test())
+registerTest(new Test())
 // @ts-expect-error group names are strings when present.
 new Test().group(123, [independent])
 const parentBlueprint: TestBlueprint = parent.blueprint()
@@ -109,7 +109,7 @@ expectType<'definition'>(parent.blueprint().kind)
 const firstGroup = parent.blueprint().children[0]
 expectType<'group'>(firstGroup.kind)
 // @ts-expect-error run accepts a completed test, not its blueprint.
-run(parentBlueprint)
+registerTest(parentBlueprint)
 // @ts-expect-error blueprint structure is readonly.
 parent.blueprint().children.push(firstGroup)
 
@@ -159,7 +159,7 @@ for (const entry of blueprint.children) {
     childEntry.name
   }
 }
-const result = await run(registrations)
+declare const result: import('hanamaru').RunResult
 expectType<'passed' | 'failed' | 'cancelled'>(result.status)
 for (const node of result.tests) {
   // @ts-expect-error aggregate status is derived from cases or children, not stored.
@@ -195,7 +195,7 @@ const groupedWithMiddleware = new Test()
   .group(sharedServer, [groupScopedChild])
   .group('名前付き', sharedServer, [groupScopedChild])
   .group('複数の子で資源を共有', sharedServer, [groupScopedChild, independent])
-run(groupedWithMiddleware)
+registerTest(groupedWithMiddleware)
 // @ts-expect-error middleware groups also require an array.
 new Test().group(sharedServer, groupScopedChild)
 
@@ -245,16 +245,16 @@ const attemptConsumer = new Test<Seed>()
   .target(add)
   .it('要求はseedだけ', t => t.argsFrom(ctx => [ctx.seed, 1])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
-run(new Test().use(seedProvider).group([attemptConsumer]))
-run(new Test().group(seedProvider, [attemptConsumer]))
+registerTest(new Test().use(seedProvider).group([attemptConsumer]))
+registerTest(new Test().group(seedProvider, [attemptConsumer]))
 
 const groupConsumer = new Test<Seed>()
   .group(middleware(async (ctx, next) => {
     expectType<number>(ctx.seed)
     return await next({ expected: ctx.seed + 1 })
   }), [expectedChild])
-run(new Test().group(seedProvider, [groupConsumer]))
-run(new Test().group('同じ要求を持つ子', seedProvider, [groupConsumer, attemptConsumer]))
+registerTest(new Test().group(seedProvider, [groupConsumer]))
+registerTest(new Test().group('同じ要求を持つ子', seedProvider, [groupConsumer, attemptConsumer]))
 // @ts-expect-error the group would start before its provider's first attempt.
 new Test().use(seedProvider).group([groupConsumer])
 // @ts-expect-error names do not change execution ordering.
@@ -269,11 +269,11 @@ new Test().group(middleware(async (_, next) => next({ seed: '2' })), [groupConsu
 new Test().group(middleware(async (_, next) => next(optionalSeed)), [groupConsumer])
 
 const relay = new Test<Seed>().group([groupConsumer]).group('再利用', [groupConsumer])
-run(new Test().group(seedProvider, [relay]))
+registerTest(new Test().group(seedProvider, [relay]))
 // @ts-expect-error ordinary containers must preserve their children's input timing.
 new Test().use(seedProvider).group([relay])
 const appendedAttempt = groupConsumer.group([attemptConsumer])
-run(new Test().group(seedProvider, [appendedAttempt]))
+registerTest(new Test().group(seedProvider, [appendedAttempt]))
 // @ts-expect-error adding a later attempt-only group must preserve earlier input timing.
 new Test().use(seedProvider).group([appendedAttempt])
 // @ts-expect-error group-local values are not supplied to sibling groups.
@@ -282,17 +282,17 @@ new Test().group(seedProvider, [groupConsumer]).group([groupConsumer])
 const erasedGroup: TestDefinition = groupConsumer
 const annotatedConsumer: TestDefinition<Seed> = groupConsumer
 const annotatedAttempt: TestDefinition<Seed> = attemptConsumer
-run(new Test().group(seedProvider, [annotatedConsumer]))
-run(new Test().use(seedProvider).group([annotatedAttempt]))
+registerTest(new Test().group(seedProvider, [annotatedConsumer]))
+registerTest(new Test().use(seedProvider).group([annotatedAttempt]))
 // @ts-expect-error a narrowed definition annotation must preserve input timing.
 new Test().use(seedProvider).group([annotatedConsumer])
 // @ts-expect-error blueprint annotations must also preserve dependency requirements.
 const erasedBlueprint: TestBlueprint = groupConsumer.blueprint()
 expectType<TestBlueprint<Seed>>(groupConsumer.blueprint())
 // @ts-expect-error run has no provider for seed.
-run(groupConsumer)
+registerTest(groupConsumer)
 // @ts-expect-error arrays cannot hide an unsatisfied requirement.
-run([independent, groupConsumer])
+registerTest(new Test().group([independent, groupConsumer]))
 // @ts-expect-error dependency requirements have one type parameter.
 new Test<{}, Seed>()
 // @ts-expect-error completed definitions have one dependency requirement too.
@@ -304,23 +304,23 @@ const reusedMiddleware = new Test<Seed>()
   .timeout(1_000).retry(1)
   .mock(mailService, 'send', m => m.resolves(undefined))
   .group(readsSeed, [expectedChild])
-run(new Test().group(seedProvider, [reusedMiddleware]))
+registerTest(new Test().group(seedProvider, [reusedMiddleware]))
 // @ts-expect-error settings must not erase the inferred input timing.
 new Test().use(seedProvider).group([reusedMiddleware])
 
 const localAttempt = new Test<Seed>()
   .use(middleware(async (ctx, next) => next({ seed: String(ctx.seed) })))
   .group(readsSeed, [expectedChild])
-run(new Test().group(seedProvider, [localAttempt]))
+registerTest(new Test().group(seedProvider, [localAttempt]))
 // @ts-expect-error a local use does not make the outer dependency optional.
-run(localAttempt)
+registerTest(localAttempt)
 
 const appendedGroup = new Test<Seed>().group([attemptConsumer]).group(readsSeed, [expectedChild])
 // @ts-expect-error a later group can move the required input before the first attempt.
 new Test().use(seedProvider).group([appendedGroup])
-run(new Test().group(seedProvider, [appendedGroup]))
+registerTest(new Test().group(seedProvider, [appendedGroup]))
 
 declare const opaqueDefinition: TestDefinition<Seed>
-run(new Test().group(seedProvider, [opaqueDefinition]))
+registerTest(new Test().group(seedProvider, [opaqueDefinition]))
 // @ts-expect-error an unknown definition may need seed before the first attempt.
 new Test().use(seedProvider).group([opaqueDefinition])

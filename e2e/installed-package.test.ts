@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as v from 'valibot'
 import { afterAll, beforeAll, expect, test } from 'vite-plus/test'
@@ -12,7 +12,6 @@ import {
   interrupt,
   invoke,
   jsonResult,
-  launcher,
   middlewareOf,
   removePackage,
   repository,
@@ -29,6 +28,35 @@ beforeAll(() => {
 })
 afterAll(() => {
   removePackage(installed)
+})
+
+test('one published package contains declarations without private workspace dependencies', () => {
+  const packageDirectory = join(installed.consumer, 'node_modules/hanamaru')
+  const manifest = v.parse(
+    v.object({ dependencies: v.record(v.string(), v.string()) }),
+    JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8')),
+  )
+  for (const name of [
+    'blueprint',
+    'definition',
+    'runner',
+    'execution',
+    'execution-protocol',
+    'module-runtime',
+    'cli',
+  ]) {
+    expect(manifest.dependencies[`@hanamaru/${name}`]).toBeUndefined()
+    expect(existsSync(join(installed.consumer, 'node_modules/@hanamaru', name))).toBe(false)
+  }
+  const dist = join(packageDirectory, 'dist')
+  const declarations = readdirSync(dist, { recursive: true, encoding: 'utf8' }).filter((name) => name.endsWith('.d.ts'))
+  expect(declarations).toContain('index.d.ts')
+  for (const name of declarations)
+    expect(readFileSync(join(dist, name), 'utf8'), name).not.toMatch(
+      /@hanamaru\/(blueprint|definition|runner|execution-protocol|execution|module-runtime|cli)(?:\/|['"])/,
+    )
+  const result = jsonResult(invoke(installed.env, 'contracts.test.ts', '-r', 'json'), 0)
+  expect(cases(groupNode(result)).filter((item) => !item.notRun)).toHaveLength(4)
 })
 
 test('installed CLI needs no module or TypeScript config and supports optional guide typechecking', () => {
@@ -62,7 +90,9 @@ test('installed CLI needs no module or TypeScript config and supports optional g
   expect(install.status, install.stderr).toBe(0)
   const help = execute('npx', ['--no-install', 'hanamaru', '--help'], project)
   expect(help.status, help.stderr).toBe(0)
-  expect(help.stdout).toContain('hanamaru [files...]')
+  expect(help.stdout).toContain('hanamaru [files...|file:line]')
+  expect(help.stdout).toContain('--list')
+  expect(help.stdout).toContain('--id target-id')
   const version = execute('npx', ['--no-install', 'hanamaru', '--version'], project)
   expect(version.status, version.stderr).toBe(0)
   expect(version.stdout.trim()).toBe(release.version)
@@ -72,6 +102,20 @@ test('installed CLI needs no module or TypeScript config and supports optional g
   )
   expect(output.status).toBe('passed')
   expect(testNode(output).cases).toHaveLength(1)
+  writeFileSync(
+    join(source, 'private.ts'),
+    `import type {} from 'hanamaru'
+const secret = 7
+const privateValue = () => secret
+if (import.meta.hanamaru) {
+  const { Test, registerTest } = import.meta.hanamaru
+  registerTest(new Test().target(privateValue).it('private source', t => t.args().expect(e => [e.result.toBe(7)])))
+}
+`,
+  )
+  expect(
+    jsonResult(execute('npx', ['--no-install', 'hanamaru', 'src/private.ts', '--reporter', 'json'], project), 0).status,
+  ).toBe('passed')
   const projectManifest = v.parse(v.looseObject({}), JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')))
   const scripts = v.parse(v.object({ scripts: v.record(v.string(), v.string()) }), JSON.parse(manifest))
   writeFileSync(join(project, 'package.json'), JSON.stringify({ ...projectManifest, ...scripts }))
@@ -93,13 +137,21 @@ test('installed CLI needs no module or TypeScript config and supports optional g
   expect(failed.stdout).toContain('toBe')
 })
 
-test(`installed public API satisfies lifecycle and result contracts on ${runtime}`, () => {
-  const result = execute(launcher.command, [...launcher.args, 'library.ts'], installed.consumer)
-  expect(result.status, result.stderr).toBe(0)
-  expect(v.parse(v.object({ status: v.string(), runtime: v.string() }), JSON.parse(result.stdout))).toStrictEqual({
-    status: 'passed',
-    runtime,
-  })
+test(`installed CLI satisfies lifecycle and result contracts on ${runtime}`, () => {
+  const result = invoke(installed.env, 'contracts.test.ts', '-r', 'json')
+  const parsed = jsonResult(result, 0)
+  const outer = groupNode(parsed)
+  const group = outer.children[0].result
+  expect.assert(group.kind === 'group')
+  expect(group.middleware?.status).toBe('passed')
+  expect(cases(group).map((item) => item.notRun ?? item.attempts[0]?.status)).toEqual([
+    'passed',
+    'passed',
+    'skipped',
+    'todo',
+    'passed',
+    'passed',
+  ])
 })
 
 test('installed declarations satisfy the public positive and negative type contracts', () => {
@@ -118,6 +170,16 @@ test('installed declarations satisfy the public positive and negative type contr
     installed.consumer,
   )
   expect(checked.status, checked.stdout + checked.stderr).toBe(0)
+  const file = consumerFixture(
+    installed,
+    'checked-types.test',
+    `
+registerTest(new Test().target((value: number) => value * 2)
+  .it('typed consumer', t => t.args(2).expect(e => [e.result.toBe(4)])))
+`,
+  )
+  const output = jsonResult(invoke(installed.env, file, '-r', 'json'), 0)
+  expect(testNode(output).cases[0].attempts[0].status).toBe('passed')
 })
 
 test('installed CLI registers and runs targets with unknown arguments', () => {

@@ -31,11 +31,9 @@ Deno 2.9.2では、配布tarballのCLIで設定なし・alias/plugin設定あり
 
 ## TypeScriptの実行
 
-通常のテスト実行はCLIから行い、ライブラリAPIの `run` は自分のプログラムから完成した定義を実行するときに使います。[実行方法の選び方](cli.md#実行方法の選び方)を参照してください。projectはCLIが読むファイルを選ぶ設定であり、`run` の入力形式を変更するものではありません。
 
 CLIは内蔵のViteでTypeScriptを変換して実行します。必要な変換設定・プラグインは
 [hanamaru configのvite](cli.md#viteの設定)で指定できます。型チェックは行いません。
-Nodeでファイルを直接実行して `run(definition)` を呼ぶ場合は、
 [Nodeの構文制約](https://nodejs.org/docs/latest-v22.x/api/typescript.html#typescript-features)に従います。
 
 `erasableSyntaxOnly` だけで全てのランタイム差を防げるとはしない。
@@ -88,7 +86,6 @@ CLIでは、通常オブジェクトのメソッドと、module namespaceの関�
 Viteで外部化したmodule内部のimportは置き換えません。
 CommonJSはランタイム標準で読み込みます。ESMからimportした関数exportは対象ですが、CommonJS内部のrequireには介入しません。
 Viteの変換を経由します。native ESMと全ての評価順序・循環依存で同等になることまでは検証していません。
-`run(definition)` は既読の定義を実行するため、module namespaceの差し替えはCLIを使います。
 [モックの範囲](api-mock.md#差し替えの範囲)を参照してください。
 
 ## ケースの独立性
@@ -107,7 +104,6 @@ process.env、module state、global、filesystem、外部DB等の利用者側の
 
 宣言位置の自動取得、構造化した失敗、各試行の結果、timeout・retry、each、mock sequence、nthの呼び出し条件を含めます。
 timeout・retryはgroup、`.target()` の前後、ケースで項目ごとに継承・上書きします。middlewareの前処理期限・後処理期限は `middleware(fn, { timeout })` に持たせます。
-標準CLIは期限超過後の停止を保証し、run(test)単独は同一プロセスの処理と後始末を待ちます。
 未終了の処理・未完了の復元を次ケースへ持ち越しません。CLIは猶予超過後にworkerを終了し、得られた結果を中断・後処理未完了として報告します。
 
 ## 初版の実行器に含めないもの

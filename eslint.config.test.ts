@@ -5,14 +5,14 @@ import { ESLint } from 'eslint'
 const eslint = new ESLint({
   overrideConfig: [
     {
-      files: ['src/**/*.ts'],
+      files: ['src/**/*.ts', 'packages/*/src/**/*.ts'],
       languageOptions: { parserOptions: { disallowAutomaticSingleRunInference: true } },
     },
   ],
 })
 // 型情報付きルールの対象外に置くため、tsconfigのincludeに入らないパスを使う。
 const syntaxFile = 'virtual/lint-sample.ts'
-const implementationFile = 'src/foundation/value.ts'
+const implementationFile = 'packages/blueprint/src/domain/definition/javascript.ts'
 const messages = async (code: string, filePath: string = syntaxFile) =>
   (await eslint.lintText(code, { filePath }))[0].messages
 
@@ -132,16 +132,20 @@ test('lint accepts checked inputs and described negative type tests', async () =
   ).toBe(true)
 })
 
-// 依存ルールの契約: 通常・再export・動的import・型参照すべてで外向きの依存を拒否する。
-test('layer boundaries reject outward dependencies and entrypoint shortcuts', async () => {
-  const filename = new URL('./src/domain/definition/validation.ts', import.meta.url).pathname
+// パッケージ境界の契約: 静的・動的・再export・型参照・source直参照の全てを制限する。
+test('package boundaries reject reverse dependencies and source shortcuts', async () => {
+  const filename = new URL('./packages/blueprint/src/domain/definition/validation.ts', import.meta.url).pathname
   for (const source of [
-    "import { runCommand } from '../../interfaces/cli/command.js'; export { runCommand }",
-    "export * from '../../infrastructure/comparison.js'",
-    "export const runtime = import('../../infrastructure/comparison.js')",
-    "export type Options = import('../../application/collection/options.js').CliOptions",
-    "export * from '../../index.js'",
-    "export * from '../definition/../../infrastructure/comparison.js'",
+    "export * from '@hanamaru/cli/application/collection/config'",
+    "export const runtime = import('@hanamaru/runner/interfaces/library/run')",
+    "export type Options = import('@hanamaru/runner/application/execution/options').RunOptions",
+    "export * from '@hanamaru/module-runtime/infrastructure/modules/runtime'",
+    "export * from '../../../../../execution/src/domain/result/types.js'",
+    "export * from '../../../../../../src/index.js'",
+    "export * from '@hanamaru/blueprint/src/domain/definition/tags'",
+    "export * from '@hanamaru/blueprint/interfaces/library/definition'",
+    "import { Test } from 'hanamaru'; export { Test }",
+    "export * from '../../interfaces/cli/command.js'",
     "import { readFileSync } from 'node:fs'; export { readFileSync }",
   ]) {
     expect(
@@ -149,14 +153,54 @@ test('layer boundaries reject outward dependencies and entrypoint shortcuts', as
       source,
     ).toBe(true)
   }
+  const runtime = new URL('./packages/module-runtime/src/infrastructure/modules/runtime.ts', import.meta.url).pathname
+  expect(
+    (await messages("export * from '@hanamaru/blueprint/model'", runtime)).some(
+      (message) => message.ruleId === 'architecture/dependencies',
+    ),
+  ).toBe(true)
+  const execution = new URL('./packages/execution/src/application/execution/attempt.ts', import.meta.url).pathname
+  expect(
+    (await messages("export * from '@hanamaru/module-runtime/infrastructure/modules/compiler'", execution)).some(
+      (message) => message.ruleId === 'architecture/dependencies',
+    ),
+  ).toBe(true)
+
+  expect(
+    (await messages("export * from '@hanamaru/cli/application/collection/config'", execution)).some(
+      (message) => message.ruleId === 'architecture/dependencies',
+    ),
+  ).toBe(true)
 })
 
-test('layer boundaries accept inward dependencies', async () => {
+test('worker implementations stay independent and the protocol contains only data contracts', async () => {
   const cases = [
-    ['src/interfaces/library/run.ts', "export * from '../../application/execution/options.js'"],
-    ['src/application/execution/runner.ts', "export * from '../../domain/result/types.js'"],
-    ['src/infrastructure/workers/client.ts', "export * from '../../application/ports/executor.js'"],
-    ['src/domain/result/diagnostic.ts', "export * from '../../foundation/value.js'"],
+    ['packages/runner/src/infrastructure/workers/client.ts', "export * from '@hanamaru/execution/worker'"],
+    [
+      'packages/execution/src/application/execution/attempt.ts',
+      "export * from '@hanamaru/runner/application/execution/lifecycle'",
+    ],
+    ['packages/cli/src/application/usecases/run-test-files.ts', "export * from '@hanamaru/execution/worker'"],
+    ['packages/execution-protocol/src/schemas.ts', "export * from '@hanamaru/blueprint/model'"],
+    ['packages/execution-protocol/src/schemas.ts', "import { Injectable } from '@zeltjs/core'; export { Injectable }"],
+  ]
+  for (const [filename, source] of cases)
+    expect(
+      (await messages(source, filename)).some((message) => message.ruleId === 'architecture/dependencies'),
+      source,
+    ).toBe(true)
+})
+
+test('package boundaries accept declared inward dependencies', async () => {
+  const cases = [
+    ['packages/cli/src/application/collection/session.ts', "export * from '@hanamaru/runner/domain/result/types'"],
+    ['packages/execution/src/application/execution/attempt.ts', "export * from '@hanamaru/blueprint/model'"],
+    [
+      'packages/execution/src/infrastructure/execution/modules.ts',
+      "export * from '@hanamaru/module-runtime/infrastructure/modules/reference'",
+    ],
+    ['packages/blueprint/src/domain/definition/validation.ts', "export * from './javascript.js'"],
+    ['src/index.ts', "export * from '@hanamaru/blueprint'"],
   ]
   for (const [file, source] of cases) {
     expect(
@@ -166,4 +210,33 @@ test('layer boundaries accept inward dependencies', async () => {
       file,
     ).toEqual([])
   }
+})
+
+test('E2E observes CLI outputs without importing private implementation or running the SDK in its harness', async () => {
+  const filename = new URL('./e2e/harness.ts', import.meta.url).pathname
+  for (const source of [
+    "import { runResultSchema } from '@hanamaru/runner/domain/result/schemas'",
+    "export type { MutableRunResult } from '@hanamaru/runner/domain/result/mutable'",
+    "export * from '../packages/execution/src/domain/result/schemas.js'",
+    "export const run = import('../src/index.js')",
+    "import { Test, run } from 'hanamaru'; export { Test, run }",
+  ]) {
+    expect(
+      (await messages(source, filename)).some((message) => message.ruleId === 'architecture/dependencies'),
+      source,
+    ).toBe(true)
+  }
+  for (const source of [
+    "import type { RunResult } from 'hanamaru'; export type { RunResult }",
+    "export { readCliResult } from './cli-result.ts'",
+  ])
+    expect(
+      (await messages(source, filename)).filter((message) => message.ruleId === 'architecture/dependencies'),
+    ).toEqual([])
+  const fixture = new URL('./e2e/fixtures/contracts.test.ts', import.meta.url).pathname
+  expect(
+    (await messages("import { Test } from 'hanamaru'; export { Test }", fixture)).filter(
+      (message) => message.ruleId === 'architecture/dependencies',
+    ),
+  ).toEqual([])
 })

@@ -4,22 +4,18 @@ blueprintは、テスト定義から得られる実行前の構造です。プ�
 グループの階層・テスト対象・middleware・モック・引数・期待の組み立て方などを保持します。ケース名や宣言位置などのmetadataもここから読めます。
 CLIでは、実行ルートを `registerTest` で登録します。利用者がblueprintを取得する必要はなく、実行計画は実行器の内部で決めます。
 
-## 取得と実行
+## blueprintの取得
 
-次はライブラリAPIから実行結果とblueprintを取得する例です。CLIが収集するテストファイルに追加するコードではありません。実行入口の使い分けは[実行方法の選び方](cli.md#実行方法の選び方)を参照してください。
 
 <!-- example: docs/examples/metadata.ts -->
 ```ts
-import { run } from 'hanamaru'
 import { users } from './user.test.ts'
 
-const result = await run(users)
 const blueprint = users.blueprint()
-console.log(result.status, blueprint.kind)
+console.log(blueprint.kind, blueprint.version)
 ```
 出典: [docs/examples/metadata.ts](../examples/metadata.ts)
 
-`.blueprint()` は `TestBlueprint` を返します。`run()` は完成したテストを受け取り、実行して `RunResult` を返します。blueprintを直接 `run()` に渡すことはできません。
 blueprintを取得してもmiddleware・テスト対象は呼ばず、メソッドの差し替えや記録も開始しません。
 blueprintの取得に対象ファイル・export名・手書きIDの指定は不要です。CLIで実行するルートを `registerTest` で登録する操作とも別です。
 

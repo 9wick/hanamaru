@@ -36,8 +36,13 @@ const typeAwareRules = {
 }
 export default [
   {
-    files: ['src/**/*.ts'],
-    ignores: ['src/**/*.test.ts'],
+    files: ['e2e/**/*.ts'],
+    plugins: { architecture: architecturePlugin },
+    rules: { 'architecture/dependencies': 'error' },
+  },
+  {
+    files: ['src/**/*.ts', 'packages/*/src/**/*.ts'],
+    ignores: ['**/*.test.ts'],
     plugins: { architecture: architecturePlugin },
     rules: { 'architecture/dependencies': 'error' },
   },
@@ -50,15 +55,13 @@ export default [
     rules: typeSafetyRules,
   },
   {
-    files: ['src/**/*.ts', 'vite.config.ts', 'eslint.config.test.ts'],
+    files: ['src/**/*.ts', 'packages/*/src/**/*.ts', 'vite.config.ts', 'eslint.config.test.ts'],
     languageOptions: { parserOptions: { project: './tsconfig.json', tsconfigRootDir: import.meta.dirname } },
     rules: typeAwareRules,
   },
   {
-    // e2eはe2e/tsconfig.jsonで型検査する。library.tsはインストール済みパッケージを実行時に叩く契約スクリプトで、
-    // 型の絞り込みを持たないためそのプロジェクトから外してある。
+    // E2EはCLIを起動し、公開契約だけを観測する。
     files: ['e2e/**/*.ts'],
-    ignores: ['e2e/fixtures/library.ts'],
     languageOptions: { parserOptions: { project: './e2e/tsconfig.json', tsconfigRootDir: import.meta.dirname } },
     rules: typeAwareRules,
   },

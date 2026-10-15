@@ -1,4 +1,4 @@
-import { Test, middleware, run, type Ctx } from 'hanamaru'
+import { Test, middleware, registerTest, type Ctx } from 'hanamaru'
 import { add } from '../examples/math.ts'
 interface Db { close(): Promise<void>; countUsers(): Promise<number> }
 declare function createDb(): Promise<Db>
@@ -43,7 +43,7 @@ const suite = configured.target(countUsers)
       expectType<number>(e.ctx.expected)
       return [e.result.toBe(e.ctx.expected)]
     }))
-run(suite)
+registerTest(suite)
 // @ts-expect-error middleware cannot change the context after a case is declared.
 suite.use(middleware(async (_, next) => next({ extra: true })))
 // @ts-expect-error middleware output must be returned to retain its inferred type.
@@ -53,13 +53,13 @@ const child = new Test<{ db: Db; expected: number }>()
   .target(countUsers)
   .it('親から受け取る', t => t.argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
-run(configured.group([child]))
+registerTest(configured.group([child]))
 // @ts-expect-error a missing middleware cannot supply the child's required fields.
 new Test().group([child])
 // @ts-expect-error incomplete middleware output cannot satisfy all the requirements.
 new Test().use(middleware(async (_, next) => next({ db: await createDb() }))).group([child])
 // @ts-expect-error the child still cannot run without its parent.
-run(child)
+registerTest(child)
 
 new Test().target(countUsers)
   .use(middleware(async (_, next) => next({ db: await createDb() })))
@@ -130,8 +130,8 @@ const dependent = new Test<{ db: Db }>()
   .use(middleware(async (ctx, next) => next({ count: await ctx.db.countUsers() })))
   .target(countUsers).todo('要求型を保持する')
 // @ts-expect-error middleware cannot discard a parent's required context.
-run(dependent)
-run(configured.group([dependent]))
+registerTest(dependent)
+registerTest(configured.group([dependent]))
 
 for (const step of suite.blueprint().steps) {
   expectType<(...args: never[]) => void>(step.run)

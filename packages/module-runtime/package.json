@@ -1,0 +1,22 @@
+{
+  "name": "@hanamaru/module-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./application/ports/module-loader": "./src/application/ports/module-loader.ts",
+    "./infrastructure/modules/compiler": "./src/infrastructure/modules/compiler.ts",
+    "./infrastructure/modules/entry": "./src/infrastructure/modules/entry.ts",
+    "./infrastructure/modules/reference": "./src/infrastructure/modules/reference.ts",
+    "./infrastructure/modules/runtime": "./src/infrastructure/modules/runtime.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hanamaru/vite": "npm:vite@8.3.0",
+    "@zeltjs/core": "0.12.0-canary.2",
+    "acorn": "8.15.0",
+    "valibot": "1.5.0"
+  }
+}

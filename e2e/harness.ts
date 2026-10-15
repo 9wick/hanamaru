@@ -6,14 +6,16 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as v from 'valibot'
 import { expect, onTestFinished } from 'vite-plus/test'
+import { readCliResult } from './cli-result.ts'
 import type {
-  MutableCaseResult,
-  MutableGroupMiddleware,
-  MutableGroupResult,
-  MutableNodeResult,
-  MutableTestResult,
-} from '../src/domain/result/mutable.js'
-import { runResultSchema } from '../src/domain/result/schemas.js'
+  ObservedCase,
+  ObservedGroup,
+  ObservedMiddleware,
+  ObservedNode,
+  ObservedTest,
+  ParsedRunResult,
+} from './cli-result.ts'
+export type { ParsedRunResult } from './cli-result.ts'
 
 export const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -178,11 +180,9 @@ function registeredFixture(source: string): string {
   return `${declarations}\n${roots.map((name) => `registerTest(${name})`).join('\n')}`
 }
 
-export type ParsedRunResult = v.InferOutput<typeof runResultSchema>
-
 /** CLIのJSON出力をスキーマで検証して読む。version以外の形の破れもここで失敗する。 */
 export function runResult(stdout: string): ParsedRunResult {
-  return v.parse(runResultSchema, JSON.parse(stdout))
+  return readCliResult(stdout)
 }
 
 export function jsonResult(result: SpawnSyncReturns<string>, code: number): ParsedRunResult {
@@ -190,38 +190,38 @@ export function jsonResult(result: SpawnSyncReturns<string>, code: number): Pars
   return runResult(result.stdout)
 }
 
-export function asTest(node: MutableNodeResult): MutableTestResult {
+export function asTest(node: ObservedNode): ObservedTest {
   expect.assert(node.kind === 'test')
   return node
 }
 
-export function asGroup(node: MutableNodeResult): MutableGroupResult {
+export function asGroup(node: ObservedNode): ObservedGroup {
   expect.assert(node.kind === 'group')
   return node
 }
 
-export function testNode(result: ParsedRunResult, index = 0): MutableTestResult {
+export function testNode(result: ParsedRunResult, index = 0): ObservedTest {
   return asTest(result.tests[index])
 }
 
-export function groupNode(result: ParsedRunResult, index = 0): MutableGroupResult {
+export function groupNode(result: ParsedRunResult, index = 0): ObservedGroup {
   return asGroup(result.tests[index])
 }
 
-export function childTest(group: MutableGroupResult, index = 0): MutableTestResult {
+export function childTest(group: ObservedGroup, index = 0): ObservedTest {
   return asTest(group.children[index].result)
 }
 
-export function childGroup(group: MutableGroupResult, index = 0): MutableGroupResult {
+export function childGroup(group: ObservedGroup, index = 0): ObservedGroup {
   return asGroup(group.children[index].result)
 }
 
-export function middlewareOf(group: MutableGroupResult): MutableGroupMiddleware {
+export function middlewareOf(group: ObservedGroup): ObservedMiddleware {
   const { middleware } = group
   expect.assert(middleware !== null)
   return middleware
 }
 
-export function cases(node: MutableNodeResult): MutableCaseResult[] {
+export function cases(node: ObservedNode): readonly ObservedCase[] {
   return node.kind === 'group' ? node.children.flatMap((child) => cases(child.result)) : node.cases
 }

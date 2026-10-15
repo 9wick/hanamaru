@@ -1,0 +1,21 @@
+{
+  "name": "@hanamaru/execution",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./worker": "./src/infrastructure/workers/start.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hanamaru/blueprint": "0.0.0",
+    "@hanamaru/execution-protocol": "0.0.0",
+    "@hanamaru/module-runtime": "0.0.0",
+    "@vitest/expect": "5.0.2",
+    "@zeltjs/adapter-node": "0.12.0-canary.2",
+    "@zeltjs/core": "0.12.0-canary.2",
+    "valibot": "1.5.0"
+  }
+}
