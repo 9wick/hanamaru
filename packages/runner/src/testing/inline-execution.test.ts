@@ -1,5 +1,5 @@
 import { defaultMiddlewareTimeoutMs } from '../../../execution/src/domain/execution/config.js'
-import { Config, inject, Injectable } from '@zeltjs/core'
+import { inject, Injectable } from '@zeltjs/core'
 import {
   completedDefinitions,
   validatedBlueprints,
@@ -7,16 +7,16 @@ import {
   type RuntimeCase,
   type TestDefinition,
 } from '@hanamaru/blueprint/model'
-import { AttemptExecutor } from '../../../execution/src/application/execution/attempt.js'
+import { AttemptExecutor } from '../../../execution/src/infrastructure/execution/attempt.js'
 import { GroupMiddlewareExecutor } from '../../../execution/src/application/execution/middleware.js'
 import { ExecutionLifecycle } from '../../../execution/src/application/execution/lifecycle.js'
 import { CaseFailed as WorkerCaseFailed } from '../../../execution/src/application/execution/faults.js'
-export { ValueComparison } from '../../../execution/src/infrastructure/comparison.js'
 import { CaseFailed } from '../application/execution/faults.js'
-import { ExecutionLauncher, type AttemptReply, type GroupReply } from '../application/ports/executor.js'
+import { type AttemptReply, type GroupReply } from '../application/ports/executor.js'
+import type { WorkerExecutionLauncher } from '../infrastructure/workers/client.js'
 import { RunLifecycle } from '../application/execution/lifecycle.js'
 import { RunContext } from '../application/execution/context.js'
-import { RunTests } from '../application/usecases/run-tests.js'
+import { RunTests } from '../infrastructure/execution/run-tests.js'
 import type { GroupNode, SuiteNode } from '../domain/execution/model.js'
 import type { Deadline, Progress } from '../application/execution/state.js'
 import type { RunSettings } from '../application/execution/options.js'
@@ -35,8 +35,11 @@ export function collectBlueprints(input: unknown) {
 }
 
 /** unitでだけ使う接続。別realmで渡す失敗も同じprotocol上の意味に翻訳する。 */
-@Config()
-export class LocalExecutor extends ExecutionLauncher {
+@Injectable()
+export class LocalExecutor implements Pick<
+  WorkerExecutionLauncher,
+  'open' | 'initialize' | 'attempt' | 'group' | 'close'
+> {
   readonly #attempts: AttemptExecutor
   readonly #groups: GroupMiddlewareExecutor
   readonly #worker: ExecutionLifecycle
@@ -52,7 +55,6 @@ export class LocalExecutor extends ExecutionLauncher {
     lifecycle = inject(RunLifecycle),
     context = inject(RunContext),
   ) {
-    super()
     this.#attempts = attempts
     this.#groups = groups
     this.#worker = worker

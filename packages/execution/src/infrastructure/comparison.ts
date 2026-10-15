@@ -1,11 +1,10 @@
 import { equals, iterableEquality, subsetEquality } from '@vitest/expect'
-import { Config } from '@zeltjs/core'
-import { Comparison } from '../application/ports/comparison.js'
+import { Injectable } from '@zeltjs/core'
 import type { Value } from '../domain/execution/javascript.js'
 
 /** 値の一致をvitestのexpectと同じ規則で見る。 */
-@Config()
-export class ValueComparison extends Comparison {
+@Injectable()
+export class ValueComparison {
   equal(first: Value, second: Value): boolean {
     return equals(first, second, [iterableEquality])
   }

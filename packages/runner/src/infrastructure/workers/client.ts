@@ -1,7 +1,7 @@
-import { Config, Injectable, inject } from '@zeltjs/core'
+import { Injectable, inject } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
-import { CollectionModules } from '../../application/collection/module-session.js'
+import { CollectionModules } from '../modules/collection-modules.js'
 import type { RootReference } from '../../application/ports/root-reference.js'
 import { CaseFailed } from '../../application/execution/faults.js'
 import { RunLifecycle } from '../../application/execution/lifecycle.js'
@@ -13,11 +13,9 @@ import type {
   GroupReply,
   PreparedExecution,
 } from '../../application/ports/executor.js'
-import { ExecutionLauncher } from '../../application/ports/executor.js'
 import type { Fields, RuntimeCase } from '@hanamaru/blueprint/model'
 import type { GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
 import { errorStack } from '../../domain/result/exception.js'
-import { ExecutionConnection } from './execution-connection.js'
 import type { Value } from '../../domain/execution/javascript.js'
 import { required } from '../../domain/execution/javascript.js'
 import type { CommandInput, ReplyValue } from '@hanamaru/execution-protocol/data'
@@ -38,7 +36,6 @@ function opening(): { settled: Promise<void>; open: () => void } {
  * 返信待ち・立ち上がりの約束・畳んだかどうかはこの1回に属し、
  * runの進み具合は開くときに受け取ったRunLifecycleへ渡す。
  */
-@Injectable()
 export class RunningExecution implements ExecutionHandle, PreparedExecution {
   readonly #requests = new PendingReplies<ReplyValue>()
   readonly #opening = opening()
@@ -57,11 +54,10 @@ export class RunningExecution implements ExecutionHandle, PreparedExecution {
   #closing: Promise<void> | undefined
   #fatal: { error: Value } | null = null
 
-  constructor(environment = inject(ExecutionConnection), lifecycle = inject(RunLifecycle)) {
-    const port = environment.port
+  constructor(port: MessagePort, stop: () => Promise<void>, lifecycle: RunLifecycle) {
     this.#port = port
     this.#lifecycle = lifecycle
-    this.#stop = () => environment.close()
+    this.#stop = stop
     port.on('messageerror', this.#fail)
     port.on('close', () => {
       if (!this.#closing) this.#fail(new Error('execution worker disconnected'))
@@ -200,21 +196,25 @@ export class RunningExecution implements ExecutionHandle, PreparedExecution {
  * CLIが先に起こした実行workerへの持ち場を開く。
  * 計画と外との繋ぎは収集後のstartで渡す。
  */
-@Config()
-export class WorkerExecutionLauncher extends ExecutionLauncher {
-  readonly #execution: RunningExecution
+@Injectable()
+export class WorkerExecutionLauncher {
+  #connection: RunningExecution | undefined
   readonly #modules: CollectionModules
   readonly #lifecycle: RunLifecycle
 
-  constructor(
-    execution = inject(RunningExecution),
-    modules = inject(CollectionModules),
-    lifecycle = inject(RunLifecycle),
-  ) {
-    super()
-    this.#execution = execution
+  constructor(modules = inject(CollectionModules), lifecycle = inject(RunLifecycle)) {
     this.#modules = modules
     this.#lifecycle = lifecycle
+  }
+
+  connect(port: MessagePort, stop: () => Promise<void>): void {
+    if (this.#connection) throw new Error('execution launcher is already connected')
+    this.#connection = new RunningExecution(port, stop, this.#lifecycle)
+  }
+
+  get #execution(): RunningExecution {
+    if (!this.#connection) throw new Error('execution launcher is not connected')
+    return this.#connection
   }
 
   open(): PreparedExecution {

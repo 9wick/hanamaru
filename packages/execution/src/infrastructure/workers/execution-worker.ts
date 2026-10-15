@@ -1,5 +1,6 @@
+import type { MessagePort } from 'node:worker_threads'
 import { Injectable, inject } from '@zeltjs/core'
-import { ModuleTransport } from '@hanamaru/module-runtime/application/ports/module-loader'
+import { CompileRequests } from './execution-session.js'
 import { ModuleRuntimeLauncher } from '@hanamaru/module-runtime/infrastructure/modules/runtime'
 import { ExecutionChannel } from './execution-channel.js'
 import { ExecutionLoader } from './execution-loader.js'
@@ -15,7 +16,7 @@ export class ExecutionWorker {
   readonly #server: ExecutionServer
   readonly #channel: ExecutionChannel
   readonly #runtimes: ModuleRuntimeLauncher
-  readonly #transport: ModuleTransport
+  readonly #transport: CompileRequests
   #initialized = false
 
   constructor(
@@ -24,7 +25,7 @@ export class ExecutionWorker {
     server = inject(ExecutionServer),
     channel = inject(ExecutionChannel),
     runtimes = inject(ModuleRuntimeLauncher),
-    transport = inject(ModuleTransport),
+    transport = inject(CompileRequests),
   ) {
     this.#session = session
     this.#loader = loader
@@ -35,7 +36,8 @@ export class ExecutionWorker {
   }
 
   /** 収集workerが口を閉じるまで戻らないため、待ち合わせずに走らせる。 */
-  serve(): void {
+  serve(port: MessagePort): void {
+    this.#channel.connect(port)
     this.#channel.onMessage((message) => {
       if (message.type === 'initialize') {
         if (this.#initialized) return this.#channel.fail(new Error('execution worker is already initialized'))
@@ -50,7 +52,7 @@ export class ExecutionWorker {
   #load(workerData: ExecutionWorkerData): void {
     // 変換は収集workerのportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
     const runtime = this.#runtimes.start(
-      this.#transport,
+      this.#transport.invoke.bind(this.#transport),
       workerData.preparation,
       workerData.entryURL === undefined ? undefined : { key: 'hanamaru', url: workerData.entryURL },
     )

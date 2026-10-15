@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, onTestFinished, test } from 'vite-plus/test'
-import type { ModulePreparation, ModuleTransport } from '../../application/ports/module-loader.js'
+import type { ModulePreparation, ModuleInvoke } from '../../application/ports/module-loader.js'
 import { invoke, objectValue, property } from '../../foundation/value.js'
 import { ModuleCompilerLauncher } from './compiler.js'
 import { ModuleEntry } from './entry.js'
@@ -45,8 +45,11 @@ async function compiler() {
 }
 
 /** 実行workerと同じ組み立て。差し替える宛先はruntimeを組み立てるときに決まる。 */
-async function runtime(transport: ModuleTransport, preparation: ModulePreparation[] = []) {
-  const created = (await (await scope()).get(ModuleRuntimeLauncher)).start(transport, preparation)
+async function runtime(transport: { invoke: ModuleInvoke }, preparation: ModulePreparation[] = []) {
+  const created = (await (await scope()).get(ModuleRuntimeLauncher)).start(
+    transport.invoke.bind(transport),
+    preparation,
+  )
   onTestFinished(() => created.close())
   return created
 }
@@ -70,7 +73,7 @@ test('the namespace of a module is registered in the registry that built it', as
   const transport = await compiler()
   const open = await scope()
   const registry = await open.get(ModuleRegistry)
-  const loaded = (await open.get(ModuleRuntimeLauncher)).start(transport, [])
+  const loaded = (await open.get(ModuleRuntimeLauncher)).start(transport.invoke.bind(transport), [])
   onTestFinished(() => loaded.close())
   // 台帳の見出しはViteが解決したmodule idで、import時のURLではない。準備の照合もこの見出しに従う。
   expect(registry.identify(await loaded.import(url))).toBe(file)

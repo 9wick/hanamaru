@@ -1,9 +1,9 @@
-import { Config, inject } from '@zeltjs/core'
+import { StdoutPresenter } from '../cli/presenter.js'
+import { Injectable, inject } from '@zeltjs/core'
 import { MessageChannel, Worker } from 'node:worker_threads'
 import * as v from 'valibot'
 import { ProgressStore } from '@hanamaru/runner/application/execution/progress'
 import type { CollectionRequest } from '../../application/ports/collection-runner.js'
-import { CollectionRunner, ResultPresenter } from '../../application/ports/collection-runner.js'
 import type { MutableRunResult } from '@hanamaru/runner/domain/result/mutable'
 import { CliEnvironment } from './environment.js'
 import { cliMessageSchema } from './schemas.js'
@@ -68,19 +68,18 @@ interface ShutdownPolicy {
  * 収集workerと実行workerを起こして見張り、終了コードを決める。1回のCLI起動が1回の監督で、
  * 期限・猶予・中断された事実はその1回の中だけで意味を持つため、runの間だけ手元に置く。
  */
-@Config()
-export class CollectionSupervisor extends CollectionRunner {
+@Injectable()
+export class CollectionSupervisor {
   readonly #workerURL: URL
   readonly #executionWorkerURL: URL
   readonly #progress: ProgressStore
-  readonly #presenter: ResultPresenter
+  readonly #presenter: StdoutPresenter
 
   constructor(
     environment = inject(CliEnvironment),
     progress = inject(ProgressStore),
-    presenter = inject(ResultPresenter),
+    presenter = inject(StdoutPresenter),
   ) {
-    super()
     this.#workerURL = environment.collectionWorkerURL
     this.#executionWorkerURL = environment.executionWorkerURL
     this.#progress = progress

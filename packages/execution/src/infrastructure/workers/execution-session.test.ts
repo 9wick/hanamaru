@@ -1,13 +1,34 @@
-import { Config } from '@zeltjs/core'
 import { createTestTarget } from '@zeltjs/testing/vitest'
 import { MessageChannel } from 'node:worker_threads'
 import * as v from 'valibot'
 import { expect, onTestFinished, test } from 'vite-plus/test'
 import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
-import { ExecutionEnvironment } from './execution-environment.js'
+import { ExecutionChannel } from './execution-channel.js'
 import { CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
 import type { ExecutionCommand } from '@hanamaru/execution-protocol/data'
 import { executionMessageSchema } from './execution-schemas.js'
+
+test('the execution channel requires its startup connection before sending', async () => {
+  const { target } = await createTestTarget(ExecutionChannel)
+  expect(() => target.ready()).toThrow('execution channel is not connected')
+})
+
+test('the execution channel rejects a second connection', async () => {
+  const { target } = await createTestTarget(ExecutionChannel)
+  const original = new MessageChannel()
+  const replacement = new MessageChannel()
+  onTestFinished(() => {
+    original.port1.close()
+    original.port2.close()
+    replacement.port1.close()
+    replacement.port2.close()
+  })
+  target.connect(original.port1)
+  expect(() => target.connect(replacement.port1)).toThrow('execution channel is already connected')
+  const received = new Promise<unknown>((resolve) => original.port2.once('message', resolve))
+  target.ready()
+  await expect(received).resolves.toStrictEqual({ type: 'ready' })
+})
 
 function attempt(id: number): ExecutionCommand {
   return { type: 'attempt', id, path: [0, 0], number: 1 }
@@ -29,11 +50,8 @@ async function wired() {
     sent.push(v.parse(executionMessageSchema, message))
     notify()
   })
-  @Config()
-  class TestEnvironment extends ExecutionEnvironment {
-    override readonly port = port1
-  }
-  const { target: session, get } = await createTestTarget(ExecutionSession, { configs: [TestEnvironment] })
+  const { target: session, get } = await createTestTarget(ExecutionSession)
+  ;(await get(ExecutionChannel)).connect(port1)
   return {
     session,
     get,

@@ -6,19 +6,27 @@ import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import { errorStack } from '../../domain/result/exception.js'
 import type { Value } from '../../domain/execution/javascript.js'
 import type { ExecutionIncoming, ExecutionMessage, ReplyValue } from '@hanamaru/execution-protocol/data'
-import { ExecutionEnvironment } from './execution-environment.js'
 import { transportValueSchema, executionIncomingSchema } from './execution-schemas.js'
 
 /** 収集workerと実行workerを繋ぐ専用MessagePort。protocolの形を組み立てて送受信するのはここだけにする。 */
 @Injectable()
 export class ExecutionChannel {
-  readonly #port: MessagePort
+  #connection: MessagePort | undefined
 
-  constructor(environment = inject(ExecutionEnvironment), lifecycle = inject(ExecutionLifecycle)) {
-    this.#port = environment.port
+  constructor(lifecycle = inject(ExecutionLifecycle)) {
     lifecycle.observe((event) => {
       if (event.kind === 'timeout') this.#post({ type: 'timeout', phase: event.phase ?? undefined })
     })
+  }
+
+  connect(port: MessagePort): void {
+    if (this.#connection) throw new Error('execution channel is already connected')
+    this.#connection = port
+  }
+
+  get #port(): MessagePort {
+    if (!this.#connection) throw new Error('execution channel is not connected')
+    return this.#connection
   }
 
   #post(message: ExecutionMessage): void {

@@ -34,7 +34,10 @@ clientはrunner、handlerはexecutionが所有する。Plan、進行状態、DI�
 protocolの `/data` は実行時schemaに依存しないデータ型の入口。
 通常入口はデータ型とschemaを提供する。通信値はプリミティブ、配列、
 通常のオブジェクトで構成し、関数・Symbol・クラスの参照を運ばない。
-MessagePortなどの接続資源は各起動構成が所有する。
+MessagePortなどの接続資源は各起動構成が所有し、workerの開始メソッドの引数で渡す。
+Configは環境・配布構成の設定値、Injectable serviceは処理と具象依存を表す。
+固定サービスの呼出しと資源の寿命を取りまとめる処理はinfrastructure、計画・状態・純粋な判断はapplication/domainに置く。
+テスト用のサービス差し替えはonTestやcreateTestTargetのテスト構成で行う。
 
 `hanamaru` の起動構成が各入口を接続し、Test・登録API・CLIを一つの配布物から提供する。
 内部packageからこの配布窓口への逆依存を作らない。

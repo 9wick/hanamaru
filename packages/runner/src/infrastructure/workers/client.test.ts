@@ -1,4 +1,3 @@
-import { Config } from '@zeltjs/core'
 import { createTestTarget } from '@zeltjs/testing/vitest'
 import { randomUUID } from 'node:crypto'
 import { BroadcastChannel, MessageChannel, Worker } from 'node:worker_threads'
@@ -6,7 +5,7 @@ import { expect, onTestFinished, test, vi } from 'vite-plus/test'
 import * as v from 'valibot'
 import type { ExecutionServices, ExecutionSpec } from '@hanamaru/runner/application/ports/executor'
 import { RunningExecution } from '@hanamaru/runner/infrastructure/workers/client'
-import { ExecutionConnection } from './execution-connection.js'
+import { RunLifecycle } from '../../application/execution/lifecycle.js'
 
 /** 別threadの起動を待ち合わせ、initializeより先にworkerが動いていることを確認する。 */
 async function worker(source: string) {
@@ -23,13 +22,6 @@ async function worker(source: string) {
     ${source}
   `)}`,
   )
-  @Config()
-  class Environment extends ExecutionConnection {
-    readonly port = executionPorts.port1
-    close(): Promise<void> {
-      return stop()
-    }
-  }
   const remote = new Worker(url, {
     workerData: { role: 'execution', port: executionPorts.port2 },
     transferList: [executionPorts.port2],
@@ -48,10 +40,8 @@ async function worker(source: string) {
       executionPorts.port1.close()
     }
   })
-  const { target: launcher } = await createTestTarget(RunningExecution, {
-    configs: [Environment],
-  })
-  const prepared = launcher
+  const { target: lifecycle } = await createTestTarget(RunLifecycle)
+  const prepared = new RunningExecution(executionPorts.port1, stop, lifecycle)
   onTestFinished(async () => {
     await prepared.close()
   })
