@@ -20,13 +20,16 @@ class PublicEntry extends ModuleEntry {
 
 const app = createApp([new CollectionFeature()], { configs: [PublicEntry] })
 
-try {
+// Bun 1.3.5ではトップレベルawait中に親からのmessageを受信できないため、モジュール評価を先に終える。
+async function runCollectionWorker(): Promise<void> {
   const nodeApp = await onNode(app)
   try {
     await nodeApp.collection.run(workerData, port, workerData.executionPort)
   } finally {
     await nodeApp.shutdown().catch((error: unknown) => nodeApp.collection.fail(error))
   }
-} catch (error) {
-  process.stderr.write(`${errorStack(error)}\n`)
 }
+
+runCollectionWorker().catch((error: unknown) => {
+  process.stderr.write(`${errorStack(error)}\n`)
+})
