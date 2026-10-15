@@ -1,14 +1,13 @@
 # 実行セマンティクス
 
-このページは標準実行器の契約です。run(test)の同一プロセス実行と、CLIによる期限超過時の停止を区別します。
-標準実行器の実装は `src/runner.ts` です。実行テストと未検証の環境は[実装状況](../reference/limitations.md)に記載します。
+標準実行器は `packages/runner/` が計画と進行、`packages/execution/` がworker内の試行を担当します。実行テストと未検証の環境は[実装状況](../reference/limitations.md)に記載します。
 利用者が実行入口を選ぶ手順は[CLIの実行方法の選び方](../reference/cli.md#実行方法の選び方)を参照してください。projectによる収集・選択の契約は[project](../guides/projects.md)に記載します。複数projectのファイルはマージして一つの実行計画を作り、同じファイルは一度だけ実行します。結果の所属projectは各トップレベルノードの `source.projects` に記録します。
 
 ## 定義と実行の境界
 
 `new Test()` のチェーンは、it・each・mock・expectCallsの定義コールバックを評価して、ケースや設定を組み立てます。
 expectのコールバックは保存し、この時点では呼びません。
-CLIでは登録された完成定義を収集して実行します。ライブラリAPIでは完成した定義を `run(test)` に渡します。どちらもblueprintをもとに実行計画を決め、標準実行器がケースを実行します。収集条件は[テストの登録](../guides/registration.md)を参照してください。
+registerTestは完成したルートを登録し、runnerが収集した登録から今回の対象を選んで実行計画を作ります。
 プラグイン向けの `.blueprint()` を呼ぶだけでは、middleware・テスト対象・argsFrom・fake・述語は実行しません。
 定義中はメソッドを差し替えず、呼び出しの記録も開始しません。
 テストモジュールのトップレベルコードは通常のimportと同様に動きます。
@@ -20,16 +19,15 @@ eachは行順でケースに展開します。空の行配列、不正なtimeout
 
 ## テストの受付
 
-以下のコードはライブラリAPIの入力を示します。CLIが収集するテストファイルは実行ルートを登録し、`run()` を呼びません。
 
 <!-- example: docs/examples/run-many.ts#accept -->
 ```ts
-const result = await run(users)
-const results = await run([addition, users])
+registerTest(addition)
+registerTest(users)
 ```
 出典: [docs/examples/run-many.ts](../examples/run-many.ts)
 
-完成したテストまたはその配列を受け取ります。初版の標準実行器は渡された順、blueprintのchildren順の深さ優先、ケースの宣言順で直列実行します。
+登録された完成定義を受け取ります。初版の標準実行器は渡された順、blueprintのchildren順の深さ優先、ケースの宣言順で直列実行します。
 ただしこの順序は利用者が依存できるテストの意味ではありません。各caseは他のcaseの実行有無・実行順に依存せず、将来のshuffle・並列実行・複数processへの配置で順序が変わっても同じ意味を持つものとします。
 同じ子を複数箇所に合成しても参照で重複排除せず、それぞれの経路の設定で実行します。
 
@@ -39,8 +37,8 @@ skip/todoも結果に残すため、名前がなくても、重複していて�
 
 version・blueprint構造・呼び出し条件の妥当性を階層全体について実行前に検査します。
 循環、空のchildren/cases、不正なsteps・mock・config・origin・sequenceの終端動作等も受付エラーです。同じ子を別の経路から参照することは循環ではありません。
-空のテスト配列や、同じhost runtimeでactiveなrunがある間のrunの重複実行は受付エラーです。先のrunをawaitして完了した後に次のrunを開始することはできます。
-受付エラーではmiddlewareを開始せずPromiseをrejectします。ケース中の失敗は結果に残します。通常はretryの規則に従ってそのケースを完了し、他のケースを続けます。
+登録された対象がない場合や、選択条件に一致する対象がない場合は受付エラーです。
+受付エラーではmiddlewareを開始せず、CLIは終了コード2で原因を報告します。ケース中の失敗は結果に残します。通常はretryの規則に従ってそのケースを完了し、他のケースを続けます。
 timeout・外部中断・復元や後始末の失敗では後続を中断します。
 
 ## Runとprocess
@@ -55,7 +53,6 @@ Run
 ```
 
 processは必ず一つのRunに属し、Runをまたいで実行状態を共有する単位にはしません。
-初版のライブラリ `run(test)` は一つのprocessで実行できます。標準CLIは停止保証等のために実行環境をprocessとして分離でき、将来は一つのRunへ複数processを配置できます。
 process数やcaseの配置はrunnerの実行戦略であり、caseの意味に含めません。
 
 RunのPromiseは、そのRunが所有する開始済みのexecution processと必要な後始末が完了してからsettleします。
@@ -242,7 +239,6 @@ caseは、他のcaseが実行されたか、どの順序で実行されたかに
 試行の期限にはmiddlewareの前処理・検証・後処理を含めます。timeoutはe.errorで成功にできません。
 middleware自身の期限は前処理と後処理へ独立に適用し、`.use()` では試行期限と両方が効きます。超過の扱いは試行期限と同じで、再試行しません。
 標準CLIは設定したshutdownGraceの経過後に未完了の実行環境を終了させ、次のケースへ未停止の処理を持ち越しません。設定方法は[CLIの時間制限](../reference/cli.md#時間制限)を参照してください。
-run(test)単独は同じプロセスの任意コードを停止できず、開始済みの処理と後始末を待ち続ける場合があります。signalの公開APIはありません。
 
 通常の失敗は、後始末が成功し、retryの残りがあれば同じケースを最初から実行します。
 定義は再評価せず、middleware・モックの動作列・引数の生成・対象・期待を新しい試行として実行します。
@@ -260,7 +256,6 @@ runに渡された全ルートとその子孫のどこかにonlyがあれば、o
 実行しないケースではmiddleware・テスト対象の呼び出し・差し替え・記録を開始しません。
 定義時のケース・mock・expectCallsコールバックは、skipでもblueprintを組み立てるために評価します。
 
-`run(tests, { forbidOnly: true })` はonlyを受付エラーにします。
 CLIの `--ci` はこの設定を使います。通常実行ではskip/todoだけでも失敗としません。
 
 ## 結果

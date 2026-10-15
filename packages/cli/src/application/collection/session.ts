@@ -24,8 +24,9 @@ export class CollectionSession {
 
   async run(request: CollectionRequest, signal: AbortSignal): Promise<void> {
     try {
-      const { result, reporter } = await this.#tests.execute(request, signal)
-      this.#reporter.result(result, reporter)
+      const outcome = await this.#tests.execute(request, signal)
+      if (outcome.kind === 'catalogue') this.#reporter.catalogue(outcome.catalogue, outcome.reporter)
+      else this.#reporter.result(outcome.result, outcome.reporter)
     } catch (error) {
       this.#reporter.error(this.#definitions.failureContext + errorStack(error))
     }

@@ -137,8 +137,8 @@ test('package boundaries reject reverse dependencies and source shortcuts', asyn
   const filename = new URL('./packages/blueprint/src/domain/definition/validation.ts', import.meta.url).pathname
   for (const source of [
     "export * from '@hanamaru/cli/application/collection/config'",
-    "export const runtime = import('@hanamaru/execution/interfaces/library/run')",
-    "export type Options = import('@hanamaru/execution/application/execution/options').RunOptions",
+    "export const runtime = import('@hanamaru/runner/interfaces/library/run')",
+    "export type Options = import('@hanamaru/runner/application/execution/options').RunOptions",
     "export * from '@hanamaru/module-runtime/infrastructure/modules/runtime'",
     "export * from '../../../../../execution/src/domain/result/types.js'",
     "export * from '../../../../../../src/index.js'",
@@ -159,7 +159,7 @@ test('package boundaries reject reverse dependencies and source shortcuts', asyn
       (message) => message.ruleId === 'architecture/dependencies',
     ),
   ).toBe(true)
-  const execution = new URL('./packages/execution/src/application/execution/runner.ts', import.meta.url).pathname
+  const execution = new URL('./packages/execution/src/application/execution/attempt.ts', import.meta.url).pathname
   expect(
     (await messages("export * from '@hanamaru/module-runtime/infrastructure/modules/compiler'", execution)).some(
       (message) => message.ruleId === 'architecture/dependencies',
@@ -173,10 +173,28 @@ test('package boundaries reject reverse dependencies and source shortcuts', asyn
   ).toBe(true)
 })
 
+test('worker implementations stay independent and the protocol contains only data contracts', async () => {
+  const cases = [
+    ['packages/runner/src/infrastructure/workers/client.ts', "export * from '@hanamaru/execution/worker'"],
+    [
+      'packages/execution/src/application/execution/attempt.ts',
+      "export * from '@hanamaru/runner/application/execution/lifecycle'",
+    ],
+    ['packages/cli/src/application/usecases/run-test-files.ts', "export * from '@hanamaru/execution/worker'"],
+    ['packages/execution-protocol/src/schemas.ts', "export * from '@hanamaru/blueprint/model'"],
+    ['packages/execution-protocol/src/schemas.ts', "import { Injectable } from '@zeltjs/core'; export { Injectable }"],
+  ]
+  for (const [filename, source] of cases)
+    expect(
+      (await messages(source, filename)).some((message) => message.ruleId === 'architecture/dependencies'),
+      source,
+    ).toBe(true)
+})
+
 test('package boundaries accept declared inward dependencies', async () => {
   const cases = [
-    ['packages/cli/src/application/collection/session.ts', "export * from '@hanamaru/execution/domain/result/types'"],
-    ['packages/execution/src/application/execution/runner.ts', "export * from '@hanamaru/blueprint/model'"],
+    ['packages/cli/src/application/collection/session.ts', "export * from '@hanamaru/runner/domain/result/types'"],
+    ['packages/execution/src/application/execution/attempt.ts', "export * from '@hanamaru/blueprint/model'"],
     [
       'packages/execution/src/infrastructure/execution/modules.ts',
       "export * from '@hanamaru/module-runtime/infrastructure/modules/reference'",
@@ -197,8 +215,8 @@ test('package boundaries accept declared inward dependencies', async () => {
 test('E2E observes CLI outputs without importing private implementation or running the SDK in its harness', async () => {
   const filename = new URL('./e2e/harness.ts', import.meta.url).pathname
   for (const source of [
-    "import { runResultSchema } from '@hanamaru/execution/domain/result/schemas'",
-    "export type { MutableRunResult } from '@hanamaru/execution/domain/result/mutable'",
+    "import { runResultSchema } from '@hanamaru/runner/domain/result/schemas'",
+    "export type { MutableRunResult } from '@hanamaru/runner/domain/result/mutable'",
     "export * from '../packages/execution/src/domain/result/schemas.js'",
     "export const run = import('../src/index.js')",
     "import { Test, run } from 'hanamaru'; export { Test, run }",

@@ -4,7 +4,7 @@ import type {
   MutableCaseResult,
   MutableNodeResult,
   MutableResourceResult,
-} from '@hanamaru/execution/domain/result/mutable'
+} from '@hanamaru/runner/domain/result/mutable'
 import { formatValue } from './format-value.js'
 
 function formatFailure(item: MutableCaseResult, depth: number, groupOrigins: SourceLocation[]) {

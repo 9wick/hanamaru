@@ -2,7 +2,7 @@ import { jsonFields } from '../../application/execution/resource-context.js'
 import { Injectable, inject } from '@zeltjs/core'
 import { AttemptExecutor } from '../../application/execution/attempt.js'
 import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
-import { RunLifecycle } from '../../application/execution/lifecycle.js'
+import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import type { Fields } from '@hanamaru/blueprint/model'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
 import { required } from '../../domain/execution/javascript.js'
@@ -10,7 +10,7 @@ import { bindCase, bindNode } from '../execution/bindings.js'
 import type { RunningRuntime } from '@hanamaru/module-runtime/infrastructure/modules/runtime'
 import { CommandQueue } from './execution-session.js'
 import { ExecutionChannel } from './execution-channel.js'
-import type { ExecutionCommand } from './protocol.js'
+import type { ExecutionCommand } from '@hanamaru/execution-protocol/data'
 
 /** 1回ぶんの持ち場。読み直した計画と、その計画が指すmoduleを差し替えるruntimeは同じ1回に属する。 */
 interface Serving {
@@ -44,14 +44,14 @@ function withGroups<N extends ExecutionNode>(node: N, groups: ActiveGroup[], sup
 @Injectable()
 export class ExecutionServer {
   readonly #commands: CommandQueue
-  readonly #lifecycle: RunLifecycle
+  readonly #lifecycle: ExecutionLifecycle
   readonly #attempts: AttemptExecutor
   readonly #groupMiddleware: GroupMiddlewareExecutor
   readonly #channel: ExecutionChannel
 
   constructor(
     commands = inject(CommandQueue),
-    lifecycle = inject(RunLifecycle),
+    lifecycle = inject(ExecutionLifecycle),
     attempts = inject(AttemptExecutor),
     groupMiddleware = inject(GroupMiddlewareExecutor),
     channel = inject(ExecutionChannel),

@@ -1,6 +1,7 @@
 import * as v from 'valibot'
 
 export const configSchema = v.object({
+  includeSource: v.optional(v.array(v.string())),
   vite: v.optional(v.looseObject({})),
   projects: v.optional(
     v.record(

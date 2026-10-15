@@ -1,10 +1,10 @@
 import { Config, inject } from '@zeltjs/core'
 import { MessageChannel, Worker } from 'node:worker_threads'
 import * as v from 'valibot'
-import { ProgressStore } from '@hanamaru/execution/application/execution/progress'
+import { ProgressStore } from '@hanamaru/runner/application/execution/progress'
 import type { CollectionRequest } from '../../application/ports/collection-runner.js'
 import { CollectionRunner, ResultPresenter } from '../../application/ports/collection-runner.js'
-import type { MutableRunResult } from '@hanamaru/execution/domain/result/mutable'
+import type { MutableRunResult } from '@hanamaru/runner/domain/result/mutable'
 import { CliEnvironment } from './environment.js'
 import { cliMessageSchema } from './schemas.js'
 
@@ -205,6 +205,9 @@ export class CollectionSupervisor extends CollectionRunner {
           timers.clearDeadline()
           progress.apply({ kind: 'init', result: message.result })
           reportAfterGrace(1)
+        } else if (message.type === 'catalogue') {
+          this.#presenter.catalogue(message.catalogue, message.reporter)
+          finish(exitCode(phase, 0))
         } else if (message.type === 'result') {
           policy = { ...policy, reporter: message.reporter }
           printResult(message.result)

@@ -1,4 +1,4 @@
-import { Test, defineConfig, middleware, run } from 'hanamaru'
+import { Test, defineConfig, middleware, registerTest } from 'hanamaru'
 import type { AssertionResult, AttemptResult, CaseResult, DiagnosticValue, FailedAttemptResult, Failure, GroupMiddlewareResult, PassedAttemptResult, RunResult, SourceLocation, TestResult } from 'hanamaru'
 import { add } from '../examples/math.ts'
 
@@ -36,7 +36,7 @@ ready.each('タプル', [[1, 2, 3], [2, 3, 5]], (t, row) => t.args(row[0], row[1
 ready.use(middleware(async (_, next) => next({ expected: 3 }))).each('ctx', rows, (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(e.ctx.expected)]))
 suite.it('通常ケースも追加する', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
 new Test().timeout(5_000).retry(2).group([suite])
-run(suite, { failOnFlaky: true })
+registerTest(suite)
 // @ts-expect-error each requires a target.
 new Test().each('未設定', rows, () => {})
 // @ts-expect-error each is one complete call, not a prefix for it.
@@ -69,8 +69,8 @@ ready.retry('2')
 ready.it('検証後の設定', t => t.args(1, 2).expect(e => [e.result.toBe(3)]).retry(2))
 // @ts-expect-error settings do not insert fields into user context.
 ready.it('予約ctxなし', t => t.args(1, 2).expect(e => [e.result.toBe(e.ctx.timeout)]))
-// @ts-expect-error signal is not a public runner option.
-run(suite, { signal: {} })
+// @ts-expect-error registration does not accept execution options.
+registerTest(suite, { signal: {} })
 
 const api = { async fetch(id: string) { return { id } } }
 ready.mock(api, 'fetch', m => m.rejectsOnce(new Error('temporary')).resolvesOnce({ id: 'u1' }).resolves({ id: 'u2' }))

@@ -91,7 +91,7 @@ registerTest(users)
 
 CLIはテストファイルを読み込み、`registerTest` で登録されたテストを実行して結果を表示します。
 失敗した条件、期待値、実際の値に加えて、テストを書いたファイルと行番号を報告します。
-JSON出力や、コードから直接結果を受け取る `run(test)` APIも使えます。
+JSON出力、対象一覧、ケースID・宣言位置による選択実行も使えます。
 
 - [CLIと設定](docs/reference/cli.md)：ファイル指定、CIでの実行、出力形式
 - [project](docs/guides/projects.md)：unit・integrationなどの名前で読むファイルを選ぶ

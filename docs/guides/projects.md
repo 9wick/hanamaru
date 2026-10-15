@@ -8,8 +8,6 @@ projectは、CLIが読むファイルの集合に名前を付ける設定です�
 
 日常のテスト実行はCLIから行います。設定なしの探索やファイル指定で足りる場合は、projectを定義する必要はありません。ファイルの集合を複数用意し、名前で選びたい場合にprojectを設定します。
 
-projectを設定しても、実行するルートは `registerTest` で登録し、CLIが実行します。完成定義のexportだけではCLIの実行対象になりません。設定内で `run()` を呼ぶ必要もありません。
-自分のプログラムで定義を実行して結果を処理したい場合には、既存のライブラリAPI `run(test)` を使います。`run` はconfigを読まず、projectの選択や収集も行いません。[実行方法の選び方](../reference/cli.md#実行方法の選び方)を参照してください。
 
 ## projectが提供する機能
 
@@ -54,7 +52,6 @@ hanamaruに組み込まれたテスト種別ではなく、どのprojectでも�
 | project設定 | CLIが読むファイルと、その集合の名前 |
 | `registerTest` | 読み込んだファイルのうち、実行するルート |
 | group | 子の合成、共通設定とmiddlewareの適用範囲 |
-| ライブラリAPIのrun | 自分のプログラムから実行する完成定義と、返った結果の処理 |
 
 project名は、テストのgroup名や対象ケース群の名前を変更しません。
 projectはコンテキストの供給元でもありません。必要な値は既存のmiddlewareで供給します。
@@ -112,4 +109,3 @@ projectを使うために、最初のテストから設定ファイルを用意�
 この既定探索はunit/e2eを区別しません。名前付きprojectで読むファイルを分ける構成は、[利用例](project-use-cases.md)を参照してください。
 
 project単位のglobalSetupやin-sourceの収集口は、この契約に含めません。ファイルの指定はproject設定で行い、実行するルートの指定は `registerTest` で行います。
-既存のライブラリAPI `run(test)` と `run([testA, testB])` は完成した定義を受け取る入口として維持します。

@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vite-plus/test'
+import * as v from 'valibot'
 import {
   asGroup,
   childGroup,
@@ -15,6 +16,57 @@ import {
   workspace,
   workspaceRuntime,
 } from './harness.ts'
+
+test('in-source declarations expose private targets, list without execution and select one case with mocks', () => {
+  const data = fixture('')
+  const dependency = join(data.dir, 'dependency.mjs')
+  writeFileSync(dependency, 'export function read() { return 2 }')
+  const file = join(data.dir, 'private.mjs')
+  const source = `import * as dependency from './dependency.mjs'
+const double = value => dependency.read() * value
+if (import.meta.hanamaru) {
+  const { Test, registerTest, middleware, resource } = import.meta.hanamaru
+  const fixture = resource({ name: 'fixture', scope: 'perRun', async setup(_, next) {
+    console.error('fixture opened')
+    try { return await next({ left: 2, right: 3 }) } finally { console.error('fixture closed') }
+  } })
+  const child = new Test().require(fixture).mock(dependency, 'read', m => m.returns(7)).target(double)
+    .it('same', t => t.argsFrom(ctx => [ctx.left]).expect(e => [e.result.toBe(14)]))
+    .it('same', t => t.argsFrom(ctx => [ctx.right]).expect(e => [e.result.toBe(21)]))
+  registerTest(new Test().group('parent', middleware(async (_, next) => {
+    try { return await next({}) } finally { console.error('parent closed') }
+  }), [child]))
+}
+`
+  writeFileSync(file, source)
+  const normal = invoke({ ...workspace, args: [] }, file)
+  expect(normal.status, normal.stderr).toBe(0)
+  expect(normal.stdout).toBe('')
+  const listed = invoke(workspace, file, '--list', '--reporter', 'json')
+  expect(listed.status, listed.stderr).toBe(0)
+  expect(listed.stderr).not.toContain('parent closed')
+  expect(listed.stderr).not.toContain('fixture opened')
+  const catalogue = v.parse(
+    v.object({
+      version: v.literal(1),
+      definitions: v.array(v.object({ id: v.string() })),
+      cases: v.array(v.object({ id: v.string(), name: v.string(), origin: v.object({ line: v.number() }) })),
+    }),
+    JSON.parse(listed.stdout),
+  )
+  expect(catalogue.cases.map((target) => target.name)).toEqual(['same', 'same'])
+  expect(new Set(catalogue.cases.map((target) => target.id)).size).toBe(2)
+  const selected = invoke(workspace, file, '--id', catalogue.cases[1].id, '--reporter', 'json')
+  const output = jsonResult(selected, 0)
+  expect(childTest(groupNode(output)).cases).toHaveLength(1)
+  expect(childTest(groupNode(output)).cases[0].path).toEqual([0, 0, 1])
+  expect(selected.stderr).toContain('parent closed')
+  expect(selected.stderr).toContain('fixture opened')
+  expect(selected.stderr).toContain('fixture closed')
+  const located = jsonResult(invoke(workspace, `${file}:${catalogue.cases[0].origin.line}`, '--reporter', 'json'), 0)
+  expect(childTest(groupNode(located)).cases[0].path).toEqual([0, 0, 0])
+  expect(invoke(workspace, file, '--id', 'missing').status).toBe(2)
+})
 
 test('CLI reads config file and lets arguments override reporter', () => {
   const data = fixture(

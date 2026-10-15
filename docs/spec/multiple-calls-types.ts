@@ -1,4 +1,4 @@
-import { Test, registerTest, relation, run } from 'hanamaru'
+import { Test, registerTest, relation } from 'hanamaru'
 import type { CallRef, TestDefinition } from 'hanamaru'
 
 const encode = async (value: string) => new TextEncoder().encode(value)
@@ -10,7 +10,7 @@ const suite = codec.it('round trip', t => t.calls(c => {
 }).expect(e => [e.result.toBe('こんにちは')]))
 const definition: TestDefinition = suite
 registerTest(definition)
-run(new Test().group([suite]))
+registerTest(new Test().group([suite]))
 
 const key = (from: string, to: string) => JSON.stringify([from, to])
 new Test().target(key).it('keys', t => t.calls(c => ({ first: c.args('ab', 'c'), second: c.args('a', 'bc') }))

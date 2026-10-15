@@ -18,7 +18,7 @@ import { MethodPatch } from './instrumentation.js'
 import { withMiddleware } from './middleware.js'
 import { overlayMocks } from './plan.js'
 import { StageTimer } from './services.js'
-import { RunLifecycle } from './lifecycle.js'
+import { ExecutionLifecycle } from './lifecycle.js'
 import { executeInvocations, InvocationFault } from './invocations.js'
 
 /** 1回のattemptが積み上げる観測結果。結果の形に変えるのは最後の1か所だけ。 */
@@ -105,14 +105,14 @@ function finalizeAttempt(
 
 /**
  * 1回のattemptを走らせる。どの節のどのcaseを何回目に走らせるかは、実行ごとの指定として引数で受け取る。
- * 実行状態の更新と観測は、同じruntimeのRunLifecycleに委ねる。
+ * 実行状態の更新と観測は、同じruntimeのExecutionLifecycleに委ねる。
  */
 @Injectable()
 export class AttemptExecutor {
   readonly #comparison: Comparison
-  readonly #lifecycle: RunLifecycle
+  readonly #lifecycle: ExecutionLifecycle
 
-  constructor(comparison = inject(Comparison), lifecycle = inject(RunLifecycle)) {
+  constructor(comparison = inject(Comparison), lifecycle = inject(ExecutionLifecycle)) {
     this.#comparison = comparison
     this.#lifecycle = lifecycle
   }

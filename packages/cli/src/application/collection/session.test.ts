@@ -3,11 +3,12 @@ import { Config, createApp, Injectable, inject } from '@zeltjs/core'
 import { expect, test } from 'vite-plus/test'
 import { Test } from '../../../../../src/index.js'
 import type { RuntimeDefinitionHandle } from '@hanamaru/blueprint/model'
-import type { ExecutionNode } from '@hanamaru/execution/domain/execution/model'
+import type { ExecutionNode } from '../../../../runner/src/domain/execution/model.js'
 import type { Value } from './javascript.js'
-import { collectBlueprints } from '@hanamaru/execution/interfaces/library/run'
-import type { ModuleSession } from '../ports/collection-host.js'
-import { ModuleToolchain, ProjectFiles, Warnings } from '../ports/collection-host.js'
+import { validatedBlueprints, completedDefinitions } from '@hanamaru/blueprint/model'
+import type { ModuleSession } from '../../../../runner/src/application/ports/module-host.js'
+import { ModuleToolchain } from '../../../../runner/src/application/ports/module-host.js'
+import { ProjectFiles, Warnings } from '../ports/collection-host.js'
 import type { CollectionRequest } from '../ports/collection-runner.js'
 import type {
   AttemptReply,
@@ -16,9 +17,9 @@ import type {
   ExecutionSpec,
   GroupReply,
   PreparedExecution,
-} from '@hanamaru/execution/application/ports/executor'
-import { ExecutionLauncher } from '@hanamaru/execution/application/ports/executor'
-import type { RootReference } from '@hanamaru/execution/application/ports/root-reference'
+} from '@hanamaru/runner/application/ports/executor'
+import { ExecutionLauncher } from '@hanamaru/runner/application/ports/executor'
+import type { RootReference } from '@hanamaru/runner/application/ports/root-reference'
 import type { CliOptions } from './options.js'
 import type { Config as ProjectConfig } from './config.js'
 import { recordDeclaration as recordCollectionEvent } from '../../../../blueprint/src/application/declarations.js'
@@ -26,11 +27,11 @@ import type { CliMessage } from './events.js'
 import { CollectionSink } from './events.js'
 import { CollectionSession } from './session.js'
 import type { Fields, RuntimeCase } from '@hanamaru/blueprint/model'
-import type { GroupNode, Plan, SuiteNode } from '@hanamaru/execution/domain/execution/model'
+import type { GroupNode, Plan, SuiteNode } from '../../../../runner/src/domain/execution/model.js'
 
 function definition(): RuntimeDefinitionHandle {
   const suite = new Test().target((n: number) => n).it('case', (t) => t.args(1).expect((e) => [e.result.toBe(1)]))
-  const [blueprint] = collectBlueprints(suite)
+  const [blueprint] = validatedBlueprints(completedDefinitions(suite))
   return { blueprint: () => blueprint }
 }
 

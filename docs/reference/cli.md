@@ -7,17 +7,9 @@ CLIは、テストファイルの読込・完成したテストの収集・実�
 
 ## 実行方法の選び方
 
-通常のテスト実行にはCLIを使います。テストファイルは実行するルートを `registerTest` で登録し、CLIが収集・実行・結果表示・終了コードを担当します。
+テストコードは定義とregisterTestによる登録を行います。実行はCLIから起動します。
+実行対象はファイル・名前・宣言位置・収集したIDで選びます。
 
-| やりたいこと | 使うもの |
-|---|---|
-| テストファイルを探索する、ファイルを指定する、ケースを絞って実行する | CLI。ファイル引数・project・`--filter` を使う |
-| 読むファイルの集合に名前を付け、必要な集合だけを選ぶ | CLIのproject設定。`hanamaru.config.ts` に各projectの `include` / `exclude` を書き、CLIで選ぶ |
-| 自分のプログラムから完成した定義を実行し、結果を処理する | ライブラリAPIの `run(test)` / `run([testA, testB])` |
-
-projectはCLIが読むファイルを選ぶ設定です。複数projectを選んだらファイルをマージし、同じファイルは一度だけ実行します。`--project` と明示ファイルを同時に指定すると引数エラーです。project設定や、CLIが収集するテストファイルの中では `run()` を呼びません。登録の収集後にCLIが実行を管理します。
-`run` は渡された完成定義を同一プロセスで実行して `RunResult` を返し、設定ファイルの読込・ファイル探索・project選択・表示・processの終了は行いません。
-module namespaceの差し替えや、終了猶予を超えた処理の強制停止が必要な場合はCLIを使います。[モックの範囲](api-mock.md#差し替えの範囲)と[時間制限](#時間制限)を参照してください。
 
 ## コマンド形式
 
@@ -41,7 +33,6 @@ deno run --allow-all --node-modules-dir=manual node_modules/hanamaru/dist/cli.js
 ```
 
 DenoのCLIはファイル読込・環境変数・workerを利用し、実行するテストも資源へアクセスするため、上の例では権限を許可しています。
-ライブラリの `run(test)` はDenoでも同じAPIで呼び出せます。
 
 引数なしなら、project設定があれば全projectのファイルを選びます。project設定がなければ `**/*.{test,spec}.ts` を探索し、`node_modules` と `dist` を除外します。明示ファイルを指定した場合はprojectを選ばず、そのファイルを対象とします。`--project` と明示ファイルの同時指定は引数エラーです。
 
@@ -159,7 +150,6 @@ npx hanamaru --collection-timeout 120000 --shutdown-grace 5000
 shutdownGraceは試行timeout・復元や後始末の失敗・Ctrl+Cによるrun中断で使う。timeoutの場合は試行の期限から、それ以外は中断開始から計る。
 途中で別の中断原因が加わっても猶予を延長しない。猶予内に終了すれば直ちに結果を返し、未完了なら実行環境を終了させる。
 猶予切れ自体では中断理由を変更せず、未完了の後始末をcleanup: incompleteとして表示する。適用した猶予も表示し、強制終了後のfinallyや資源解放は保証しない。
-同一プロセスのrun(test)にはこの強制停止を適用しない。
 
 ## 型チェックを含む通常の入口
 
@@ -228,20 +218,18 @@ Ctrl+Cでは完了済みの結果を保ち、失敗のない実行中の試行�
 設定したshutdownGrace内に停止・後始末が終わらなければ実行環境を終了させる。skip/todo等の元の状態は保つ。
 Ctrl+Cを受けた終了は、既存の失敗やcleanup失敗によりRunResult.statusがfailedでもコード130にする。読込・収集中のCtrl+Cも130とし、run開始前ならRunResultを作らない。
 
-## ライブラリから実行する
 
-次は、自分のプログラムで結果を処理する場合の例です。CLIで実行するテストファイルに追加するコードではありません。
+## 特定の対象を選ぶ
 
-<!-- example: docs/examples/metadata.ts#run -->
-```ts
-import { run } from 'hanamaru'
-import { users } from './user.test.ts'
+対象一覧を取得するときは、ファイルと`--list`を指定します。middleware、resource、対象関数は実行しません。
+`--reporter json`では`version / definitions / cases`を持つ対象一覧を返します。
+一覧のIDは同じファイル・登録順・ケース構造で再利用でき、定義を編集したら一覧を取り直します。
 
-const result = await run(users)
-```
-出典: [docs/examples/metadata.ts](../examples/metadata.ts)
+`--id`は一覧の定義またはケースのIDを一つ指定します。定義IDはその配下全体、ケースIDはその一つを選びます。
+同名のケースやeachの行もIDで区別します。選択に必要な親middlewareとresourceは保持します。
+`file.ts:line`は宣言の先頭行を指定します。eachの宣言位置ならその宣言の全行を選びます。
+宣言位置から複数の対象が見つかるときに一つだけ選ぶには、ケースIDを使います。
+名前の`--filter`も併用でき、条件を満たす対象がなければ終了コード2です。
 
-ライブラリAPIはprocessを終了せず、処理と後始末を待って結果を返す。
-任意コードの強制停止はできず、timeout後も対象が終了しなければ戻らない場合がある。
-標準CLIの停止保証との違いは[timeout](../guides/execution-options.md)に記載する。
-実行受付エラーはPromiseのreject、ケースの失敗はRunResultの `status: 'failed'` で表す。
+`--list`は実行用のfilter・ID・位置指定と併用しません。
+[in-source testing](../guides/in-source.md)でも同じ選択方法を使います。

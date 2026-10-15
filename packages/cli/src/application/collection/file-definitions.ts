@@ -1,14 +1,14 @@
 import { Injectable, inject } from '@zeltjs/core'
 import type { RuntimeBlueprint, RuntimeDefinitionHandle } from '@hanamaru/blueprint/model'
 import { ProjectFiles, Warnings } from '../ports/collection-host.js'
-import type { RootReference } from '@hanamaru/execution/application/ports/root-reference'
-import { collectWithin } from '@hanamaru/execution/application/collection/current-scope'
-import { DefinitionCollector } from '@hanamaru/execution/application/collection/definitions'
-import { CollectionModules } from './module-session.js'
+import type { RootReference } from '@hanamaru/runner/application/ports/root-reference'
+import { collectWithin } from '@hanamaru/runner/application/collection/current-scope'
+import { DefinitionCollector } from '@hanamaru/runner/application/collection/definitions'
+import { CollectionModules } from '@hanamaru/runner/application/collection/module-session'
 import { CollectionReporter } from './reporting.js'
-import { CollectionLog } from '@hanamaru/execution/application/collection/scope'
+import { CollectionLog } from '@hanamaru/runner/application/collection/scope'
 import type { SelectedFile } from './select-files.js'
-import type { TestSource } from './sources.js'
+import type { TestSource } from '@hanamaru/runner/domain/result/source'
 
 export interface CollectedDefinitions {
   blueprints: RuntimeBlueprint[]

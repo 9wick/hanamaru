@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { MessageChannel } from 'node:worker_threads'
 import * as v from 'valibot'
 import { expect, onTestFinished, test, vi } from 'vite-plus/test'
-import { RunLifecycle } from '../../application/execution/lifecycle.js'
+import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import { ValueComparison } from '../comparison.js'
 import { ExecutionEnvironment } from './execution-environment.js'
 import { ExecutionLoader } from './execution-loader.js'
@@ -21,7 +21,7 @@ async function wired() {
   const scope = await createApp([]).createRuntime({ configs: [Environment, ValueComparison, CompileRequests] })
   const loaded = vi.spyOn(await scope.get(ExecutionLoader), 'load').mockResolvedValue(new Map())
   const served = vi.spyOn(await scope.get(ExecutionServer), 'serve').mockResolvedValue()
-  const lifecycle = await scope.get(RunLifecycle)
+  const lifecycle = await scope.get(ExecutionLifecycle)
   ;(await scope.get(ExecutionWorker)).serve()
   onTestFinished(async () => {
     port1.close()

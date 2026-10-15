@@ -2,19 +2,19 @@ import { Injectable, inject } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
 import type { Stage } from '../../application/execution/state.js'
-import { RunLifecycle } from '../../application/execution/lifecycle.js'
+import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import { errorStack } from '../../domain/result/exception.js'
 import type { Value } from '../../domain/execution/javascript.js'
-import type { ExecutionIncoming, ExecutionMessage, ReplyValue } from './protocol.js'
+import type { ExecutionIncoming, ExecutionMessage, ReplyValue } from '@hanamaru/execution-protocol/data'
 import { ExecutionEnvironment } from './execution-environment.js'
-import { executionIncomingSchema } from './execution-schemas.js'
+import { transportValueSchema, executionIncomingSchema } from './execution-schemas.js'
 
 /** 収集workerと実行workerを繋ぐ専用MessagePort。protocolの形を組み立てて送受信するのはここだけにする。 */
 @Injectable()
 export class ExecutionChannel {
   readonly #port: MessagePort
 
-  constructor(environment = inject(ExecutionEnvironment), lifecycle = inject(RunLifecycle)) {
+  constructor(environment = inject(ExecutionEnvironment), lifecycle = inject(ExecutionLifecycle)) {
     this.#port = environment.port
     lifecycle.observe((event) => {
       if (event.kind === 'timeout') this.#post({ type: 'timeout', phase: event.phase ?? undefined })
@@ -26,7 +26,7 @@ export class ExecutionChannel {
   }
 
   compile(request: { id: number; name: string; args: Value[] }): void {
-    this.#post({ type: 'compile', ...request })
+    this.#post({ type: 'compile', ...request, args: v.parse(v.array(transportValueSchema), request.args) })
   }
   ready(): void {
     this.#post({ type: 'ready' })

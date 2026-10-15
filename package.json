@@ -35,7 +35,7 @@
     "test:e2e": "npm run build && vp test run --project e2e-workspace --project e2e-package",
     "test:package": "npm run build && vp test run --project e2e-package",
     "test:examples": "npm run build && npm run test:examples:run",
-    "test:examples:run": "node dist/cli.js --ci docs/examples/*.test.ts",
+    "test:examples:run": "node dist/cli.js --ci docs/examples/*.test.ts docs/examples/in-source.ts",
     "check:docs": "node --disable-warning=ExperimentalWarning scripts/docs.ts",
     "docs:sync": "node --disable-warning=ExperimentalWarning scripts/docs.ts --write",
     "lint": "vp lint --deny-warnings src packages e2e docs/examples scripts/docs.ts scripts/docs scripts/architecture.mjs scripts/declarations.mjs eslint.config.test.ts && eslint . --max-warnings 0",

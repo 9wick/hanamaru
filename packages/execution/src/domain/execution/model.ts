@@ -1,12 +1,5 @@
 import type { Resource } from '@hanamaru/blueprint/model'
-import type {
-  Fields,
-  RuntimeBlueprint,
-  RuntimeGroup,
-  RuntimeMiddleware,
-  RuntimeMock,
-  RuntimeSuite,
-} from '@hanamaru/blueprint/model'
+import type { Fields, RuntimeGroup, RuntimeMiddleware, RuntimeMock, RuntimeSuite } from '@hanamaru/blueprint/model'
 import type { SourceLocation } from '@hanamaru/blueprint/model'
 import type { ResolvedExecutionConfig } from './config.js'
 
@@ -40,11 +33,3 @@ export interface GroupNode extends NodeBase {
 }
 
 export type ExecutionNode = SuiteNode | GroupNode
-
-export interface Plan {
-  resources?: readonly Resource[]
-  blueprints: RuntimeBlueprint[]
-  allNodes: ExecutionNode[]
-  nodes: ExecutionNode[]
-  only: boolean
-}

@@ -44,7 +44,7 @@ ESLintの無効化コメントとTypeScriptのエラー抑制も使えません�
 | e2e | Vitest | `e2e/` |
 | examples | hanamaru CLI | `docs/examples/*.test.ts` |
 
-unitは対象モジュールをプロセス内で直接importし、blueprintの構築・LibraryRunの実行契約・診断・CLI引数解析・
+unitは対象モジュールをプロセス内で直接importし、blueprintの構築・runnerとexecutionの実行契約・診断・CLI引数解析・
 worker間メッセージのスキーマを検証します。`scripts/**/*.test.ts` は文書検査ツールの純関数を
 同じ層で検証します。テストは実装と同じlint・型ルールの対象です。
 `packages/*/src/**/*.test.ts` も `npm run typecheck` と `npm run lint` が検査し、配布物には含めません。
@@ -71,7 +71,7 @@ README.mdとdocs/**/*.mdの `ts` ブロックは、全て例ファイルから�
 | 種別 | 置き場所 | 検証 |
 | --- | --- | --- |
 | 実行する例 | `docs/examples/*.test.ts` | 型検査とhanamaru CLIでの実行 |
-| 実行しない例（`run()` 呼び出し・設定ファイルなど） | `docs/examples/*.ts` | 型検査のみ |
+| 宣言や設定の例 | `docs/examples/*.ts` | 型検査。in-source.tsはCLIからも実行 |
 | 型エラーになる例 | `docs/spec/*.ts` の `@ts-expect-error` を含む範囲 | 型検査 |
 
 CLIは `registerTest` で登録された完成定義だけを収集します。実行する例ではルートを登録し、他のファイルからimportする場合にだけexportします。
@@ -196,8 +196,10 @@ npm view hanamaru@0.1.0 version dist-tags
 | --- | --- | --- |
 | `packages/blueprint/` | Testを入口にしたテスト記述、blueprintのモデル・成立条件、宣言・登録の通知 | なし |
 | `packages/module-runtime/` | module変換・読み込み、namespaceの出自、exportの差し替え | なし |
-| `packages/execution/` | 計画、試行・検証・資源管理、結果、実行workerの受信 | blueprint、module-runtime |
-| `packages/cli/` | ファイル選択・収集UseCase、worker監督、設定、CLIの表示 | blueprint、execution、module-runtime |
+| `packages/runner/` | runのUseCase、計画・進行・再試行・資源管理・結果集約、worker client | blueprint、execution-protocol、module-runtime |
+| `packages/execution/` | 実行workerの受信、試行・mock・検証、実行側の後始末 | blueprint、execution-protocol、module-runtime |
+| `packages/execution-protocol/` | request・response・通知のデータ型と検証schema | なし |
+| `packages/cli/` | ファイル選択・定義の取得、runner呼出し、worker監督、設定、CLIの表示 | blueprint、runner、module-runtime |
 | `src/` | 公開APIと各processの起動・具体構成 | 全て |
 
 各パッケージは `package.json` の依存・明示的な `exports` と、個別の `tsconfig.json` を持ちます。
@@ -208,13 +210,16 @@ npm view hanamaru@0.1.0 version dist-tags
 `infrastructure → application/domain/foundation` の向きを維持します。
 
 module-runtimeはblueprintやPlanを知りません。参照の出自とobject/keyの差し替えを提供し、
-executionの `ExecutionModules` がblueprintを走査してmodule準備と計画の指紋を作ります。
+runnerの `ExecutionModules` がblueprintを走査してmodule準備と計画の指紋を作ります。
 実行node/caseの参照を結び直す処理もexecutionに置きます。
 宣言の通知はblueprintが所有し、CLI収集と実行workerの再読込が同じ通知契約を購読します。
-登録順・ファイル別の問い合わせ・未登録検出はexecutionのCollectionLogが所有します。
+登録順・ファイル別の問い合わせ・未登録検出はrunnerのCollectionLogが所有します。
 blueprintの通常入口はTest・resource・relation・middleware・registerTestとその型です。
 内部のBuilder・JavaScript操作・例外表示はexportしません。収集/実行側はmodel、宣言通知の接続側はdeclarationsの入口を使います。
-実行既定値と継承、resourceの実行時JSON contextはexecution、CLIの失敗表示はcliが所有します。
+計画と全体結果はrunner、試行の実装はexecution、CLIの失敗表示はcliが所有します。
+runnerとexecutionは互いの実装をimportせず、execution-protocolの通信契約を使います。
+executionはworker起動入口だけを公開します。protocolのデータ型は`/data`から取得でき、
+公開型を読む利用者にschemaの実行時ライブラリを要求しません。
 
 配布JSはルートでまとめてビルドし、同じprocessの定義クラス・Symbol・DI基盤を共有します。
 公開入口・bin・workerのURLは従来どおりです。`scripts/declarations.mjs` がworkspaceを参照する型宣言を
@@ -228,8 +233,8 @@ applicationからinfrastructureへ求める契約の宛名になります。実�
 `createRuntime({ configs })` へ具体クラスを渡して行い、`packages/*/src/application` だけは宛名を書くために
 `@zeltjs/core` をimportできます（domain・foundationは引き続きValibotのみ）。
 
-AppとNode runtimeはprocessの構成入口で一度だけ起動します。パッケージのimportはAppを作りません。
-CLIの親process・収集worker・実行workerはそれぞれのprocessの入口で構成し、libraryは最初のrunで起動したものを共有します。
+AppとNode runtimeは各JS実行環境の構成入口で一度だけ起動します。公開SDKのimportはAppを作りません。
+CLIの親・収集worker・実行workerはそれぞれの入口で構成します。
 runごとの状態は `RunContext` へ隔離し、メソッド引数にはその仕事の入力を渡します。
 公開APIの利用者がコンテナに触ることはありません。
 
@@ -260,12 +265,12 @@ unitテストでは対象と依存サービスの実物をZeltで組み立て、
 mockが必要な例外では、置き換える依存と、そのテストで保証する範囲を明示します。
 
 unitテストは責務の所有者のそばに置き、サービスの契約をDIで取得した対象から検証します。
-公開 `run()` の組み立てを通してunitテストの範囲を広げません。たとえば `ProgressStore` の状態保持の契約は
+実行フロー全体の組み立てを通してunitテストの範囲を広げません。たとえば `ProgressStore` の状態保持の契約は
 `progress.test.ts`、実物の実行サービスと連携して進捗を更新する `PlanExecutor` の契約は `runner.*.test.ts` に置きます。
 実装同士の結果が一致することに加え、契約から定めた期待結果も確認します。
 
 E2Eは `e2e/` に置き、workspaceではビルド済みCLI、installed packageではインストール済みbinから呼びます。
-ライブラリの直接実行は `LibraryRun` の横の `run.*.test.ts` で、公式DI adapterから取得した実物を使って検証します。
+runnerの協調動作は `RunTests` の横の `run-tests.*.test.ts` で検証します。テスト専用adapterで実際のexecutionサービスへ接続し、productionのローカル実行は提供しません。
 公開入口の起動・再入禁止は `src/index.test.ts`、結果のtransport schemaは `schemas.test.ts` がそれぞれ対象の横で検証します。
 E2Eは内部workspaceやsrcをimportしません。stdout・stderr・終了コードと、利用者側のファイルや後処理を観測します。
 JSONは公開型と独立した観測用readerで検査し、本体のschema・Mutable型を判定基準に使いません。

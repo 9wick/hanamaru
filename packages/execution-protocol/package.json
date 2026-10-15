@@ -1,0 +1,16 @@
+{
+  "name": "@hanamaru/execution-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data": "./src/data.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "valibot": "1.5.0"
+  }
+}

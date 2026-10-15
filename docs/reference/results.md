@@ -1,8 +1,10 @@
 # 宣言位置と実行結果
 
+CLIのJSON出力はRunResultです。各トップレベルノードのsourceは、相対ファイル名と所属project名を保持します。
+複数projectが同じファイルを選んでも結果を複製せず、source.projectsへ所属名をまとめます。
+
 テストを書く人に位置やIDの入力を要求せず、blueprintと結果から宣言位置・各試行・失敗内容を取得できます。
 完全な公開型は[hanamaru.d.ts](../spec/hanamaru.d.ts)にあります。
-このページはCLIとライブラリAPIが返す `RunResult` の契約です。CLIでは複数projectのファイルをマージし、同じファイルの実行結果を複製しません。各トップレベルノードの `source: { file, projects }` に実行ディレクトリからの相対パスと所属project名を記録します。projectを使わない場合の `projects` は空配列です。ライブラリAPIの `run()` は `source` を付けません。
 
 ## 宣言位置
 
@@ -10,7 +12,7 @@ it / only / skip / todo / eachには、宣言したテストソースの `origin
 groupには、そのgroup呼び出しの位置をGroupBlueprint.originとGroupResult.originに保持します。親から子を追加した位置はGroupEntry.originと結果の子要素にも残します。
 一回の `group(name, [first, second])` で作ったグループと、その配列内の各子の追加位置は、同じgroup呼び出しの位置です。first・second自身が定義された位置は変更しません。
 fileは絶対パス、ソース行番号・列番号は1始まりです。wrapper内でitを呼んだ場合は、そのitの位置を指します。
-blueprint/runの呼出位置では上書きしません。同じ子を複数回追加しても子の宣言位置は変えません。
+blueprint取得やCLI起動の位置では上書きしません。同じ子を複数回追加しても子の宣言位置は変えません。
 
 対応範囲のテストソースでは必ず提供し、取得不能をnullの正常結果にはしません。
 標準CLIが直接実行するNode/Bun/Deno向けソースは[対応環境](limitations.md)の範囲です。

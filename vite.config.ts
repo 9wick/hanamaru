@@ -56,6 +56,7 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['src/**/*.test.ts', 'packages/*/src/**/*.test.ts', 'scripts/**/*.test.ts', 'eslint.config.test.ts'],
+          exclude: ['**/testing/**'],
         },
       },
       {
@@ -102,7 +103,7 @@ export default defineConfig({
     // 配布物の依存はpublishの時点で同梱する。利用者側のnode_modules解決を1回の起動から取り除く。
     deps: {
       alwaysBundle: [
-        /^@hanamaru\/(blueprint|execution|module-runtime|cli)(\/|$)/,
+        /^@hanamaru\/(blueprint|runner|execution-protocol|execution|module-runtime|cli)(\/|$)/,
         'valibot',
         '@vitest/expect',
         '@standard-schema/spec',

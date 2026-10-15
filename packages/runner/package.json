@@ -1,0 +1,43 @@
+{
+  "name": "@hanamaru/runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./application/collection/current-scope": "./src/application/collection/current-scope.ts",
+    "./application/collection/definitions": "./src/application/collection/definitions.ts",
+    "./application/collection/module-session": "./src/application/collection/module-session.ts",
+    "./application/collection/scope": "./src/application/collection/scope.ts",
+    "./application/execution/context": "./src/application/execution/context.ts",
+    "./application/execution/current-run": "./src/application/execution/current-run.ts",
+    "./application/execution/lifecycle": "./src/application/execution/lifecycle.ts",
+    "./application/execution/options": "./src/application/execution/options.ts",
+    "./application/execution/progress": "./src/application/execution/progress.ts",
+    "./application/execution/progress-schema": "./src/application/execution/progress-schema.ts",
+    "./application/execution/state": "./src/application/execution/state.ts",
+    "./application/ports/executor": "./src/application/ports/executor.ts",
+    "./application/ports/root-reference": "./src/application/ports/root-reference.ts",
+    "./application/usecases/run-tests": "./src/application/usecases/run-tests.ts",
+    "./domain/execution/config": "./src/domain/execution/config.ts",
+    "./domain/result/mutable": "./src/domain/result/mutable.ts",
+    "./domain/result/schemas": "./src/domain/result/schemas.ts",
+    "./domain/result/source": "./src/domain/result/source.ts",
+    "./domain/result/types": "./src/domain/result/types.ts",
+    "./infrastructure/modules/toolchain": "./src/infrastructure/modules/toolchain.ts",
+    "./infrastructure/workers/client": "./src/infrastructure/workers/client.ts",
+    "./infrastructure/workers/execution-connection": "./src/infrastructure/workers/execution-connection.ts",
+    "./domain/execution/targets": "./src/domain/execution/targets.ts",
+    "./domain/execution/target-schema": "./src/domain/execution/target-schema.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hanamaru/blueprint": "0.0.0",
+    "@hanamaru/execution-protocol": "0.0.0",
+    "@hanamaru/module-runtime": "0.0.0",
+    "@hanamaru/vite": "npm:vite@8.3.0",
+    "@zeltjs/core": "0.12.0-canary.2",
+    "valibot": "1.5.0"
+  }
+}

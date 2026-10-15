@@ -30,7 +30,7 @@ export class CliCommand {
     }
     if (options.help) {
       process.stdout.write(
-        'hanamaru [files...] [--project name] [--filter text] [--reporter pretty|json] [--config file] [--ci] [--fail-on-flaky] [--collection-timeout ms] [--shutdown-grace ms]\n',
+        'hanamaru [files...|file:line] [--list] [--id target-id] [--project name] [--filter text] [--reporter pretty|json] [--config file] [--ci] [--fail-on-flaky] [--collection-timeout ms] [--shutdown-grace ms]\n',
       )
       this.#environment.setExitCode(0)
       return

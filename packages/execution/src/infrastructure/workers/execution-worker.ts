@@ -5,7 +5,7 @@ import { ExecutionChannel } from './execution-channel.js'
 import { ExecutionLoader } from './execution-loader.js'
 import { ExecutionServer } from './execution-server.js'
 import { ExecutionSession } from './execution-session.js'
-import type { ExecutionWorkerData } from './protocol.js'
+import type { ExecutionWorkerData } from '@hanamaru/execution-protocol/data'
 
 /** 実行workerが受け持つ持ち場。読み込みが済むまでcommandを溜め、走らせられる形が揃ってからreadyを返す。 */
 @Injectable()
@@ -49,7 +49,11 @@ export class ExecutionWorker {
 
   #load(workerData: ExecutionWorkerData): void {
     // 変換は収集workerのportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
-    const runtime = this.#runtimes.start(this.#transport, workerData.preparation)
+    const runtime = this.#runtimes.start(
+      this.#transport,
+      workerData.preparation,
+      workerData.entryURL === undefined ? undefined : { key: 'hanamaru', url: workerData.entryURL },
+    )
     this.#loader
       .load(runtime, workerData)
       .then((nodes) => {

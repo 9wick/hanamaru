@@ -14,7 +14,7 @@ import type { GroupReply } from '../ports/executor.js'
 import { now } from './clock.js'
 import { CaseFailed, CleanupFault, MiddlewareFault } from './faults.js'
 import { StageTimer } from './services.js'
-import { RunLifecycle } from './lifecycle.js'
+import { ExecutionLifecycle } from './lifecycle.js'
 import type { Stage } from './state.js'
 
 /** nextを呼ぶまでがbefore、下流の実行中がinside、下流が終わってからがafter。 */
@@ -209,13 +209,13 @@ export function groupMiddlewareOutcome(
 
 /**
  * group middlewareで子を囲む。
- * 子の実行と区間の観測は今回の囲みの指定。実行状態はRunLifecycleと共有する。
+ * 子の実行と区間の観測は今回の囲みの指定。実行状態はExecutionLifecycleと共有する。
  */
 @Injectable()
 export class GroupMiddlewareExecutor {
-  readonly #lifecycle: RunLifecycle
+  readonly #lifecycle: ExecutionLifecycle
 
-  constructor(lifecycle = inject(RunLifecycle)) {
+  constructor(lifecycle = inject(ExecutionLifecycle)) {
     this.#lifecycle = lifecycle
   }
 

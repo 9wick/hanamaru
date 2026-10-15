@@ -34,6 +34,8 @@ async function supervisor(collectionSource = collect, executionURL = workerURL(e
   @Config()
   class Presenter extends ResultPresenter {
     override readonly present = vi.fn()
+
+    catalogue(): void {}
   }
   const { target: runner, get } = await createTestTarget(CollectionSupervisor, {
     configs: [Environment, Presenter, CollectionSupervisor],

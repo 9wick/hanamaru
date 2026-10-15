@@ -3,10 +3,10 @@ import { createTestTarget } from '@zeltjs/testing/vitest'
 import { MessageChannel } from 'node:worker_threads'
 import * as v from 'valibot'
 import { expect, onTestFinished, test } from 'vite-plus/test'
-import { RunLifecycle } from '../../application/execution/lifecycle.js'
+import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import { ExecutionEnvironment } from './execution-environment.js'
 import { CommandQueue, CompileRequests, ExecutionSession } from './execution-session.js'
-import type { ExecutionCommand } from './protocol.js'
+import type { ExecutionCommand } from '@hanamaru/execution-protocol/data'
 import { executionMessageSchema } from './execution-schemas.js'
 
 function attempt(id: number): ExecutionCommand {
@@ -101,9 +101,9 @@ test('a command that arrives after the taker hands it over directly', async () =
 
 test('the worker reports a timeout with the phase the run last reached', async () => {
   const { get, sent, until } = await wired()
-  const lifecycle = await get(RunLifecycle)
+  const lifecycle = await get(ExecutionLifecycle)
   lifecycle.timedOut()
-  ;(await get(RunLifecycle)).markPhase('target')
+  ;(await get(ExecutionLifecycle)).markPhase('target')
   lifecycle.timedOut()
   await until(2)
   expect(sent).toStrictEqual([
@@ -122,7 +122,7 @@ test('the session asks for compilation through the worker protocol', async () =>
 test('the session routes each incoming message to its destination', async () => {
   const { session, get } = await wired()
   expect(session.receive({ type: 'interrupt' })).toBe(true)
-  expect((await get(RunLifecycle)).reason).toBe('interrupted')
+  expect((await get(ExecutionLifecycle)).reason).toBe('interrupted')
   expect(session.receive(attempt(5))).toBe(true)
   expect((await (await get(CommandQueue)).take()).id).toBe(5)
   // 覚えのないcompile返信だけは入口が畳み方を決めるため、見分けた結果を返す。

@@ -1,9 +1,8 @@
+import type { TargetCatalogue } from '@hanamaru/runner/domain/execution/targets'
 import { Injectable, inject } from '@zeltjs/core'
-import type { MutableRunResult } from '@hanamaru/execution/domain/result/mutable'
-import type { Deadline, Progress, RunEvent } from '@hanamaru/execution/application/execution/state'
-import { RunLifecycle } from '@hanamaru/execution/application/execution/lifecycle'
-import type { TestSource } from './sources.js'
-import { withSources } from './sources.js'
+import type { MutableRunResult } from '@hanamaru/runner/domain/result/mutable'
+import type { Deadline, Progress, RunEvent } from '@hanamaru/runner/application/execution/state'
+import { RunLifecycle } from '@hanamaru/runner/application/execution/lifecycle'
 import type { CliMessage, Reporter } from './events.js'
 import { CollectionSink } from './events.js'
 
@@ -15,7 +14,7 @@ import { CollectionSink } from './events.js'
 export class CollectionReporter {
   readonly #sink: CollectionSink
   readonly #lifecycle: RunLifecycle
-  #sources: readonly TestSource[] = []
+  #presentation: { reporter: Reporter; shutdownGrace: number } | null = null
 
   constructor(sink = inject(CollectionSink), lifecycle = inject(RunLifecycle)) {
     this.#sink = sink
@@ -23,19 +22,19 @@ export class CollectionReporter {
     lifecycle.observe((event) => this.#executionEvent(event))
   }
 
-  /** 計画が確定してから得られる出典だけを、通信に使うデータとして受け取る。 */
-  sources(sources: readonly TestSource[]): void {
-    this.#sources = sources
+  presentation(reporter: Reporter, shutdownGrace: number): void {
+    this.#presentation = { reporter, shutdownGrace }
   }
 
   #executionEvent(event: RunEvent): void {
-    if (event.kind === 'progress') {
+    if (event.kind === 'initialized') {
+      if (this.#presentation) this.running(this.#presentation.reporter, this.#presentation.shutdownGrace)
+    } else if (event.kind === 'loading') this.loading(event.file, event.timeout)
+    else if (event.kind === 'progress') {
       const progress = event.progress
-      this.progress(
-        progress.kind === 'init' ? { ...progress, result: withSources(progress.result, this.#sources) } : progress,
-      )
+      this.progress(progress)
     } else if (event.kind === 'deadline') this.deadline(event.deadline)
-    else this.timedOut(withSources(this.#lifecycle.capture('timeout'), this.#sources))
+    else if (event.kind === 'timeout') this.timedOut(this.#lifecycle.capture('timeout'))
   }
 
   #send(event: CliMessage): void {
@@ -56,6 +55,9 @@ export class CollectionReporter {
   }
   deadline(deadline: Deadline): void {
     this.#send({ type: 'deadline', ...deadline })
+  }
+  catalogue(catalogue: TargetCatalogue, reporter: Reporter): void {
+    this.#send({ type: 'catalogue', catalogue, reporter })
   }
   result(result: MutableRunResult, reporter: Reporter): void {
     this.#send({ type: 'result', result, reporter })

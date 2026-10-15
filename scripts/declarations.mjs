@@ -6,7 +6,7 @@ import ts from 'typescript'
 const root = resolve(import.meta.dirname, '..')
 const dist = resolve(root, 'dist')
 const manifests = new Map(
-  ['blueprint', 'execution', 'module-runtime', 'cli'].map((name) => [
+  ['blueprint', 'runner', 'execution', 'execution-protocol', 'module-runtime', 'cli'].map((name) => [
     `@hanamaru/${name}`,
     JSON.parse(readFileSync(resolve(root, 'packages', name, 'package.json'), 'utf8')),
   ]),
@@ -30,7 +30,9 @@ for (const file of files(dist).filter((path) => path.endsWith('.d.ts'))) {
   const edits = []
   function visit(node) {
     if (ts.isStringLiteral(node)) {
-      const match = node.text.match(/^(@hanamaru\/(?:blueprint|execution|module-runtime|cli))(?:\/(.*))?$/)
+      const match = node.text.match(
+        /^(@hanamaru\/(?:blueprint|runner|execution-protocol|execution|module-runtime|cli))(?:\/(.*))?$/,
+      )
       if (match) {
         const [, name, subpath] = match
         const target = manifests.get(name).exports[subpath === undefined ? '.' : `./${subpath}`]

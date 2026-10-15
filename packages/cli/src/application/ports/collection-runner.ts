@@ -1,5 +1,6 @@
+import type { TargetCatalogue } from '@hanamaru/runner/domain/execution/targets'
 import { Config } from '@zeltjs/core'
-import type { MutableRunResult } from '@hanamaru/execution/domain/result/mutable'
+import type { MutableRunResult } from '@hanamaru/runner/domain/result/mutable'
 import type { CliOptions } from '../collection/options.js'
 export interface CollectionRequest {
   files: string[]
@@ -12,6 +13,7 @@ export interface CollectionRequest {
  */
 @Config({ abstract: true })
 export abstract class ResultPresenter {
+  abstract catalogue(catalogue: TargetCatalogue, reporter: string | undefined): void
   abstract present(result: MutableRunResult, reporter: string | undefined): void
 }
 

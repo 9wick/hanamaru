@@ -36,7 +36,15 @@ test('one published package contains declarations without private workspace depe
     v.object({ dependencies: v.record(v.string(), v.string()) }),
     JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8')),
   )
-  for (const name of ['blueprint', 'definition', 'execution', 'module-runtime', 'cli']) {
+  for (const name of [
+    'blueprint',
+    'definition',
+    'runner',
+    'execution',
+    'execution-protocol',
+    'module-runtime',
+    'cli',
+  ]) {
     expect(manifest.dependencies[`@hanamaru/${name}`]).toBeUndefined()
     expect(existsSync(join(installed.consumer, 'node_modules/@hanamaru', name))).toBe(false)
   }
@@ -45,7 +53,7 @@ test('one published package contains declarations without private workspace depe
   expect(declarations).toContain('index.d.ts')
   for (const name of declarations)
     expect(readFileSync(join(dist, name), 'utf8'), name).not.toMatch(
-      /@hanamaru\/(blueprint|definition|execution|module-runtime|cli)(?:\/|['"])/,
+      /@hanamaru\/(blueprint|definition|runner|execution-protocol|execution|module-runtime|cli)(?:\/|['"])/,
     )
   const result = jsonResult(invoke(installed.env, 'contracts.test.ts', '-r', 'json'), 0)
   expect(cases(groupNode(result)).filter((item) => !item.notRun)).toHaveLength(4)
@@ -82,7 +90,9 @@ test('installed CLI needs no module or TypeScript config and supports optional g
   expect(install.status, install.stderr).toBe(0)
   const help = execute('npx', ['--no-install', 'hanamaru', '--help'], project)
   expect(help.status, help.stderr).toBe(0)
-  expect(help.stdout).toContain('hanamaru [files...]')
+  expect(help.stdout).toContain('hanamaru [files...|file:line]')
+  expect(help.stdout).toContain('--list')
+  expect(help.stdout).toContain('--id target-id')
   const version = execute('npx', ['--no-install', 'hanamaru', '--version'], project)
   expect(version.status, version.stderr).toBe(0)
   expect(version.stdout.trim()).toBe(release.version)
@@ -92,6 +102,20 @@ test('installed CLI needs no module or TypeScript config and supports optional g
   )
   expect(output.status).toBe('passed')
   expect(testNode(output).cases).toHaveLength(1)
+  writeFileSync(
+    join(source, 'private.ts'),
+    `import type {} from 'hanamaru'
+const secret = 7
+const privateValue = () => secret
+if (import.meta.hanamaru) {
+  const { Test, registerTest } = import.meta.hanamaru
+  registerTest(new Test().target(privateValue).it('private source', t => t.args().expect(e => [e.result.toBe(7)])))
+}
+`,
+  )
+  expect(
+    jsonResult(execute('npx', ['--no-install', 'hanamaru', 'src/private.ts', '--reporter', 'json'], project), 0).status,
+  ).toBe('passed')
   const projectManifest = v.parse(v.looseObject({}), JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')))
   const scripts = v.parse(v.object({ scripts: v.record(v.string(), v.string()) }), JSON.parse(manifest))
   writeFileSync(join(project, 'package.json'), JSON.stringify({ ...projectManifest, ...scripts }))

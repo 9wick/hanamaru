@@ -5,11 +5,12 @@ import * as v from 'valibot'
 import { errorStack } from '@hanamaru/cli/application/collection/failure'
 import { ProjectFilesystem } from '@hanamaru/cli/infrastructure/filesystem/project-files'
 import { ModuleEntry } from '@hanamaru/module-runtime/infrastructure/modules/entry'
-import { WorkerExecutionLauncher } from '@hanamaru/cli/infrastructure/workers/client'
+import { CollectionExecutionConnection } from '@hanamaru/cli/infrastructure/workers/runner-connection'
+import { WorkerExecutionLauncher } from '@hanamaru/runner/infrastructure/workers/client'
 import { CollectionChannel } from '@hanamaru/cli/infrastructure/workers/collection-channel'
 import { CollectionEnvironment } from '@hanamaru/cli/infrastructure/workers/environment'
 import { CollectionFeature } from '@hanamaru/cli/infrastructure/workers/features'
-import { WorkerModuleToolchain } from '@hanamaru/cli/infrastructure/workers/module-toolchain'
+import { WorkerModuleToolchain } from '@hanamaru/runner/infrastructure/modules/toolchain'
 import { cliWorkerDataSchema } from '@hanamaru/cli/infrastructure/workers/schemas'
 import { StderrLog } from '@hanamaru/cli/infrastructure/workers/stderr-log'
 import { captureConsole } from './capture-console.js'
@@ -39,6 +40,7 @@ const app = createApp([new CollectionFeature()], {
     CollectionChannel,
     WorkerModuleToolchain,
     WorkerExecutionLauncher,
+    CollectionExecutionConnection,
   ],
 })
 

@@ -1,4 +1,4 @@
-import type { DiagnosticProperty, DiagnosticValue, TargetOutcome } from '@hanamaru/execution/domain/result/types'
+import type { DiagnosticProperty, DiagnosticValue, TargetOutcome } from '@hanamaru/runner/domain/result/types'
 
 const outcomeVerbs = { return: 'returned', throw: 'threw' } as const
 

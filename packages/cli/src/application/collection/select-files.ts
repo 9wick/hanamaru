@@ -33,7 +33,7 @@ export function selectFiles(
     return [...selected.values()].sort((a, b) => a.file.localeCompare(b.file))
   }
   if (request.options.projects?.length) throw new TypeError(`unknown project: ${request.options.projects[0]}`)
-  const include = ['**/*.{test,spec}.ts']
+  const include = ['**/*.{test,spec}.ts', ...(config.includeSource ?? [])]
   const exclude = ['**/node_modules/**', '**/dist/**']
   const files = new Set(include.flatMap((pattern) => [...glob(pattern)]))
   for (const pattern of exclude) for (const file of glob(pattern)) files.delete(file)

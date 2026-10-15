@@ -1,4 +1,4 @@
-import { Test, middleware, run } from 'hanamaru'
+import { Test, middleware, registerTest } from 'hanamaru'
 import { add } from '../examples/math.ts'
 import { createUser, userRepository, mailService } from '../examples/user.ts'
 
@@ -18,7 +18,7 @@ suite.target((s: string) => s)
 // @ts-expect-error suite cannot replace its context.
 suite.use(middleware(async (_, next) => next({ n: 1 })))
 // @ts-expect-error incomplete builders cannot be run.
-run(ready)
+registerTest(ready)
 // @ts-expect-error target must precede cases.
 new Test().it('未設定', () => {})
 // @ts-expect-error arguments must precede expectations.
@@ -165,7 +165,7 @@ ready.it('argsの後にもmockを書ける', t => t.args(1, 2)
   .expect(e => [e.result.toBe(3)])
   .expectCalls(call => [call(userRepository, 'save').notCalled()]))
 ready.it('例外も同じexpect', t => t.args(1, 2).expect(e => [e.error.toThrow('bad')]))
-run(suite)
+registerTest(suite)
 
 // A different object is an independent observation, even with the same type.
 const shadowRepository: typeof userRepository = { async save() { return { id: 'shadow' } } }
@@ -174,7 +174,7 @@ mocked.it('別参照を記録する', t => t.args(1, 2).expectCalls(call => [
 ]))
 const observed = ready.it('呼び出し条件の記述子を持つ', t => t.args(1, 2)
   .expectCalls(call => [call(mailService, 'send').notCalled()]))
-run(observed)
+registerTest(observed)
 // @ts-expect-error the old plan API is no longer public.
 observed.plan()
 

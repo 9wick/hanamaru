@@ -76,7 +76,6 @@ registerTest(addition)
 npx hanamaru src/math.test.ts
 ```
 
-CLIは `registerTest` で登録されたルートを収集して実行するので、テストファイル内で `run()` を呼ぶ必要はありません。CLI自体は型チェックをしないため、型エラーも検出したい場合は、後述の[任意の型チェック設定](#任意の型チェック)を使えます。
 
 ## モックを使う
 
@@ -199,7 +198,6 @@ middlewareは各ケースの各試行で実行します。`next(fields)` に渡�
 設定ファイルがなくても、CLIは `**/*.{test,spec}.ts` を既定の探索対象にします。
 
 読むファイルを名前付きで選ぶ機能は[project](projects.md)、unitとintegration/e2eを分ける構成は[利用例](project-use-cases.md)で説明します。登録とprojectを含むファイル指定・設定は[CLI](../reference/cli.md)を参照してください。
-projectはCLIのファイル選択設定です。自分のプログラムから完成定義を実行して結果を処理する `run(test)` との使い分けは、[実行方法の選び方](../reference/cli.md#実行方法の選び方)に記載しています。
 
 ### 任意の型チェック
 

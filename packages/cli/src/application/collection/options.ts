@@ -1,4 +1,7 @@
 export interface CliOptions {
+  list?: boolean
+  id?: string
+  location?: { file: string; line: number }
   filter?: string
   reporter?: string
   config?: string

@@ -58,8 +58,8 @@ test('deriving a builder leaves the source blueprint unchanged', () => {
 // importを末尾に置くのは、上のitLineが指す物理行を動かさないため。
 // ---------------------------------------------------------------------------
 
-import { collectWithin } from '../../../../execution/src/application/collection/current-scope.js'
-import { CollectionLog } from '../../../../execution/src/application/collection/scope.js'
+import { collectWithin } from '../../../../runner/src/application/collection/current-scope.js'
+import { CollectionLog } from '../../../../runner/src/application/collection/scope.js'
 import { middleware, registerTest } from '../../../../../src/index.js'
 import type {
   Assertions,

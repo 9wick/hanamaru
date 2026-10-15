@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@zeltjs/core'
-import { ExecutionLauncher, type PreparedExecution } from '@hanamaru/execution/application/ports/executor'
+import { ExecutionLauncher, type PreparedExecution } from '@hanamaru/runner/application/ports/executor'
 import type { Config } from './config.js'
-import { CollectionModules } from './module-session.js'
+import { CollectionModules } from '@hanamaru/runner/application/collection/module-session'
 import { CollectionReporter } from './reporting.js'
 
 /** テスト実行の環境を準備し、実行workerを止めてから変換runtimeを閉じる。 */

@@ -51,8 +51,12 @@ export class ModuleRuntimeLauncher {
     this.#registry = registry
   }
 
-  start(transport: ModuleTransport, preparation: readonly ModulePreparation[]): RunningRuntime {
+  start(
+    transport: ModuleTransport,
+    preparation: readonly ModulePreparation[],
+    metaEntry?: { readonly key: string; readonly url: string },
+  ): RunningRuntime {
     const facades = new ModuleFacades(this.#registry, preparation)
-    return new RunningRuntime(new FacadeRunner(facades, new FacadeEvaluator(facades), transport), facades)
+    return new RunningRuntime(new FacadeRunner(facades, new FacadeEvaluator(facades, metaEntry), transport), facades)
   }
 }

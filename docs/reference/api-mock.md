@@ -145,7 +145,6 @@ registerTest(namespaceMock)
 [calc.ts](../examples/calc.ts)は[data.ts](../examples/data.ts)のgetDataを直接importし、2倍して返します。
 定義の収集中は本物を使い、fakeは試行中だけ有効になります。試行終了後に復元し、retry時には記録を初期化します。
 同じファイル内のローカル変数への直接呼び出しや、Viteで外部化したモジュール内部のimportには介入しません。
-既に読み込んだ定義を受け取る `run(definition)` は読込をやり直さないため、module namespaceの差し替えはCLIで実行してください。
 
 適用前のプロパティdescriptorを保存し、試行終了時に復元します。
 差し替え不能なプロパティ、アクセサ、実行時に非関数だった値は失敗として扱います。

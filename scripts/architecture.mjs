@@ -6,8 +6,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packages = {
   blueprint: new Set(['blueprint']),
   'module-runtime': new Set(['module-runtime']),
-  execution: new Set(['execution', 'blueprint', 'module-runtime']),
-  cli: new Set(['cli', 'execution', 'blueprint', 'module-runtime']),
+  'execution-protocol': new Set(['execution-protocol']),
+  runner: new Set(['runner', 'blueprint', 'execution-protocol', 'module-runtime']),
+  execution: new Set(['execution', 'blueprint', 'execution-protocol', 'module-runtime']),
+  cli: new Set(['cli', 'runner', 'blueprint', 'module-runtime']),
 }
 const layers = {
   interfaces: new Set(['interfaces', 'application', 'domain', 'foundation']),
@@ -60,9 +62,10 @@ export const architecturePlugin = {
               specifier.startsWith('.') || isAbsolute(specifier)
                 ? location(resolve(dirname(context.filename), specifier))
                 : null
-            const privatePackage = /^@hanamaru\/(blueprint|definition|execution|module-runtime|cli)(\/|$)/.test(
-              specifier,
-            )
+            const privatePackage =
+              /^@hanamaru\/(blueprint|definition|runner|execution-protocol|execution|module-runtime|cli)(\/|$)/.test(
+                specifier,
+              )
             const typeOnly =
               node.type === 'TSImportType' ||
               node.importKind === 'type' ||
@@ -87,7 +90,9 @@ export const architecturePlugin = {
             }
             return
           }
-          const match = specifier.match(/^@hanamaru\/(blueprint|execution|module-runtime|cli)(?:\/(.*))?$/)
+          const match = specifier.match(
+            /^@hanamaru\/(blueprint|runner|execution-protocol|execution|module-runtime|cli)(?:\/(.*))?$/,
+          )
           if (match) {
             const [, to, subpath] = match
             if (from.package !== 'distribution' && !packages[from.package].has(to))
@@ -100,7 +105,12 @@ export const architecturePlugin = {
               context.report({ node: source, messageId: 'declared', data: { source: specifier } })
             const target = manifests[to].exports[subpath === undefined ? '.' : `./${subpath}`]
             if (typeof target === 'string') {
-              const targetLayer = target.split('/')[2] === 'index.ts' ? 'interfaces' : target.split('/')[2]
+              const targetLayer =
+                to === 'execution-protocol'
+                  ? 'domain'
+                  : target.split('/')[2] === 'index.ts'
+                    ? 'interfaces'
+                    : target.split('/')[2]
               if (layers[from.layer] && !layers[from.layer].has(targetLayer))
                 context.report({ node: source, messageId: 'layer', data: { from: from.layer, to: targetLayer } })
             }
@@ -112,10 +122,18 @@ export const architecturePlugin = {
             context.report({ node: source, messageId: 'package', data: { from: from.package, to: 'distribution' } })
           if (from.package === 'blueprint' && from.layer !== 'infrastructure' && specifier.startsWith('node:'))
             context.report({ node: source, messageId: 'external', data: { layer: from.layer, source: specifier } })
+          if (from.package === 'execution-protocol' && specifier !== 'valibot')
+            context.report({
+              node: source,
+              messageId: 'external',
+              data: { layer: 'execution-protocol', source: specifier },
+            })
           if (['application', 'domain', 'foundation'].includes(from.layer)) {
             const publicConfigType =
-              from.package === 'cli' &&
-              context.filename === resolve(root, 'packages/cli/src/application/collection/config.ts') &&
+              ((from.package === 'cli' &&
+                context.filename === resolve(root, 'packages/cli/src/application/collection/config.ts')) ||
+                (from.package === 'runner' &&
+                  context.filename === resolve(root, 'packages/runner/src/application/execution/options.ts'))) &&
               node.type === 'TSImportType' &&
               specifier === '@hanamaru/vite'
             const injectionToken = from.layer === 'application' && specifier === '@zeltjs/core'

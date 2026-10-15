@@ -1,5 +1,5 @@
 import { expect, test } from 'vite-plus/test'
-import type { ReplyValue } from './protocol.js'
+import type { ReplyValue } from '@hanamaru/execution-protocol/data'
 import { PendingReplies } from './requests.js'
 
 test('requests are numbered in order and settled by their own id', async () => {

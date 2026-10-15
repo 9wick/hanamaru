@@ -1,9 +1,9 @@
 import { Config, Injectable, inject } from '@zeltjs/core'
-import { RunLifecycle } from '../../application/execution/lifecycle.js'
+import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import { ModuleTransport } from '@hanamaru/module-runtime/application/ports/module-loader'
-import type { Value } from '../../domain/execution/javascript.js'
+import { valueOf, type Value } from '../../domain/execution/javascript.js'
 import { ExecutionChannel } from './execution-channel.js'
-import type { ExecutionCommand, ExecutionIncoming } from './protocol.js'
+import type { ExecutionCommand, ExecutionIncoming } from '@hanamaru/execution-protocol/data'
 import { PendingReplies } from './requests.js'
 
 /**
@@ -25,10 +25,10 @@ export class CompileRequests extends ModuleTransport {
   }
 
   /** 覚えのない返信はprotocolの破れ。どう畳むかは入口が決めるため、ここでは伝えるだけにする。 */
-  settle(reply: { id: number; result?: Value; error?: string }): boolean {
+  settle(reply: { id: number; result?: unknown; error?: string }): boolean {
     return reply.error
       ? this.#pending.fail(reply.id, new Error(reply.error))
-      : this.#pending.settle(reply.id, reply.result)
+      : this.#pending.settle(reply.id, valueOf(reply.result))
   }
 }
 
@@ -60,9 +60,13 @@ export class CommandQueue {
 export class ExecutionSession {
   readonly #compiles: CompileRequests
   readonly #commands: CommandQueue
-  readonly #lifecycle: RunLifecycle
+  readonly #lifecycle: ExecutionLifecycle
 
-  constructor(compiles = inject(CompileRequests), commands = inject(CommandQueue), lifecycle = inject(RunLifecycle)) {
+  constructor(
+    compiles = inject(CompileRequests),
+    commands = inject(CommandQueue),
+    lifecycle = inject(ExecutionLifecycle),
+  ) {
     this.#compiles = compiles
     this.#commands = commands
     this.#lifecycle = lifecycle

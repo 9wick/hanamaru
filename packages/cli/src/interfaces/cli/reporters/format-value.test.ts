@@ -1,5 +1,5 @@
 import { expect, test } from 'vite-plus/test'
-import { diagnostic } from '@hanamaru/execution/domain/result/diagnostic'
+import { diagnostic } from '../../../../../runner/src/domain/result/diagnostic.js'
 import { formatValue } from './format-value.js'
 
 test('primitives keep their kind visible instead of collapsing into one text form', () => {
