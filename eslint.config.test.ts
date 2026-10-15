@@ -5,7 +5,7 @@ import { ESLint } from 'eslint'
 const eslint = new ESLint({
   overrideConfig: [
     {
-      files: ['src/**/*.ts', 'packages/*/src/**/*.ts'],
+      files: ['src/**/*.ts', 'packages/*/src/**/*.ts', 'e2e/**/*.ts'],
       languageOptions: { parserOptions: { disallowAutomaticSingleRunInference: true } },
     },
   ],
