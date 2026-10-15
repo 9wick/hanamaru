@@ -1,6 +1,5 @@
-import { Config, Injectable, inject } from '@zeltjs/core'
+import { Injectable, inject } from '@zeltjs/core'
 import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
-import { ModuleTransport } from '@hanamaru/module-runtime/application/ports/module-loader'
 import { valueOf, type Value } from '../../domain/execution/javascript.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand, ExecutionIncoming } from '@hanamaru/execution-protocol/data'
@@ -10,13 +9,12 @@ import { PendingReplies } from './requests.js'
  * compileを収集workerのportへ頼む取り寄せ口。発番と突き合わせを1か所に閉じ込める。
  * module runtimeから見ると、収集workerが自分で立てるcompilerと同じ形の取り寄せ口になる。
  */
-@Config()
-export class CompileRequests extends ModuleTransport {
+@Injectable()
+export class CompileRequests {
   readonly #pending = new PendingReplies<Value>()
   readonly #channel: ExecutionChannel
 
   constructor(channel = inject(ExecutionChannel)) {
-    super()
     this.#channel = channel
   }
 

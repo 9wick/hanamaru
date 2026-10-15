@@ -1,21 +1,24 @@
-import { Config, inject } from '@zeltjs/core'
+import { Injectable } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
 import type { CliMessage } from '../../application/collection/events.js'
-import { CollectionSink } from '../../application/collection/events.js'
 import { property } from '../../application/collection/javascript.js'
-import { CollectionEnvironment } from './environment.js'
 import { executionClosedSchema } from './schemas.js'
 
 /** 収集workerと親を繋ぐMessagePort。protocolの送受信に触るのはここだけにする。 */
-@Config()
-export class CollectionChannel extends CollectionSink {
-  readonly #port: MessagePort
+@Injectable()
+export class CollectionChannel {
+  #connection: MessagePort | undefined
   #closingExecution: Promise<void> | undefined
 
-  constructor(environment = inject(CollectionEnvironment)) {
-    super()
-    this.#port = environment.port
+  connect(port: MessagePort): void {
+    if (this.#connection) throw new Error('collection channel is already connected')
+    this.#connection = port
+  }
+
+  get #port(): MessagePort {
+    if (!this.#connection) throw new Error('collection channel is not connected')
+    return this.#connection
   }
 
   post(event: CliMessage): void {

@@ -1,7 +1,6 @@
-import { Config, inject } from '@zeltjs/core'
+import { Injectable, inject } from '@zeltjs/core'
 import type { ModuleOptions as ProjectConfig } from '../../application/execution/options.js'
 import type { ModuleSession } from '../../application/ports/module-host.js'
-import { ModuleToolchain } from '../../application/ports/module-host.js'
 import type { ModulePreparation } from '@hanamaru/module-runtime/application/ports/module-loader'
 import type { RuntimeBlueprint } from '@hanamaru/blueprint/model'
 import type { ExecutionNode } from '../../domain/execution/model.js'
@@ -57,8 +56,8 @@ class WorkerModuleSession implements ModuleSession {
 }
 
 /** 収集が使うtest runtimeの立ち上げ。読み込む相手は自分で立てたcompilerになる。 */
-@Config()
-export class WorkerModuleToolchain extends ModuleToolchain {
+@Injectable()
+export class WorkerModuleToolchain {
   readonly #compilers: ModuleCompilerLauncher
   readonly #runtimes: ModuleRuntimeLauncher
   readonly #modules: ExecutionModules
@@ -70,7 +69,6 @@ export class WorkerModuleToolchain extends ModuleToolchain {
     modules = inject(ExecutionModules),
     entry = inject(ModuleEntry),
   ) {
-    super()
     this.#compilers = compilers
     this.#runtimes = runtimes
     this.#modules = modules
@@ -83,7 +81,7 @@ export class WorkerModuleToolchain extends ModuleToolchain {
     const entryURL = this.#entry.url.href
     return new WorkerModuleSession(
       compiler,
-      this.#runtimes.start(compiler, [], { key: 'hanamaru', url: entryURL }),
+      this.#runtimes.start(compiler.invoke.bind(compiler), [], { key: 'hanamaru', url: entryURL }),
       this.#modules,
       entryURL,
     )

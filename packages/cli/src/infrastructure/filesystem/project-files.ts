@@ -1,14 +1,13 @@
-import { Config } from '@zeltjs/core'
+import { Injectable } from '@zeltjs/core'
 import { globSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import type { Config as ProjectConfig } from '../../application/collection/config.js'
 import type { CliOptions } from '../../application/collection/options.js'
-import { ProjectFiles } from '../../application/ports/collection-host.js'
 import { readConfig } from './config.js'
 
 /** 実行場所(process.cwd())を基準にしたファイルの読み取り。探索・設定・表示名が同じ基準を見る。 */
-@Config()
-export class ProjectFilesystem extends ProjectFiles {
+@Injectable()
+export class ProjectFilesystem {
   resolve(file: string): string {
     return resolve(file)
   }

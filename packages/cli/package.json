@@ -12,11 +12,10 @@
     "./infrastructure/workers/schemas": "./src/infrastructure/workers/schemas.ts",
     "./infrastructure/workers/stderr-log": "./src/infrastructure/workers/stderr-log.ts",
     "./infrastructure/workers/supervisor": "./src/infrastructure/workers/supervisor.ts",
-    "./interfaces/cli/command": "./src/interfaces/cli/command.ts",
-    "./interfaces/cli/presenter": "./src/interfaces/cli/presenter.ts",
-    "./interfaces/cli/reporters/pretty": "./src/interfaces/cli/reporters/pretty.ts",
-    "./application/collection/failure": "./src/application/collection/failure.ts",
-    "./infrastructure/workers/runner-connection": "./src/infrastructure/workers/runner-connection.ts"
+    "./infrastructure/cli/command": "./src/infrastructure/cli/command.ts",
+    "./infrastructure/cli/presenter": "./src/infrastructure/cli/presenter.ts",
+    "./infrastructure/cli/reporters/pretty": "./src/infrastructure/cli/reporters/pretty.ts",
+    "./application/collection/failure": "./src/application/collection/failure.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

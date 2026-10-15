@@ -227,31 +227,33 @@ executionはworker起動入口だけを公開します。protocolのデータ型
 
 ## サービスの組み立て
 
-サービスは `@zeltjs/core` のDIコンテナが組み立てます。`@Injectable()` を付けたクラスが
-constructorの `inject()` で依存を受け取り、`@Config({ abstract: true })` の抽象クラスが
-applicationからinfrastructureへ求める契約の宛名になります。実装の選択は起動ファイルが
-`createRuntime({ configs })` へ具体クラスを渡して行い、`packages/*/src/application` だけは宛名を書くために
-`@zeltjs/core` をimportできます（domain・foundationは引き続きValibotのみ）。
+環境や配布構成で決まる設定データは `@Config()`、仕事と依存は `@Injectable()` のサービスが持ちます。
+サービスはconstructorの `inject()` で具象サービスへ依存し、DIコンテナが組み立てます。
+`configs` にはworkerのURL・公開入口のURL・パッケージの版などの設定だけを登録します。
+CLIやworkerの技術的な実行フローはinfrastructureに置き、計画・状態・純粋な判断はapplication/domainに置きます。
+applicationのサービスも `@zeltjs/core` をimportできます（domain・foundationはValibotのみ）。
 
 AppとNode runtimeは各JS実行環境の構成入口で一度だけ起動します。公開SDKのimportはAppを作りません。
 CLIの親・収集worker・実行workerはそれぞれの入口で構成します。
 runごとの状態は `RunContext` へ隔離し、メソッド引数にはその仕事の入力を渡します。
 公開APIの利用者がコンテナに触ることはありません。
 
-サービスのunitテストは `@zeltjs/testing/vitest` の `createTestTarget(Service, { configs, overrides })` を使います。
-対象は返り値の `target`、同じDIスコープの依存は `get()` で取得し、`new` で手動構築しません。
-テスト用の実装・設定は `@Config()` の派生クラスとして宣言します。サービスの依存は `inject()` で宣言し、
-呼び出しごとの入力を閉じ込めるためにテスト専用のDI派生クラスを作りません。
-サービス取得・入力・実行・検証はテスト本文から読めるようにし、runtimeの生成を包む独自helperやfixtureは作りません。
+サービス単位のunitテストは `@zeltjs/testing/vitest` の `createTestTarget(Service, { configs, overrides })`、
+アプリのテストは `onTest(app, { configs })` を使います。対象と同じDIスコープの依存は `get()` で取得します。
+設定値はConfigの派生クラス、サービスのテスト用の差し替えは具象クラスを宛先にした `overrides` で指定します。
+テスト専用の値・接続adapterはテストコード内で構築できます。
+使用中のZeltの `onTest` は `overrides` を受け取らないため、同じscopeの実物サービスを取得してから
+差し替えるテストでは、`@zeltjs/core/internal-bridge/testing` の `override(scope, overrides)` を使います。
+これは `createTestTarget` が使う公式testing bridgeです。対象のサービスを取得する前に差し替えます。
+サービス取得・入力・実行・検証はテスト本文から読めるようにします。
 runtimeの終了は公式テストadapterが `afterAll` に登録します。テスト中に開いたSDK資源は `onTestFinished` で閉じます。
 状態はテストごとに隔離し、別プロセスを模した送信側・受信側にはそれぞれ別のruntimeを用意します。
-テスト定義のBuilder、収集ごとの値(`CollectionLog`など)、SDKの資源(`Worker`・`MessageChannel`など)は直接生成できます。
 
-runごとに変わる入力（収集の要求・vite設定・mockの準備・実行の計画・通知の受け取り手）はConfigに載せず、
-メソッド引数として渡します。1回ぶんの資源も同じで、Vite serverやmodule runtimeは
-立ち上げ役(`ModuleCompilerLauncher`・`ModuleRuntimeLauncher`・`WorkerExecutionLauncher`)が
-`start` で開いて持ち場(`RunningCompiler`・`RunningRuntime`・`RunningExecution`)を返し、
-開かせた流れが runtime → compiler の順に畳みます。開く前に終わったrunには畳む相手がありません。
+runごとの入力（収集要求・vite設定・mockの準備・実行計画・通知先）はメソッド引数で渡します。
+MessagePortはworkerの起動引数として受け取り、接続サービスへ使用前に一度だけ渡します。
+1回ぶんの接続を表す `RunningExecution` は `WorkerExecutionLauncher.connect` が生成します。
+Vite serverやmodule runtimeは立ち上げ役が開き、開かせた流れがexecution → runtime → compilerの順に畳みます。
+開く前に終わったrunには畳む相手がありません。moduleの取り寄せ先は、runtimeを開くときに `ModuleInvoke` として渡します。
 
 ## テスト方針
 
@@ -260,7 +262,7 @@ runごとに変わる入力（収集の要求・vite設定・mockの準備・実
 初期状態・状態遷移・結果の取得・再初期化など、サービス全体の契約を確認します。
 
 unitテストでは対象と依存サービスの実物をZeltで組み立て、依存の振る舞いをmockで置き換えることを基本にしません。
-具体実装の選択には本番の `@Config()` を使い、呼び出しごとの要求や通知先はメソッド引数で渡します。
+固定の依存には具象サービスを使い、呼び出しごとの要求や通知先はメソッド引数で渡します。
 依存のないサービスや純粋な関数はそのまま検証し、Sociableにするための依存や抽象化を追加しません。
 mockが必要な例外では、置き換える依存と、そのテストで保証する範囲を明示します。
 

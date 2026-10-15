@@ -1,8 +1,7 @@
-import { Config } from '@zeltjs/core'
-import type { GroupNode, Plan, SuiteNode } from '../../domain/execution/model.js'
+import type { RootReference } from './root-reference.js'
+import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 import type { Fields, RuntimeCase } from '@hanamaru/blueprint/model'
 import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
-import type { RootReference } from './root-reference.js'
 import type { ModuleInvoke, ModulePreparation } from '@hanamaru/module-runtime/application/ports/module-loader'
 
 export interface AttemptReply {
@@ -43,14 +42,4 @@ export interface ExecutionHandle {
 export interface PreparedExecution {
   start(spec: ExecutionSpec, services: ExecutionServices): Promise<ExecutionHandle>
   close(): Promise<void>
-}
-
-/** 計画が決まる前に実行環境を起こす口。openは起動完了を待たず、収集と並行して準備する。 */
-@Config({ abstract: true })
-export abstract class ExecutionLauncher implements ExecutionHandle {
-  abstract open(): PreparedExecution
-  abstract initialize(plan: Plan, roots: RootReference[], signal: AbortSignal, timeout: number): Promise<void>
-  abstract attempt(node: SuiteNode, item: RuntimeCase, path: number[], number: number): Promise<AttemptReply>
-  abstract group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply>
-  abstract close(): Promise<void>
 }

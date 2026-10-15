@@ -2,7 +2,7 @@ import { Config } from '@zeltjs/core'
 import { createTestTarget } from '@zeltjs/testing/vitest'
 import { Worker } from 'node:worker_threads'
 import { expect, onTestFinished, test, vi } from 'vite-plus/test'
-import { ResultPresenter } from '../../application/ports/collection-runner.js'
+import { StdoutPresenter } from '../cli/presenter.js'
 import { CliEnvironment } from './environment.js'
 import { CollectionSupervisor } from './supervisor.js'
 
@@ -31,16 +31,16 @@ async function supervisor(collectionSource = collect, executionURL = workerURL(e
     readonly collectionWorkerURL = workerURL(collectionSource)
     readonly executionWorkerURL = executionURL
   }
-  @Config()
-  class Presenter extends ResultPresenter {
-    override readonly present = vi.fn()
+  const presenter = {
+    present: vi.fn(),
 
-    catalogue(): void {}
+    catalogue(): void {},
   }
-  const { target: runner, get } = await createTestTarget(CollectionSupervisor, {
-    configs: [Environment, Presenter, CollectionSupervisor],
+  const { target: runner } = await createTestTarget(CollectionSupervisor, {
+    configs: [Environment],
+    overrides: [{ provide: StdoutPresenter, useValue: presenter }],
   })
-  return { runner, presenter: await get(Presenter) }
+  return { runner, presenter }
 }
 
 test('the CLI owns both peer workers and acknowledges termination before reporting the result', async () => {

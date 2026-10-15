@@ -136,8 +136,8 @@ export const architecturePlugin = {
                   context.filename === resolve(root, 'packages/runner/src/application/execution/options.ts'))) &&
               node.type === 'TSImportType' &&
               specifier === '@hanamaru/vite'
-            const injectionToken = from.layer === 'application' && specifier === '@zeltjs/core'
-            if (specifier !== 'valibot' && !publicConfigType && !injectionToken)
+            const applicationService = from.layer === 'application' && specifier === '@zeltjs/core'
+            if (specifier !== 'valibot' && !publicConfigType && !applicationService)
               context.report({ node: source, messageId: 'external', data: { layer: from.layer, source: specifier } })
           }
         }

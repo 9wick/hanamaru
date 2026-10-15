@@ -5,9 +5,7 @@ import { readFileSync } from 'node:fs'
 import * as v from 'valibot'
 import { errorMessage } from '@hanamaru/cli/application/collection/failure'
 import { CliEnvironment } from '@hanamaru/cli/infrastructure/workers/environment'
-import { CollectionSupervisor } from '@hanamaru/cli/infrastructure/workers/supervisor'
-import { CliCommand, CliRelease } from '@hanamaru/cli/interfaces/cli/command'
-import { StdoutPresenter } from '@hanamaru/cli/interfaces/cli/presenter'
+import { CliCommand, CliRelease } from '@hanamaru/cli/infrastructure/cli/command'
 const { version } = v.parse(
   v.object({ version: v.string() }),
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')),
@@ -25,7 +23,7 @@ class PackageRelease extends CliRelease {
 }
 
 const app = createApp([command([CliCommand])], {
-  configs: [ProcessEnvironment, PackageRelease, StdoutPresenter, CollectionSupervisor],
+  configs: [ProcessEnvironment, PackageRelease],
 })
 
 try {

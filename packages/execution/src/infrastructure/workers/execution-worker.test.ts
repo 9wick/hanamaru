@@ -1,34 +1,27 @@
-import { Config, createApp } from '@zeltjs/core'
+import { createApp } from '@zeltjs/core'
+import { onTest } from '@zeltjs/testing/vitest'
 import { once } from 'node:events'
 import { MessageChannel } from 'node:worker_threads'
 import * as v from 'valibot'
 import { expect, onTestFinished, test, vi } from 'vite-plus/test'
 import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
-import { ValueComparison } from '../comparison.js'
-import { ExecutionEnvironment } from './execution-environment.js'
 import { ExecutionLoader } from './execution-loader.js'
 import { ExecutionServer } from './execution-server.js'
-import { CompileRequests } from './execution-session.js'
 import { ExecutionWorker } from './execution-worker.js'
 import { executionMessageSchema } from './execution-schemas.js'
 
 async function wired() {
   const { port1, port2 } = new MessageChannel()
-  @Config()
-  class Environment extends ExecutionEnvironment {
-    override readonly port = port1
-  }
-  const scope = await createApp([]).createRuntime({ configs: [Environment, ValueComparison, CompileRequests] })
+  const scope = await onTest(createApp([]))
   const loaded = vi.spyOn(await scope.get(ExecutionLoader), 'load').mockResolvedValue(new Map())
   const served = vi.spyOn(await scope.get(ExecutionServer), 'serve').mockResolvedValue()
   const lifecycle = await scope.get(ExecutionLifecycle)
-  ;(await scope.get(ExecutionWorker)).serve()
+  ;(await scope.get(ExecutionWorker)).serve(port1)
   onTestFinished(async () => {
     port1.close()
     port2.close()
     loaded.mockRestore()
     served.mockRestore()
-    await scope.shutdown()
   })
   const receive = async () => {
     const inputs: unknown[] = await once(port2, 'message')

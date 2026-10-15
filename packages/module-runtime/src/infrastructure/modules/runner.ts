@@ -1,7 +1,7 @@
 import type { EvaluatedModuleNode, ResolvedResult, SSRImportMetadata } from '@hanamaru/vite/module-runner'
 import { ModuleRunner } from '@hanamaru/vite/module-runner'
 import * as v from 'valibot'
-import type { ModuleTransport } from '../../application/ports/module-loader.js'
+import type { ModuleInvoke } from '../../application/ports/module-loader.js'
 import { functionValue, invoke as invokeFunction, objectValue, property, valueOf } from '../../foundation/value.js'
 import type { FacadeEvaluator } from './evaluator.js'
 import type { ModuleFacades, Namespace } from './facades.js'
@@ -14,7 +14,7 @@ export class FacadeRunner {
   readonly #inner: ModuleRunner
   #closing: Promise<void> | undefined
 
-  constructor(facades: ModuleFacades, evaluator: FacadeEvaluator, transport: ModuleTransport) {
+  constructor(facades: ModuleFacades, evaluator: FacadeEvaluator, transport: ModuleInvoke) {
     const inner = new ModuleRunner(
       {
         hmr: false,
@@ -26,7 +26,7 @@ export class FacadeRunner {
               v.object({ name: v.string(), data: v.array(v.union([v.string(), v.undefined(), v.looseObject({})])) }),
               payload.data,
             )
-            return { result: await transport.invoke(data.name, data.data) }
+            return { result: await transport(data.name, data.data) }
           },
         },
       },

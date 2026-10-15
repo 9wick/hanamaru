@@ -1,6 +1,6 @@
 import { jsonFields } from '../../application/execution/resource-context.js'
 import { Injectable, inject } from '@zeltjs/core'
-import { AttemptExecutor } from '../../application/execution/attempt.js'
+import { AttemptExecutor } from '../execution/attempt.js'
 import { failChildren, GroupMiddlewareExecutor } from '../../application/execution/middleware.js'
 import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import type { Fields } from '@hanamaru/blueprint/model'

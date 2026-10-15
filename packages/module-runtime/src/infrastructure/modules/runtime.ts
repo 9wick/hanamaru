@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@zeltjs/core'
 import { pathToFileURL } from 'node:url'
-import type { ModulePreparation, ModuleTransport } from '../../application/ports/module-loader.js'
+import type { ModulePreparation, ModuleInvoke } from '../../application/ports/module-loader.js'
 import type { Value } from '../../foundation/value.js'
 import { FacadeEvaluator } from './evaluator.js'
 import { ModuleFacades } from './facades.js'
@@ -52,7 +52,7 @@ export class ModuleRuntimeLauncher {
   }
 
   start(
-    transport: ModuleTransport,
+    transport: ModuleInvoke,
     preparation: readonly ModulePreparation[],
     metaEntry?: { readonly key: string; readonly url: string },
   ): RunningRuntime {

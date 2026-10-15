@@ -159,7 +159,7 @@ test('package boundaries reject reverse dependencies and source shortcuts', asyn
       (message) => message.ruleId === 'architecture/dependencies',
     ),
   ).toBe(true)
-  const execution = new URL('./packages/execution/src/application/execution/attempt.ts', import.meta.url).pathname
+  const execution = new URL('./packages/execution/src/application/execution/lifecycle.ts', import.meta.url).pathname
   expect(
     (await messages("export * from '@hanamaru/module-runtime/infrastructure/modules/compiler'", execution)).some(
       (message) => message.ruleId === 'architecture/dependencies',
@@ -177,10 +177,10 @@ test('worker implementations stay independent and the protocol contains only dat
   const cases = [
     ['packages/runner/src/infrastructure/workers/client.ts', "export * from '@hanamaru/execution/worker'"],
     [
-      'packages/execution/src/application/execution/attempt.ts',
+      'packages/execution/src/infrastructure/execution/attempt.ts',
       "export * from '@hanamaru/runner/application/execution/lifecycle'",
     ],
-    ['packages/cli/src/application/usecases/run-test-files.ts', "export * from '@hanamaru/execution/worker'"],
+    ['packages/cli/src/infrastructure/collection/run-test-files.ts', "export * from '@hanamaru/execution/worker'"],
     ['packages/execution-protocol/src/schemas.ts', "export * from '@hanamaru/blueprint/model'"],
     ['packages/execution-protocol/src/schemas.ts', "import { Injectable } from '@zeltjs/core'; export { Injectable }"],
   ]
@@ -193,8 +193,8 @@ test('worker implementations stay independent and the protocol contains only dat
 
 test('package boundaries accept declared inward dependencies', async () => {
   const cases = [
-    ['packages/cli/src/application/collection/session.ts', "export * from '@hanamaru/runner/domain/result/types'"],
-    ['packages/execution/src/application/execution/attempt.ts', "export * from '@hanamaru/blueprint/model'"],
+    ['packages/cli/src/infrastructure/collection/session.ts', "export * from '@hanamaru/runner/domain/result/types'"],
+    ['packages/execution/src/infrastructure/execution/attempt.ts', "export * from '@hanamaru/blueprint/model'"],
     [
       'packages/execution/src/infrastructure/execution/modules.ts',
       "export * from '@hanamaru/module-runtime/infrastructure/modules/reference'",
