@@ -33,16 +33,20 @@ test('collections and opaque values name themselves', () => {
   expect(formatValue(diagnostic(function named() {}))).toBe('[Function named]')
 })
 
-test('errors read as message lines and never expose the stack', () => {
-  expect(formatValue(diagnostic(new Error('boom')))).toBe('Error: boom')
-  expect(formatValue(diagnostic(new RangeError('out of range')))).toBe('RangeError: out of range')
-  expect(formatValue(diagnostic(new Error('')))).toBe('Error')
+test('errors retain their stack and identify the implementation location', () => {
+  const error = new Error('boom')
+  error.stack = 'Error: boom\n    at target (source.ts:12:3)'
+  expect(formatValue(diagnostic(error))).toBe('Error: boom\n    at target (source.ts:12:3)')
+  expect(formatValue(diagnostic(new RangeError('out of range')))).toContain('RangeError: out of range')
+  expect(formatValue(diagnostic(new Error('')))).toMatch(/^Error(?:: )?\n/)
+  error.stack = ''
+  expect(formatValue(diagnostic(error))).toBe('Error: boom')
 })
 
 test('error causes are appended and nest through their own message lines', () => {
   const error = new Error('outer', { cause: new TypeError('inner') })
-  expect(formatValue(diagnostic(error))).toBe('Error: outer (cause: TypeError: inner)')
-  expect(formatValue(diagnostic(new Error('wrapped', { cause: 'plain' })))).toBe('Error: wrapped (cause: "plain")')
+  expect(formatValue(diagnostic(error))).toContain('\nCaused by: TypeError: inner\n')
+  expect(formatValue(diagnostic(new Error('wrapped', { cause: 'plain' })))).toContain('\nCaused by: "plain"')
 })
 
 test('objects that merely look like errors keep the property listing', () => {
@@ -53,7 +57,7 @@ test('objects that merely look like errors keep the property listing', () => {
 })
 
 test('target outcomes say what the target did instead of dumping their shape', () => {
-  expect(formatValue({ kind: 'throw', value: diagnostic(new Error('boom')) })).toBe('threw Error: boom')
+  expect(formatValue({ kind: 'throw', value: diagnostic(new Error('boom')) })).toMatch(/^threw Error: boom\n/)
   expect(formatValue({ kind: 'return', value: diagnostic(42) })).toBe('returned 42')
   expect(formatValue({ kind: 'return', value: diagnostic(undefined) })).toBe('returned undefined')
 })

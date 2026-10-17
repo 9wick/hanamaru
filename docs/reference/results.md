@@ -37,6 +37,21 @@ blueprint取得やCLI起動の位置では上書きしません。同じ子を�
 入れ子のgroupの追加位置は外側から内側へ表示し、無名のgroupも省略しません。
 `new Test()` 自身にはgroup追加位置を作りません。
 
+予期しない例外やmiddlewareの失敗には、取得できた例外スタックを表示します。causeにもスタックがあれば`Caused by:`に続けて表示します。
+JSONでもErrorのstackを文字列の診断値として保持します。取得できない場合はaccessorまたはomittedと理由を残します。
+
+否定していない`toEqual`と`toMatchObject`の失敗は、通常のオブジェクト・配列・プリミティブについて不一致パスと値を表示します。
+部分一致では期待値に含めていないプロパティを差分に含めません。欠けたプロパティや配列要素は`<missing>`と表示し、差分が20箇所を超えた場合は省略を明示します。
+参照・循環やMap/Set等の診断値から比較内容を確定できない場合、または否定条件等では、expected/actualの全体を表示します。
+JSONのexpected/actualと比較基準は変わりません。
+
+```text
+result.toMatchObject
+  evidence[0].targets[0]
+  - expected: "repo"
+  + actual:   "user"
+```
+
 ## blueprintと結果の対応
 
 同名・同じ位置・同じ子の複数追加を別ケースとして扱います。
@@ -134,7 +149,8 @@ pretty reporterはこの構造から普段の値の表記へ整形します。
 配列・オブジェクト等には診断内のidを付け、循環・再参照はreferenceで表します。このidを利用者に入力させません。
 Date・RegExp・Map・Setの内容もそれぞれのkindで保持します。DateのvalueはISO文字列、不正なDateはnullです。Errorはobjectのtypeとname/message/cause/stackのプロパティで表します。
 オブジェクトの文字列キーとSymbolキーを区別し、アクセサはgetter/setterの有無として記録します。
-getterや利用者のtoJSONを診断のために実行しません。
+利用者が定義したgetterやtoJSONを診断のために実行しません。Error.stackの標準組み込みアクセサだけは、ランタイムのスタック整形を通して読み取ります。
+Errorのname/messageの評価に利用者のgetterや文字列変換が必要な場合は、stackを評価せずomittedに理由を残します。
 取得できない内部状態や省略した部分にはomittedと理由を残し、空の値として偽装しません。Proxyのtrap等が診断中に例外を投げた場合も、その取得不能を理由付きで残します。診断の失敗で対象のreturn/throwを変更しません。
 診断は比較に使う値そのものの代わりではなく、元の実体へ復元できることも要求しません。
 

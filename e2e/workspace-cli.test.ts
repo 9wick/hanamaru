@@ -17,6 +17,37 @@ import {
   workspaceRuntime,
 } from './harness.ts'
 
+test('CLI reports target and cause stack frames in pretty and JSON failures', () => {
+  const data = fixture(`
+function inner() { throw new TypeError('inner failure') }
+function outer() { try { inner() } catch (cause) { throw new Error('outer failure', { cause }) } }
+export const root = new Test().target(outer).it('unexpected error', t => t.args().expect(e => [e.result.toBe(undefined)]))
+`)
+  const pretty = invoke(workspace, data.file)
+  expect(pretty.status, pretty.stderr).toBe(1)
+  expect(pretty.stdout).toContain('Error: outer failure')
+  expect(pretty.stdout).toContain('TypeError: inner failure')
+  expect(pretty.stdout).toMatch(/at outer .*sample\.test\.mjs:/)
+  expect(pretty.stdout).toMatch(/at inner .*sample\.test\.mjs:/)
+  const json = invoke(workspace, data.file, '--reporter', 'json')
+  expect(json.status, json.stderr).toBe(1)
+  expect(json.stdout).toContain('at inner')
+  expect(json.stdout).toContain('at outer')
+})
+
+test('CLI reports comparison paths and changed values without dumping unrelated properties', () => {
+  const data = fixture(`
+export const root = new Test().target(() => ({ unrelated: 'DO_NOT_DUMP', evidence: [{ targets: ['user', 'repo'] }] }))
+  .it('different order', t => t.args().expect(e => [e.result.toMatchObject({ evidence: [{ targets: ['repo', 'user'] }] })]))
+`)
+  const output = invoke(workspace, data.file)
+  expect(output.status, output.stderr).toBe(1)
+  expect(output.stdout).toContain('evidence[0].targets[0]')
+  expect(output.stdout).toContain('- expected: "repo"')
+  expect(output.stdout).toContain('+ actual:   "user"')
+  expect(output.stdout).not.toContain('DO_NOT_DUMP')
+})
+
 test('in-source declarations expose private targets, list without execution and select one case with mocks', () => {
   const data = fixture('')
   const dependency = join(data.dir, 'dependency.mjs')

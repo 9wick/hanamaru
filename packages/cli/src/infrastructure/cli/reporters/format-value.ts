@@ -6,6 +6,7 @@ interface ErrorShape {
   readonly name: string
   readonly message: string
   readonly cause: DiagnosticValue | null
+  readonly stack: DiagnosticValue | null
 }
 
 function namedProperty(properties: readonly DiagnosticProperty[], key: string): DiagnosticValue | null {
@@ -23,12 +24,19 @@ function errorShape(value: DiagnosticValue): ErrorShape | null {
   if (name.key.kind !== 'string' || name.key.value !== 'name' || name.value.kind !== 'string') return null
   if (message.key.kind !== 'string' || message.key.value !== 'message' || message.value.kind !== 'string') return null
   if (!namedProperty(value.properties, 'stack')) return null
-  return { name: name.value.value, message: message.value.value, cause: namedProperty(value.properties, 'cause') }
+  return {
+    name: name.value.value,
+    message: message.value.value,
+    cause: namedProperty(value.properties, 'cause'),
+    stack: namedProperty(value.properties, 'stack'),
+  }
 }
 
 function formatError(shape: ErrorShape): string {
   const headline = shape.message ? `${shape.name}: ${shape.message}` : shape.name
-  return shape.cause === null ? headline : `${headline} (cause: ${formatValue(shape.cause)})`
+  const stack = shape.stack?.kind === 'string' && shape.stack.value ? shape.stack.value : headline
+  const detail = shape.stack && shape.stack.kind !== 'string' ? `\nstack: ${formatValue(shape.stack)}` : ''
+  return `${stack}${detail}${shape.cause === null ? '' : `\nCaused by: ${formatValue(shape.cause)}`}`
 }
 
 function formatProperty(property: DiagnosticProperty): string {
@@ -77,9 +85,7 @@ export function formatValue(value: DiagnosticValue | TargetOutcome | TargetOutco
     case 'object': {
       const shape = errorShape(value)
       if (shape) return formatError(shape)
-      // Errorとして1行にできなかった値もstackだけは読む価値がないので落とす。
-      const properties = value.properties.filter((p) => p.key.kind !== 'string' || p.key.value !== 'stack')
-      return `${value.type === 'Object' ? '' : value.type}{ ${properties.map(formatProperty).join(', ')} }`
+      return `${value.type === 'Object' ? '' : value.type}{ ${value.properties.map(formatProperty).join(', ')} }`
     }
   }
 }
