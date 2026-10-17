@@ -6,6 +6,12 @@ import type {
   MutableResourceResult,
 } from '@hanamaru/runner/domain/result/mutable'
 import { formatValue } from './format-value.js'
+import { formatDiff } from './diff.js'
+
+function detail(label: string, value: Parameters<typeof formatValue>[0], pad: string): string[] {
+  const [first, ...rest] = formatValue(value).split('\n')
+  return [`${pad}${label}${first}`, ...rest.map((line) => `${pad}  ${line}`)]
+}
 
 function formatFailure(item: MutableCaseResult, depth: number, groupOrigins: SourceLocation[]) {
   const out: string[] = [],
@@ -20,11 +26,21 @@ function formatFailure(item: MutableCaseResult, depth: number, groupOrigins: Sou
         ? `${ref.source === 'expectCalls' ? `call(${ref.key})` : ref.subject}.${'negated' in ref && ref.negated ? 'not.' : ''}${ref.matcher}`
         : issue.message
       out.push(`${pad}${label}`)
-      if ('expected' in issue) out.push(`${pad}  expected: ${formatValue(issue.expected)}`)
-      if ('actual' in issue) out.push(`${pad}  actual:   ${formatValue(issue.actual)}`)
+      const diff =
+        issue.kind === 'assertion' &&
+        issue.assertion.source === 'expect' &&
+        !('negated' in issue.assertion && issue.assertion.negated) &&
+        (issue.assertion.matcher === 'toEqual' || issue.assertion.matcher === 'toMatchObject')
+          ? formatDiff(issue.expected, issue.actual, issue.assertion.matcher === 'toMatchObject' ? 'partial' : 'equal')
+          : []
+      if (diff.length) out.push(...diff.map((line) => `${pad}  ${line}`))
+      else {
+        if ('expected' in issue) out.push(...detail('expected: ', issue.expected, `${pad}  `))
+        if ('actual' in issue) out.push(...detail('actual:   ', issue.actual, `${pad}  `))
+      }
       if ('timeoutMs' in issue)
         out.push(`${pad}  timeout: ${issue.timeoutMs}ms (${issue.phase}${issue.stage ? ` ${issue.stage}` : ''})`)
-      if ('cause' in issue) out.push(`${pad}  cause:   ${formatValue(issue.cause)}`)
+      if ('cause' in issue) out.push(...detail('cause:   ', issue.cause, `${pad}  `))
     }
   return out
 }
@@ -39,7 +55,7 @@ export function formatNode(node: MutableNodeResult, depth = 0, groupOrigins: Sou
         lines.push(
           `${pad}  ✗ group middleware: ${issue.message}  ${relative(process.cwd(), node.origin.file)}:${node.origin.line}:${node.origin.column}`,
         )
-        if ('cause' in issue) lines.push(`${pad}    cause: ${formatValue(issue.cause)}`)
+        if ('cause' in issue) lines.push(...detail('cause: ', issue.cause, `${pad}    `))
         if ('timeoutMs' in issue) lines.push(`${pad}    timeout: ${issue.timeoutMs}ms (${issue.phase})`)
       }
     for (const entry of node.children)
@@ -76,7 +92,7 @@ export function formatResources(resources: readonly MutableResourceResult[] = []
     r.middleware.status === 'failed'
       ? r.middleware.failures.flatMap((issue) => [
           `✗ resource ${r.name} (${r.scope}): ${issue.message}`,
-          ...('cause' in issue ? [`  cause: ${formatValue(issue.cause)}`] : []),
+          ...('cause' in issue ? detail('cause: ', issue.cause, '  ') : []),
           ...('timeoutMs' in issue ? [`  timeout: ${issue.timeoutMs}ms (${issue.phase})`] : []),
         ])
       : [],

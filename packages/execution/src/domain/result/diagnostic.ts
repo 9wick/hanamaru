@@ -2,6 +2,18 @@ import type { Value } from '../execution/javascript.js'
 import { invoke, objectValue, required, valueOf } from '../execution/javascript.js'
 import type { DiagnosticKey, DiagnosticProperty, DiagnosticValue } from './types.js'
 
+const nativeStackGetter: unknown = Object.getOwnPropertyDescriptor(new Error(), 'stack')?.get
+
+function descriptorOf(input: object, key: string): PropertyDescriptor | undefined {
+  let source: object | null = input
+  while (source) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key)
+    if (descriptor) return descriptor
+    const prototype: Value = valueOf(Object.getPrototypeOf(source))
+    source = prototype === null ? null : objectValue(prototype)
+  }
+}
+
 function keyOf(key: string | symbol, symbols: Map<symbol, number>): DiagnosticKey {
   if (typeof key === 'string') return { kind: 'string', value: key }
   if (!symbols.has(key)) symbols.set(key, symbols.size + 1)
@@ -102,18 +114,32 @@ export function diagnostic<T>(value: T): DiagnosticValue {
     const omitted: string[] = []
     if (input instanceof Error)
       for (const key of ['name', 'message', 'cause', 'stack']) {
-        let source: object | null = input,
-          desc
-        while (source && !desc) {
-          desc = Object.getOwnPropertyDescriptor(source, key)
-          const prototype: Value = valueOf(Object.getPrototypeOf(source))
-          source = prototype === null ? null : objectValue(prototype)
+        if (
+          key === 'stack' &&
+          ['name', 'message'].some((name) => {
+            const descriptor = descriptorOf(input, name)
+            return (
+              descriptor !== undefined &&
+              (!('value' in descriptor) || (descriptor.value !== undefined && typeof descriptor.value !== 'string'))
+            )
+          })
+        ) {
+          properties.push({
+            key: { kind: 'string', value: key },
+            value: { kind: 'omitted', reason: 'Error.stack formatting requires user-defined code' },
+          })
+          continue
         }
+        const desc = descriptorOf(input, key)
         if (desc)
           properties.push({
             key: { kind: 'string', value: key },
             value:
-              'value' in desc ? visit(desc.value, depth + 1) : { kind: 'accessor', get: !!desc.get, set: !!desc.set },
+              'value' in desc
+                ? visit(desc.value, depth + 1)
+                : key === 'stack'
+                  ? stackValue(input, desc, depth)
+                  : { kind: 'accessor', get: !!desc.get, set: !!desc.set },
           })
       }
     for (const key of Reflect.ownKeys(input)) {
@@ -148,6 +174,15 @@ export function diagnostic<T>(value: T): DiagnosticValue {
     if (typeof ctor === 'function')
       type = String(valueOf(Object.getOwnPropertyDescriptor(ctor, 'name')?.value) || 'Object')
     return { kind: 'object', id, type, properties, omitted }
+  }
+  function stackValue(error: Error, desc: PropertyDescriptor, depth: number): DiagnosticValue {
+    const accessor: DiagnosticValue = { kind: 'accessor', get: !!desc.get, set: !!desc.set }
+    if (typeof nativeStackGetter !== 'function' || desc.get !== nativeStackGetter) return accessor
+    try {
+      return visit(invoke(nativeStackGetter, error, []), depth + 1)
+    } catch {
+      return { kind: 'omitted', reason: 'native Error.stack could not be read' }
+    }
   }
   return visit(value)
 }
