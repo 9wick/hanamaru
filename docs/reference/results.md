@@ -4,11 +4,11 @@ CLIのJSON出力はRunResultです。各トップレベルノードのsourceは�
 複数projectが同じファイルを選んでも結果を複製せず、source.projectsへ所属名をまとめます。
 
 テストを書く人に位置やIDの入力を要求せず、blueprintと結果から宣言位置・各試行・失敗内容を取得できます。
-完全な公開型は[hanamaru.d.ts](../spec/hanamaru.d.ts)にあります。
+条件の型と構造は[型推論](type-inference.md)と[blueprint](metadata.md)に従います。
 
 ## 宣言位置
 
-it / only / skip / todo / eachには、宣言したテストソースの `origin: { file, line, column }` を保持します。
+it / only / skip / todo / each / flowには、宣言したテストソースの `origin: { file, line, column }` を保持します。
 groupには、そのgroup呼び出しの位置をGroupBlueprint.originとGroupResult.originに保持します。親から子を追加した位置はGroupEntry.originと結果の子要素にも残します。
 一回の `group(name, [first, second])` で作ったグループと、その配列内の各子の追加位置は、同じgroup呼び出しの位置です。first・second自身が定義された位置は変更しません。
 fileは絶対パス、ソース行番号・列番号は1始まりです。wrapper内でitを呼んだ場合は、そのitの位置を指します。
@@ -40,14 +40,14 @@ blueprint取得やCLI起動の位置では上書きしません。同じ子を�
 予期しない例外やmiddlewareの失敗には、取得できた例外スタックを表示します。causeにもスタックがあれば`Caused by:`に続けて表示します。
 JSONでもErrorのstackを文字列の診断値として保持します。取得できない場合はaccessorまたはomittedと理由を残します。
 
-否定していない`toEqual`と`toMatchObject`の失敗は、通常のオブジェクト・配列・プリミティブについて不一致パスと値を表示します。
-部分一致では期待値に含めていないプロパティを差分に含めません。欠けたプロパティや配列要素は`<missing>`と表示し、差分が20箇所を超えた場合は省略を明示します。
-参照・循環やMap/Set等の診断値から比較内容を確定できない場合、または否定条件等では、expected/actualの全体を表示します。
+具体値とpartで選んだ部分の`toEqual`の失敗は、通常のオブジェクト・配列・プリミティブについて不一致パスと値を表示します。
+部分検証では指定したキー経路と、その部分の差分を表示し、選ばなかった部分を検証したとは報告しません。欠けたプロパティや配列要素は`<missing>`と表示し、差分が20箇所を超えた場合は省略を明示します。
+参照・循環やMap/Set等の診断値から比較内容を確定できない場合、または関係の比較では、expected/actualの全体を表示します。
 JSONのexpected/actualと比較基準は変わりません。
 
 ```text
-result.toMatchObject
-  evidence[0].targets[0]
+result.part("evidence").part(0).part("targets").part(0).toEqual
+  path: evidence[0].targets[0]
   - expected: "repo"
   + actual:   "user"
 ```
@@ -107,29 +107,35 @@ Promiseの完了を観測できない中断でもnullとし、成功の戻り値
 | assertion | 条件の参照、expected、actual |
 | outcome | 期待したreturn/throwと、実際の終了・値 |
 | execution | 発生段階、原因。条件評価中ならその条件の参照も保持 |
+| observation | State/Action参照、before/after/open/finishの段階、区間・取得条件、原因 |
 | timeout | 発生段階、timeoutMs、後始末の完了状態。middlewareでは前処理・後処理の区別も残す |
 
-全てにphaseと人間向けmessageを保持します。messageを解析しなくても、条件・期待・観測・原因が分かります。
-アサーションの参照にはsource（expect / expectCalls）、その配列内の0始まりのindex、subject、matcherを持ちます。
-result/errorの否定条件には `negated: true` も含まれ、pretty表示では `result.not.toBe` のように表示します。
+全てにphaseと人間向けmessageを保持します。phaseはprepare / compile / before / instrumentation / target / observe / assert / cleanupを区別します。messageを解析しなくても、条件・期待・観測・原因が分かります。
+アサーションの参照にはsource（expect / property / relate / expectCalls）、その配列内の0始まりのindex、subject、matcherを持ちます。
+不一致・状態の不変・actionの不発生はそれぞれの用途として識別し、共通の否定フラグへ潰しません。部分検証の対象、関係の双方の値、観測時点・期間・完了条件、代替したinfra境界も診断に残します。
 callにはkeyも残し、sourceとindexからblueprint内のオブジェクト参照へ対応できます。同名メソッドを持つ別オブジェクトを混同しません。
-expectの配列は遅延するため、評価後に得た配列との対応です。呼び出し条件のindexはexpectの成功・失敗でずれません。
+各配列はtarget前のcompileで構築します。条件のindexは別条件の成功・失敗でずれません。compile自体が失敗した場合はまだ得ていない条件を捏造しません。
 
 各条件はpassed / failed / not-evaluatedとして記録し、未評価には理由を残します。
-middlewareの失敗でテスト対象を呼べない場合、既知の呼び出し条件はnot-evaluatedです。まだ構築できないexpectの条件を捏造しません。
+middlewareの失敗でテスト対象を呼べない場合、既知の呼び出し条件はnot-evaluatedです。prepare/compileで構築できなかった条件は捏造しません。
 呼び出し0回の成功と、検証していない状態を区別します。
 複数条件の失敗・原因・後始末の失敗を全て残し、最後の例外で前の失敗を消しません。
 
 ### 各マッチャの期待値と観測値
 
-以下はDiagnosticValueへ変換する前の内容です。表の関数・RegExp等も診断の構造として保持します。
+呼び出し条件は、許可されたinfra境界での代替の証拠です。状態やactionの観測とは区別します。以下はDiagnosticValueへ変換する前の内容です。表の関数・RegExp等も診断の構造として保持します。
 
 | 条件 | expected | actual |
 |---|---|---|
-| toBe / toEqual / toMatchObject | 指定した期待値 | 検証した戻り値または例外 |
-| toSatisfy | 指定した述語 | 述語へ渡した値 |
+| 具体値の一致 | 指定した期待値 | 対象の結果または観測値 |
+| 部分の一致 | 指定した部分と期待値 | その部分の観測値 |
+| 性質 | 指定した条件 | 条件の対象になった入力・結果・観測値 |
+| 関係 | 値同士が満たす関係 | 比較した双方の値 |
+| 状態の不変 | 実行前の状態 | 実行後の状態 |
+| actionの不発生 | 指定区間で発生なし | 区間内の出来事 |
 | toBeInstanceOf | 指定したコンストラクタ | 例外の値 |
-| toThrow | 指定した文字列またはRegExp | 例外の値 |
+| error.message.toEqual | 指定した文字列 | Errorのmessage、またはErrorではない実際のthrow値 |
+| error.toEqual | 指定したthrow値 | 実際のthrow値 |
 | calledTimes | 指定した回数 | 合計呼び出し回数 |
 | notCalled | 0 | 合計呼び出し回数 |
 | calledWith | 指定した引数タプル | 全呼び出しの引数タプルの配列 |
@@ -181,7 +187,7 @@ case列は最後の試行またはnotRunから求める値であり、CaseResult
 | event | AttemptResult.status | case（派生値） | RunResult.status / reason | 後続 |
 |---|---|---|---|---|
 | 全検証と後始末が成功 | passed | passed | passed / completed | 続行 |
-| assertion不一致・期待しない例外・middlewareや検証の失敗 | failed | failed | failed / completed | 続行 |
+| assertion不一致・期待しない例外・middleware・観測・検証の失敗 | failed | failed | failed / completed | 続行 |
 | 通常の失敗後、retryで成功 | failed → passed | passed（flaky） | passed / completed（failOnFlakyならfailed） | 続行 |
 | 試行のtimeout（middlewareの前処理・対象・検証・後処理のいずれでも） | failed | failed | failed / timeout | notRun: cancelled |
 | 復元・後始末の失敗 | failed | failed | failed / cleanup-failed | notRun: cancelled |

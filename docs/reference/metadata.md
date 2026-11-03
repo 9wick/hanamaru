@@ -1,194 +1,80 @@
 # プラグイン向けblueprint
 
-blueprintは、テスト定義から得られる実行前の構造です。プラグイン作者が `test.blueprint()` で取得できます。
-グループの階層・テスト対象・middleware・モック・引数・期待の組み立て方などを保持します。ケース名や宣言位置などのmetadataもここから読めます。
-CLIでは、実行ルートを `registerTest` で登録します。利用者がblueprintを取得する必要はなく、実行計画は実行器の内部で決めます。
-
-## blueprintの取得
-
-
-<!-- example: docs/examples/metadata.ts -->
-```ts
-import { users } from './user.test.ts'
-
-const blueprint = users.blueprint()
-console.log(blueprint.kind, blueprint.version)
-```
-出典: [docs/examples/metadata.ts](../examples/metadata.ts)
-
-blueprintを取得してもmiddleware・テスト対象は呼ばず、メソッドの差し替えや記録も開始しません。
-blueprintの取得に対象ファイル・export名・手書きIDの指定は不要です。CLIで実行するルートを `registerTest` で登録する操作とも別です。
+blueprintは利用者が書いた対象・入力・観測・検証を構造として保持します。取得しても環境・target・観測器・述語を実行しません。登録・実行とは別の操作です。
 
 ## blueprintの構造
 
-完全な型契約は[hanamaru.d.ts](../spec/hanamaru.d.ts)を参照してください。
-
-| 構造 | 保持するもの |
+| 構造 | 内容 |
 |---|---|
-| TestBlueprint.version / kind | blueprint形式のバージョンとtest / group / definition |
-| SuiteBlueprint.name | targetで指定した名前、または省略時の関数名・メソッド名 |
-| GroupBlueprint.name | groupで指定した名前、または省略時のnull |
-| TestBlueprint.config | そのノードで明示したtimeout・retry。未指定は親から継承 |
-| TestBlueprint.steps | そのノードのuseを登録順に並べた配列。未登録なら空配列 |
-| MiddlewareBlueprint | kind: middleware、run関数、middlewareの定義で指定したtimeout |
-| TestBlueprint.mocks | そのノードの共通モック |
-| SuiteBlueprint.target | 関数参照、またはオブジェクト参照・メソッドキー・関数参照 |
-| SuiteBlueprint.cases | 宣言順のケース |
-| DefinitionBlueprint.children | 一つのチェーンに追加したgroupの列。共通設定を保持するが、実行階層のグループではない |
-| GroupBlueprint.origin / middleware | group呼び出しの宣言位置と、そのグループ全体を一度囲むmiddleware |
-| GroupBlueprint.children | groupに渡した子を配列順に保持する |
-| GroupEntry.origin | 子を追加したgroup呼び出しの宣言位置。配列内の各子にも同じ位置を使う |
-| GroupEntry.blueprint | groupに渡した子のblueprint。group()で完成した子はdefinition、targetで完成した子はtest |
-| Case.name / mode | ケース名とrun / only / skip / todo |
-| Case.origin | it / only / skip / todo / eachの宣言位置 |
-| Case.row | eachの元の行と0始まりのindex。通常ケースとtodoはnull |
-| Case.config | そのケースで明示したtimeout・retry |
-| Case.mocks | そのケースで登録したモック |
-| Case.args | 引数タプル、またはコンテキストから組み立てる関数 |
-| Case.expect | 結果・例外のアサーションをコンテキストから組み立てる処理。省略時はnull |
-| Case.calls | 呼び出し条件の記述子の配列。省略時は空配列 |
+| Definition | 共通設定とgroupの列 |
+| Group | 表示名、宣言位置、group middleware、非空の子 |
+| Suite | target、attempt middleware/environment、実行設定、非空のケース |
+| Target | kind: pure / effect / relation / scenarioと対象参照。relation/scenarioは非空の名前付き関数群 |
+| Case | 名前・位置・実行指定、入力/操作、検証ビルダー、境界代替、実行設定 |
+| Input | kind: args / args-from / calls / generated / stepsのいずれか。種類ごとの必須値を持つ |
+| Checks | expect / property / relate / expectCallsの登録済みビルダー。各入口は一度だけ |
+| Replacement | environmentのBoundaryを選ぶresolverと、型に対応する応答列・通常動作 |
 
-各モックはobject・key・behaviorを持ちます。
-通常のbehaviorはreturns / resolvesと値、throws / rejectsと例外、callsFakeと関数です。
-sequenceはkind: sequenceとonceの動作列・fallbackを保持します。
-同じスコープ内のobject・keyへのモック設定は最後の振る舞い1件に解決します。
-親と子の設定は別々に保持し、実行時に外側→内側→ケースの順で重ねます。
-呼び出し条件は複数あっても上書きせず、返された順に全て保持します。
+Inputは省略可能フィールドの集合ではなく判別可能なunionです。argsは引数、args-fromはビルダー、callsは構築済み依存グラフ、generatedは生成記述とseed/runs、stepsはctxを受け取るビルダー関数を保持します。定義時のInput.stepsには、まだ操作列はありません。未完了の定義はblueprintの実行対象になりません。todoは入力・検証を持たない別のvariantです。
 
-todoは実行本体を持たず、name・mode・origin・config・row: nullを持ちます。
-他のケースにはexpectかcallsの少なくとも一方が必要です。
-ケース名とグループ名は表示名であり、一意性を要求しません。
-結果ではdefinitionを実行階層に数えず、そこに含まれるgroupを順に並べます。groupとtestの階層・順は保持し、無名のグループや同名のケースも位置で対応します。
-TestResultとGroupResultに集約状態の写しは持たず、各ケース・子グループ・group middlewareの結果から導きます。
+Checksは結果/例外だけを意味しません。状態のみ・actionのみでも完成できます。入力と最低一つの完成条件を必要とし、生成入力ではpropertyまたはrelateを要求します。種類ごとの制約は[型推論](type-inference.md#完成条件)に従います。
 
 ## グループの階層
 
-`TestBlueprint` は対象ケース群を表す `kind: 'test'` のSuiteBlueprint、グループを表す `kind: 'group'` のGroupBlueprint、チェーンのgroup呼び出しと共通設定を保持する `kind: 'definition'` のDefinitionBlueprintのunionです。
-`new Test()` 自身は実行階層を作りません。`group(name, [first, second])` が一つのGroupBlueprintを作り、first・secondをchildrenに順に保持します。子を一つ渡しても同じ階層です。名前・宣言位置・配列全体を囲むmiddlewareはそのGroupBlueprintに保持します。名前を省略したグループのnameはnullです。
-一つのチェーンで複数回groupを呼ぶと、DefinitionBlueprint.childrenに複数のGroupBlueprintを順に保持します。別のチェーンを子に渡したときもDefinitionBlueprintに保持した設定を子へ引き継ぎますが、実行結果にdefinitionの階層は作りません。
-各blueprintがその場所のsteps・mocks・configを保持し、子へ設定を書き込むことはありません。
-名前のないグループも構造として残ります。
+groupは高価な資源と共通設定のスコープです。親から子へ値の供給と設定を解決し、子の定義を書き換えません。環境の共有はケース間の意味的な順序依存を許可しません。名前は表示用で、位置と構造でケースを対応させます。
 
-<!-- example: docs/examples/blueprint-tree.ts -->
-```ts
-import { registrations } from './groups.test.ts'
+## 呼び出しの記述
 
-const blueprint = registrations.blueprint()
-for (const group of blueprint.children) {
-  // このチェーンの各group呼び出し。group.nameとgroup.middlewareを取得できる。
-  for (const entry of group.children) {
-    const child = entry.blueprint
-    if (child.kind === 'definition') {
-      // 子チェーンの共通設定と、その中のgroup呼び出しを取得できる。
-    } else if (child.kind === 'group') {
-      // 子グループのsteps・mocks・childrenを取得できる。
-    } else {
-      // 対象ケース群のtarget・casesを取得できる。
-    }
-  }
-}
-```
-出典: [docs/examples/blueprint-tree.ts](../examples/blueprint-tree.ts)
+callsは対象のキー、引数、先行結果へのrefを保持します。返された結果へ到達する呼び出しだけが実行対象です。stepsのビルダーはprepare後のcompileで評価し、CompiledInput.stepsに全操作を順序付きで保持します。未使用の戻り値を理由に操作を除外しません。
 
-親のコンテキストを要求する子もblueprintを取得できますが、runに渡せるのは親のコンテキストを要求しない完成したルートのテストです。
-`TestDefinition<R>` と `TestBlueprint<R>` は供給元によらず要求Rを保持します。runではRを検査します。完成した定義の型は、配置から推論した入力の使用時点も保持し、groupへの合成時に検査します。階層内のchildrenでは要求型を隠します。
-この区別は型上の契約であり、型引数から実行時のコンテキストスキーマを生成するものではありません。
-階層から取り出した子のblueprintは要求型を隠しており、そもそもblueprint自体はrunの入力ではありません。
+呼び出し/操作のrefはケースに属します。引数や返却に異なるケースのrefを使うこと、循環・前方参照・対象外の関数を含むことを受付で拒否します。関数内部を解析して依存や副作用を推測しません。
 
-## 呼び出し条件は定義時に構造化する
+## compile前後の入力
 
-<!-- example: docs/examples/call-descriptor-source.ts#expect-calls -->
-```ts
-.expectCalls(call => [
-  call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-])
-```
-出典: [docs/examples/call-descriptor-source.ts](../examples/call-descriptor-source.ts)
+Inputは定義時のデータです。CompiledInputは試行ごとの解決済みデータで、args-fromは実引数、stepsは操作列へ変換します。callsは定義済みの依存グラフを試行へ結び付け、generatedは当該サンプルの引数とseed・番号へ変換します。プラグインがblueprintからstepsの全操作を取得できるとは保証せず、実行結果でcompileした操作列と結果を対応させます。
 
-このコールバックは定義時に1回評価します。
-`call` とマッチャは検証内容を記述するだけで、send自体は呼びません。
-返した記述子がCase.callsに入ります。blueprintから取り出した記述子は次の条件を満たします（この例は実行して確認しています）。
+## 期待と観測の記述
 
-<!-- example: docs/examples/call-descriptor.test.ts#descriptor -->
-```ts
-.expect(e => [e.result.toMatchObject({
-  subject: 'call',
-  object: mailService,
-  key: 'send',
-  check: { matcher: 'calledOnceWith', args: [{ id: 'u1' }] },
-})])
-```
-出典: [docs/examples/call-descriptor.test.ts](../examples/call-descriptor.test.ts)
+ビルダーは各試行の準備後・target前に一度評価し、CompiledChecksへ変換します。コンテキストの実資源と、まだ実行していない結果のValueRefを区別します。実測値を得るためにビルダーを実行後へ延期することはありません。exact/part/action全件一致とboundary-callの期待値はcompileで値領域を検査し、独立したコピーとしてCompiledChecksへ保存します。元の入力やctxがtargetに変更されても期待値は変わりません。toBeと参照同一性のLiveRefだけは参照を保持します。
 
-blueprintを受け取った時点で、記録対象の参照とキー、回数や引数の条件が得られます。
-実行器はcallsから記録対象を得て、mocksと同じobject・keyなら1つのラッパーにまとめます。
-モックがなければ本物の処理、あれば指定した振る舞いを呼び、同じ記録に対して条件を照合します。
+| 条件のkind | 必須の情報 |
+|---|---|
+| exact | 対象ref、比較方式、期待値 |
+| part | 対象ref、非空のキー経路、比較方式、期待値 |
+| error | 種別・message・throw値の条件 |
+| property | 対象ref、名前、標準条件または同期述語 |
+| relation | 比較方式と型が対応する二つのref。refはlive/snapshotの出自を保持し、同一性比較はliveのみ |
+| state-unchanged | Stateトークン |
+| action | Actionトークン、区間、全件一致/個数/不発生の条件 |
+| boundary-call | Boundaryトークン、引数・回数・開始順の条件 |
 
-この段階ではmiddlewareは未実行です。静的な呼び出し条件はobjectとcheck.argsを保持します。
-`call.from` の記述子はobjectの代わりにobjectFromを、`called*WithFrom` はcheck.argsの代わりにcheck.argsFromを保持します。
-これらはctxを受け取るresolverであり、blueprint取得時には実行しません。matcher名・key・n等は定義時に取得できます。
-resolverは各attemptのmiddleware前処理後、記録設定前に評価します。プラグインは未解決の値を既知の値として扱わず、resolverとして表示・保持します。
-module namespaceの参照は静的に渡し、期待引数のargsFromと組み合わせられます。
+状態のexact/part条件には、取得時点（after）と、即時かeventuallyの待機設定を保持します。before参照やunchangedがあれば、実行前の取得も必要です。property/relateのaction参照も区間を持ちます。
 
-## 結果・例外の期待はコンテキストから組み立てる
+CompiledChecksのsourceはexpect / property / relate / expectCallsと、その返却配列内のindexです。実行前に判明した全条件は、失敗時にも未評価理由を含めて結果へ対応させます。
 
-<!-- example: docs/examples/context-flow.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-import { add } from './math.ts'
+## 実行結果の値と参照
 
-export const contextFlow = new Test()
-  .target(add)
-  .use(middleware(async (_, next) => next({ a: 1, expected: 3 })))
-  .it('渡された値を使う', t => t
-    .argsFrom(ctx => [ctx.a, 2])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
-
-registerTest(contextFlow)
-```
-出典: [docs/examples/context-flow.test.ts](../examples/context-flow.test.ts)
-
-Case.expectは、このexpectコールバックへコンテキストと記述子ビルダーを渡す `build(ctx)` を保持します。
-標準実行器では各試行でテスト対象の呼び出しが終わった後に1回評価し、次の記述子を得ます。
-
-| subject | 対象 | checkの例 |
-|---|---|---|
-| result | テスト対象の戻り値 | matcher: toEqual、expected: 値 |
-| error | テスト対象の例外 | matcher: toBeInstanceOf、ctor: Error |
-
-resultとerrorの混在、空配列は不正です。
-errorを返せば例外、resultを返せば正常終了を期待します。expectを省略した呼び出し検証だけのケースも正常終了を期待します。
-
-expectは静的な値だけを使う場合も遅延扱いです。
-`.blueprint()` で取得した時点では、expect内部の条件や正常・例外の期待は展開していません。
-架空のコンテキストを渡したり、コールバックを試しに実行したりして抽出することはしません。
+CompiledChecksは各refについて、値の検証に必要な部分とidentity比較に必要な参照を保持します。valueはcompile、inputは呼出し直前、resultは各呼出し完了直後に解決します。実行記録には生の値の参照と、検証用の保存値を別々に持ちます。stepsの先行結果の保存値を後続操作で上書きしません。
 
 ## 評価時点
 
-| 処理 | 評価時点 | blueprintでの表現 |
-|---|---|---|
-| itのコールバック | 定義時 | ケースの構造に展開 |
-| eachの名前・本体 | 定義時に各行1回 | 行順に通常のケースへ展開 |
-| mockの振る舞いコールバック | 定義時 | behaviorに展開 |
-| expectCallsのコールバック | 定義時 | callsの記述子に展開 |
-| call.from / called*WithFromのresolver | 各attemptの記録設定前 | objectFrom / check.argsFromとして保持 |
-| useのmiddleware | 試行開始時にstepsの登録順で入り、nextで後続を実行した後、逆順に戻る | kind: middlewareとrun関数参照 |
-| argsFrom | テスト対象の呼び出し前 | kind: from-contextとbuild関数 |
-| expectのコールバック | テスト対象の呼び出し後 | kind: deferredとbuild関数 |
-| callsFakeの関数 | 対象メソッドの呼び出し時 | 関数参照 |
-| toSatisfyの述語 | アサーション評価時 | 記述子内の関数参照 |
+| 処理 | 評価時点 |
+|---|---|
+| it / each / flowの定義コールバック | 定義時。入力とビルダーを保持する |
+| callsの定義コールバック | 定義時。ctxを提供せず依存グラフを作る |
+| group middleware | 子全体を一度囲む |
+| attempt middleware / environment | 各試行。environmentだけが試行トークンを発行 |
+| argsFrom / steps / 境界resolver / 各検証ビルダー | 準備後・target前。生成入力では各サンプルの準備後 |
+| 状態の前値取得 / action.open | ビルダーの妥当性検査後・target前 |
+| target / scenarioの各操作 | 観測準備後。操作列は順次await |
+| 状態の後値取得 / action.finish | targetのsettle後、条件が定める待機に従う |
+| 性質の述語・関係・一致の照合 | 必要な観測値を取得後 |
+| action.dispose / 代替の復元 / environmentの後処理 | 照合の成否に関係なく終了時 |
 
-middlewareはsteps配列に登録順で保持するため、実行順をblueprintから読めます。
-コンテキストとnextを受ける関数と、指定した期限を保持します。前処理・後処理を別の関数へ分解したり、試しに実行してコンテキストを取り出したりはしません。
-expectとexpectCallsのチェーン上の順序は、この評価時点を変えません。
+stepsはctxを使いますが、実行するのは操作ではなく操作記述の構築だけです。scopeトークンはその試行でしか使用できません。妥当性確認前に差し替えやtarget実行を開始しません。
 
 ## 参照を保持する意味
 
-blueprintはreadonlyですが、利用者が渡した値の内部まで複製・凍結しません。
-関数のクロージャ、オブジェクト参照、Error等も保持するため、JSONでの往復は契約に含めません。
-宣言位置は自動取得しますが、テスト対象の関数名からその実装位置を特定する保証はありません。
-任意の関数内部の依存や分岐は、その関数を保持するだけでは構造として取得できません。
+関数と実資源の参照を持つため、blueprintのJSON往復による復元は保証しません。診断用には値と実行情報を別に保存します。状態/actionの観測値は[値領域](../guides/writing-tests.md#スナップショットの値領域)を検査してコピーし、前後の可変参照を共有しません。
 
-宣言位置・pathによる対応・各試行と失敗の構造は[実行結果](results.md)に記載しています。
-実行設定は[timeoutとretry](../guides/execution-options.md)の規則で解決します。
-標準実行器の手順と結果は[実行セマンティクス](../concepts/semantics.md)を参照してください。
+ビルダーへ架空のctxを渡して観測値を抽出したり、任意関数の内部を読んで契約を生成したりしません。environmentの許可とcaseが使った境界を対応させ、実効果・代替環境の効果・呼び出し記録を区別します。

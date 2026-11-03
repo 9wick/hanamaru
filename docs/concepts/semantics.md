@@ -1,273 +1,130 @@
 # 実行セマンティクス
 
-標準実行器は `packages/runner/` が計画と進行、`packages/execution/` がworker内の試行を担当します。実行テストと未検証の環境は[実装状況](../reference/limitations.md)に記載します。
-利用者が実行入口を選ぶ手順は[CLIの実行方法の選び方](../reference/cli.md#実行方法の選び方)を参照してください。projectによる収集・選択の契約は[project](../guides/projects.md)に記載します。複数projectのファイルはマージして一つの実行計画を作り、同じファイルは一度だけ実行します。結果の所属projectは各トップレベルノードの `source.projects` に記録します。
+定義から得た対象・入力・観測・期待を、独立した試行として実行します。利用者向けの書き方は[公開APIの記述契約](../guides/writing-tests.md)に従います。
 
 ## 定義と実行の境界
 
-`new Test()` のチェーンは、it・each・mock・expectCallsの定義コールバックを評価して、ケースや設定を組み立てます。
-expectのコールバックは保存し、この時点では呼びません。
-registerTestは完成したルートを登録し、runnerが収集した登録から今回の対象を選んで実行計画を作ります。
-プラグイン向けの `.blueprint()` を呼ぶだけでは、middleware・テスト対象・argsFrom・fake・述語は実行しません。
-定義中はメソッドを差し替えず、呼び出しの記録も開始しません。
-テストモジュールのトップレベルコードは通常のimportと同様に動きます。
+Testのチェーンは定義を作り、targetを実行しません。it / each / flowのコールバックは定義時に呼びます。callsも定義時に対象限定の依存グラフを作ります。argsFrom・steps・検証ビルダー・境界resolverは保持し、試行の環境準備後に評価します。
 
-expectCallsが返す空配列・不正な記述子や定義コールバックのthrowは定義エラーです。
-実行時に返るexpectの不正な配列やthrowは、そのケースの失敗です。
-eachは行順でケースに展開します。空の行配列、不正なtimeout/retry/nth、宣言位置の取得不能も定義エラーです。
-`group(name?, [children])` の子配列も空にできません。各group呼び出しは渡した子を順に持つ一つの子グループを追加し、元の子の定義は変更しません。
+registerTestは親からの供給が不要な完成定義を登録します。blueprintの取得は環境も観測も開始しません。定義コールバックのthrow、空のeach・子・条件、静的に不正な設定は定義エラーです。
 
 ## テストの受付
 
+全定義の対象kind、入力kind、完成条件、参照、設定値を検査します。pureへenvironmentを付ける、scenarioへcallsを渡す、生成入力にproperty/relateがない、target自身の境界を代替する、対象外・別ケースのrefを使う等は拒否します。実資源の参照が必要な検査は試行のcompile段階で行います。
 
-<!-- example: docs/examples/run-many.ts#accept -->
-```ts
-registerTest(addition)
-registerTest(users)
-```
-出典: [docs/examples/run-many.ts](../examples/run-many.ts)
+受付エラーではtargetを開始しません。CLIは収集・受付の失敗をコード2、開始した試行の失敗をコード1として区別します。試行のcompileで検出する動的な不正もコード1で段階と原因を示します。
 
-登録された完成定義を受け取ります。初版の標準実行器は渡された順、blueprintのchildren順の深さ優先、ケースの宣言順で直列実行します。
-ただしこの順序は利用者が依存できるテストの意味ではありません。各caseは他のcaseの実行有無・実行順に依存せず、将来のshuffle・並列実行・複数processへの配置で順序が変わっても同じ意味を持つものとします。
-同じ子を複数箇所に合成しても参照で重複排除せず、それぞれの経路の設定で実行します。
-
-結果のtestsには、渡された定義に含まれる最上位のgroupまたは対象ケース群を宣言順に並べます。`new Test()` 由来のdefinitionは実行階層に数えず、子に含まれるgroupを順に展開します。
-グループの結果はchildren、対象ケース群の結果はcasesを持ち、実行階層での順序を保ちます。両者の集約状態は結果に重複保存せず、配下とgroup middlewareの結果から導きます。
-skip/todoも結果に残すため、名前がなくても、重複していても配列の位置で対応します。
-
-version・blueprint構造・呼び出し条件の妥当性を階層全体について実行前に検査します。
-循環、空のchildren/cases、不正なsteps・mock・config・origin・sequenceの終端動作等も受付エラーです。同じ子を別の経路から参照することは循環ではありません。
-登録された対象がない場合や、選択条件に一致する対象がない場合は受付エラーです。
-受付エラーではmiddlewareを開始せず、CLIは終了コード2で原因を報告します。ケース中の失敗は結果に残します。通常はretryの規則に従ってそのケースを完了し、他のケースを続けます。
-timeout・外部中断・復元や後始末の失敗では後続を中断します。
+各ケースは他のケースの実行順・実行有無へ依存しません。名前の重複ではなく構造と宣言位置で対応させます。同じ定義を別経路へ合成したものは、それぞれ独立した実行箇所です。
 
 ## Runとprocess
 
-実行モデルではRunが一つ以上のexecution processを所有します。
-
-```text
-Run
-  Process 1
-  Process 2
-  ...
-```
-
-processは必ず一つのRunに属し、Runをまたいで実行状態を共有する単位にはしません。
-process数やcaseの配置はrunnerの実行戦略であり、caseの意味に含めません。
-
-RunのPromiseは、そのRunが所有する開始済みのexecution processと必要な後始末が完了してからsettleします。
-同じhost runtimeではactiveなRunを一つに制限しますが、完了したRunの後に別のRunを開始できます。
+Runが所有する開始済み処理と後始末が終わってからRunを完了します。同じhost runtimeでactiveなRunは一つとし、完了後に次を開始できます。実行戦略としてのprocess数や配置をケースの意味にしません。
 
 ## group middleware
 
-`group(middleware, [children])` のmiddlewareは、そのgroupの子全体を一度だけ囲みます。
-通常の `.use()` は各caseの各attemptで実行しますが、group middlewareはretryやcaseごとには作り直しません。
+`group(middleware, [children])` は子全体を一度囲みます。attemptのuseは各試行に適用します。groupの前処理は親groupの安定したctxを受け、後から開始するattemptのctxに依存できません。
 
-group middlewareへ渡すコンテキストは、外側のgroup middlewareが渡したフィールドを重ねた安定したコンテキストです。ルートは新しい `{}` から始めます。
-依存の要求は `new Test<R>()` のRだけです。必要になる時点はmiddlewareの配置から追跡し、合成時に供給が間に合うか型で検査します。
-親ノードのmiddlewareは各attemptで実行されるため、そこで初めて作る値をgroup middlewareの前処理へ渡すことはしません。
-一方、group middlewareが `next(fields)` へ渡した値は、全子の各attemptで親の試行ごとのコンテキストと合成し、各子のargsFrom・expectから参照できます。
-各attemptではそのgroupに至る親のstepsを実行してから、保存した追加フィールドを浅く重ね、子のstepsへ進みます。group middleware自体を再実行することはありません。
-入れ子のgroup前処理にも、外側のgroupが渡した値を重ねて渡します。親のattempt用stepsによる同名フィールドの上書きは、この安定したコンテキストを変更しません。
+共有資源はgroup middlewareで用意できますが、environmentをgroupへ渡すことはできません。観測器・境界トークンは子のenvironmentが試行ごとに作ります。共有資源内のデータの初期化・ケースごとの範囲分離は環境が提供します。
 
-実行の概略は次のとおりです。
-
-```text
-group middlewareの前処理
-  first child のcase A
-    attemptのmiddleware前処理 → テスト対象の呼び出し → assertions → 復元とmiddleware後処理
-    retryがあれば次のattempt
-  second child のcase B
-    attemptのmiddleware前処理 → テスト対象の呼び出し → assertions → 復元とmiddleware後処理
-group middlewareの後処理
-```
-
-前処理が失敗した場合は全子の実行対象caseを開始せず、notRun: cancelledとします。失敗はgroup middlewareの結果へ記録し、runをfailedにします。
-通常の前処理例外で復元・後処理が完了した場合はgroup外の後続を続行し、他の中断原因がなければreasonはcompletedです。timeoutや後処理の失敗ではrun全体の後続を中断します。
-後処理が失敗した場合はrunを失敗として後続を中断します。
-共有資源を残したまま次のgroupへ進まないことは、通常のcleanup failureと同じ保証です。
-group middlewareはどのattemptにも含まれないため、効く期限は `middleware(fn, { timeout })` の前処理期限・後処理期限だけです。
-group middlewareに包まれた全子は、その共有資源のlifetime中は同じexecution processで実行します。
+groupの前処理失敗では子を開始せず、groupの失敗と子の未実行理由を残します。通常の前処理例外で解放が完了すればgroup外は続行できます。timeout・後処理失敗は後続を中断します。
 
 ## 実行設定の解決
 
-timeoutとretryは、groupの共通設定、対象ケース群の共通設定、ケース個別の設定を項目ごとに重ねます。未指定は引き継ぎ、最後まで指定がなければ5,000ms・0回です。
-結果には解決した設定を残し、各ケースの各試行へ同じ期限を適用します。
-[timeoutとretry](../guides/execution-options.md)の範囲・上書き規則を使います。
+timeoutとretryは外側から内側へ、明示された値だけを上書きします。既定は試行5,000ms・retry 0回です。ケースでは入力/操作の確定前に指定します。観測の期限・間隔は条件ごとに指定し、ケース全体のtimeout/retryと混同しません。
 
 ## 一試行の手順
 
-1. **middleware**: 期限の計測を開始し、新しい `{}` から、そのケースに至る親→子のstepsを登録順にたどる。各middlewareは直前のコンテキストとnextを受け取り、nextで後続のstepsとケース本体を実行する。
-2. **instrumentation**: 経路上の共通mockとケースのmockを解決し、callsと参照・キーでまとめる。元のdescriptorを保存して差し替えと記録を設定する。
-3. **args**: 静的な引数を使うか、argsFromにコンテキストを渡して引数タプルを得る。
-4. **テスト対象の呼び出し**（`phase: 'target'`）: テスト対象を呼び、Promise/thenableならawaitする。戻り値か例外をタグ付きで保持する。
-5. **expect**: 設定があれば、コンテキストと記述子ビルダーで結果の期待を組み立てて検査する。
-6. **assertion**: 期待する終了を照合し、結果の条件、呼び出しの条件の順に、各配列の順で検証する。
-7. **cleanup**: finallyで差し替えを逆順に復元する。その後、内側から外側へnextが完了し、各middlewareの後処理をawaitする。
+1. **prepare**：attempt middlewareとenvironmentを順に開始する。新しいctxと試行所有者を作り、環境のscopeがトークンを発行する。
+2. **compile**：argsFromまたはstepsを構築し、境界resolverとexpect/property/relate/expectCallsを一度評価する。対象の引数・観測条件・期待する終了を確定する。toEqual・part・action全件一致・境界の引数条件の期待値は、スナップショット領域を検査して独立したコピーとして保存する。保存失敗ならtargetを開始しない。toBeと参照同一性のLiveRefはコピーしない。期待のValueRefは実測値ではない。条件・トークンの所有者・action区間の矛盾を検査する。参照同一性の条件へSnapshotRefを渡していた場合も拒否する。
+3. **before**：before参照またはunchangedのstateを読み、コピーする。使用するactionを宣言順にopenする。openが完了するまでtargetを開始しない。
+4. **instrumentation**：許可済み境界の代替と呼び出し記録を設定する。適用途中の失敗では適用済みのものを復元する。
+5. **target**：一回の関数、callsの依存グラフ、またはstepsの順序列を実行する。Promise/thenableをawaitし、正常結果・throw/rejectを区別して保持する。
+6. **observe**：targetのsettle時刻を基準に、後状態の取得とactionの期間待機を開始する。同じstateの即時後値は一度読み共有する。eventuallyはその条件のreadだけを再試行する。必要なaction.finishを区間終了ごとに一度呼び、値をコピーする。actionの環境側記録は発生時点の値であり、finish時点に可変データを読み直す実装は契約違反である。
+7. **assert**：期待する終了を照合し、取得できた値の条件をすべて評価する。失敗後も独立した条件は評価する。観測待機は条件を満たすためにtargetを再実行しない。
+8. **cleanup**：開いたactionを逆順にdisposeし、境界を逆順に復元してから、environment/middlewareの後処理を内側から外側へawaitする。失敗を消さず、解放不能なら後続を中断する。
 
-コンテキストの拡張は、直前のコンテキストとnextに渡した値の列挙可能なownフィールドを新しいオブジェクトへ浅くコピーします。
-同名のフィールドは後の値を優先します。入れ物のフィールドは変更不可とし、参照先の値は複製・凍結しません。
-argsFromとexpectは同じ最終コンテキストを受けます。middlewareが受け取ったコンテキストは、その呼び出し時点のままです。
-新しく追加したフィールドだけを返せばよく、親のコンテキストを手動でspreadする必要はありません。
-nextの追加フィールドはplain objectとし、null・プリミティブ・配列・クラスインスタンス等はmiddlewareの失敗です。
-DBなどの資源は `{ db }` のようにフィールドへ入れます。prototypeは通常のObjectかnullを受け付けます。
+prepareからcleanupまでが試行期限に含まれます。途中で条件が不一致でもcleanupを省略しません。stateの読み取りはreadonlyの観測責務とし、[値領域](../guides/writing-tests.md#スナップショットの値領域)の検査後にコピーします。structuredCloneの成功だけを受入条件にはしません。コピー不能・取得不能を空値へ変換しません。actionの期間はtarget開始前のopen完了から、settleまたはsettle後の指定時間までです。
 
-親のmiddlewareも、グループ全体で1回ではなく、実行する各ケースの各試行で呼びます。
-middlewareの前処理・後処理にはモックも記録用のラッパーも適用しません。
-記録は全ラッパーの適用後からテスト対象の呼び出しが終わるまでです。argsFromでの呼び出しも含まれるため、argsFromは引数を作る処理に留めます。
-expect・述語・後始末中の呼び出しは記録に含めません。
+複数actionのopenは宣言順、期間終了のタイマーは同じsettle時刻を基準にします。長い期間のactionを待つことで短い期間が伸びないよう、それぞれのfinishを独立に開始します。出力の条件順は宣言順を保ちます。
 
-## middlewareとnext
+## 結果refの取得と保存
 
-`use(middleware((ctx, next) => ...))` はケースの一試行を囲むmiddlewareです。
-`next(fields)` はコンテキストを拡張して後続を呼び、`next()` は現在のコンテキストをそのまま渡します。
-後続はnextを呼んだ非同期コンテキスト内で実行するため、AsyncLocalStorageやコールバック型トランザクションで囲めます。
-複数のmiddlewareは登録順を保ちます。
+compileで各条件が要求する値と参照同一性の用途を判別します。valueはcompile時、inputは呼び出し直前、各resultはその呼び出しの正常完了直後に、必要な値・部分をスナップショット領域へ検査して保存します。結果のfield/partもその時点で解決します。生の参照を必要とする条件では同時に参照を保持し、値の保存と混同しません。
 
-```text
-親middlewareの前処理
-  子middlewareの前処理
-    差し替え → args → テスト対象の呼び出し → 期待の検証 → 復元
-  子middlewareの後処理
-親middlewareの後処理
-```
+calls/stepsでは、各結果の保存を後続操作より前に行います。結果refを次の引数へ解決するときは生の値を渡し、期待・性質・値の関係を照合するときは保存値を使います。結果レコードも各結果の保存値から組み立てます。LiveRefであることを理由に、値比較を照合時点の可変値へ遅らせません。
 
-middlewareはnextを1回呼び、その呼び出しが返す完了値を返します。
-後処理には `try { return await next({ db }) } finally { await db.close() }` を使います。
-`return next(...)` ではfinallyが下流の完了前に動くため、この形ではawaitが必要です。
+保存に失敗したら観測障害として試行を失敗にし、後続のcalls/stepsを停止します。target自身のthrowとは区別し、取得可能な状態/actionの後観測と解放は継続します。検証に使わない中間値をコピーすることはありません。
 
-下流でケースの失敗が確定した場合、失敗を結果へ記録した上でnextをrejectします。外側のfinallyは引き続き実行します。
-テスト対象のthrowは先に期待と照合するため、期待どおりの例外ではnextをrejectしません。
-middlewareがnextの失敗をcatchしても、記録済みの失敗は取り消しません。
-後処理自体の失敗はmiddleware段階で追加し、試行のcleanupをincompleteとして後続ケースを中断します。同じ下流の失敗を外側へ伝えるだけでは重複記録しません。
+## 待機と観測値
 
-nextの未呼び出し・複数回呼び出し、その呼び出し以外の完了値の返却はmiddlewareの失敗です。
-nextの完了前にmiddlewareが終了した場合も失敗とし、開始済みの下流処理と後始末を待ってから次のケースへ進みます。
-不正な再呼び出しから下流を再実行することはありません。middleware終了後のnextもrejectし、下流を開始しません。
-ケース結果の確定後に発生した呼び出しまで、確定済みの結果へ遡って反映する保証はありません。
-nextの省略でケースを成功扱いにはしません。
-nextの回数・待機の正しさは型だけでは保証できないため、実行時に検査します。
-middlewareがnextより前にthrowした場合は、その失敗を記録して下流を開始しません。
+eventuallyはtargetのsettle直後に一度read・比較します。不一致ならintervalMs後に再取得し、withinMsの期限で最後の未完了取得も打ち切って失敗を記録します。開始済みの処理が停止しない場合は後始末未完了として扱い、結果を後から成功へ変更しません。期限内の最初の一致で完了し、その後の不変は保証しません。
 
-## 呼び出し記録とモック
+actionは正の一致が早く成立しても指定区間を短縮しません。不発生も区間終了とfinish成功後にだけ判定します。finishの失敗はactionの全条件の観測障害となり、noneを成功にしません。
 
-expectCallsで返した条件から、記録対象を確定します。call.fromとcalled*WithFromのresolverはmiddleware前処理後、記録設定・argsFrom・targetの前に同期的に一度評価します。retryではctxから再解決し、resolverの例外はinstrumentationの失敗にします。利用者によるspy登録は不要です。
-
-| 指定 | 実行時の処理 |
-|---|---|
-| 呼び出し条件だけ | 本物のメソッドを呼びながら記録する |
-| モックだけ | 指定された振る舞いへ置き換える |
-| 両方 | 指定された振る舞いを呼びながら記録する |
-
-同じオブジェクト・キーに対しては、条件が複数あってもラッパーと呼び出し記録を1つにします。
-各条件はその記録に対して独立に検証します。notCalledの対象にもラッパーが必要です。
-同じ型の別オブジェクトは別の対象です。
-sequenceは呼び出し開始時にonceを一つ消費し、なくなった後はfallbackを使います。消費位置は各試行で初期化します。
-nthの番号も開始順で数え、Promiseの完了順では数えません。
-
-本物を記録するラッパーは、呼び出し時のthisと引数を保ち、元の戻り値・Promiseをそのまま返します。
-同期throwもそのまま伝播し、throwした呼び出しも回数に含めます。
-元の処理の副作用も実行されます。振る舞いを置き換えたい場合はmockを指定します。
-
-記録対象はオブジェクトのプロパティを通る呼び出しです。保存済みの別の関数参照や、モジュール内部のローカルな参照には波及しません。
-`target(object, key)` 自体が記録対象なら、実行器はその記録用ラッパーを経由して対象を呼びます。
-`.target(fn)` として事前に渡された単独の関数参照は、別プロパティに付けたラッパーを経由しません。
+observeの一つの失敗で他の独立した観測を省略しません。ただし試行timeout・外部中断・接続の解放不能など、実行境界の安全な終了ができない場合は残りを未評価としcleanupへ進みます。
 
 ## 正常終了・例外の期待
 
-expectからerrorの記述子が返れば例外、resultの記述子が返れば正常終了を期待します。
-expectを省略してexpectCallsだけを書く場合も、正常終了を期待します。
-resultとerrorの混在、空配列は型エラーであり、実行時にも失敗とします。
+error条件がなければ正常終了を期待します。errorと状態/action/境界条件は併用できます。errorとresult/property/relateは併用できません。calls・scenarioは正常完了だけを期待し、途中のthrow/rejectは常に失敗です。
 
-| 期待 | 実際 | 結果 |
+| 実際の終了 | 結果・例外の照合 | 状態・actionの観測 |
 |---|---|---|
-| 正常終了 | 正常終了 | resultと呼び出し条件を検証 |
-| 正常終了 | throw / reject | 予期しない例外として失敗 |
-| 例外 | throw / reject | errorと呼び出し条件を検証 |
-| 例外 | 正常終了 | 例外が発生しなかったとして失敗 |
+| 正常終了 | resultを評価。error期待なら不一致 | 指定した観測と待機を実行 |
+| throw/reject | error条件と照合。正常期待なら不一致 | settle後の観測・待機を継続 |
+| calls/stepsの途中のthrow | 原因と未実行操作を記録。存在しない結果は未評価 | 操作列全体のsettleとして、取得可能な観測を継続 |
+| timeout・外部中断 | error条件で成功にできない | 未完了の区間・値は未評価。取得済み情報を残し後始末 |
 
-`return undefined` と `throw undefined` は別の結果です。
-終了の種類が合わない場合は、存在しないresult/errorの述語を呼ばず、評価不能として報告します。
-expectの構築・妥当性検査や結果の照合が失敗しても、取得済みの呼び出し記録に対する検証は続けます。
-述語のthrowや不一致はその条件の失敗として残し、後続の条件を検証します。
+return undefinedとthrow undefinedは別です。targetを開始していない場合は、空の記録から不発生・notCalledを成功にしません。
 
 ## 途中の失敗
 
-| 失敗した段階 | 扱い |
+| 段階 | 処理 |
 |---|---|
-| middleware | 未開始の下流は実行せず、開始済みなら完了・後始末を待つ。外側のfinallyへ戻る |
-| 差し替え・記録の設定 | テスト対象を呼ばず、適用済みラッパーを復元し、middlewareのfinallyへ戻る |
-| args | テスト対象を呼ばず、復元してmiddlewareのfinallyへ戻る |
-| `phase: 'target'`（テスト対象の呼び出し） | 戻り値 / 例外として保持し、期待と照合する |
-| expect | ケースを失敗にし、呼び出し条件を検証して後始末する |
-| assertion | 失敗を記録し、後続を検証して後始末する |
-| cleanup | 元の失敗も残し、残りの復元を試み、middlewareのfinallyへ戻る |
+| prepare | 未開始の下流は動かさず、取得済み資源を後始末 |
+| compile | target・観測を開始せず、準備した環境を解放 |
+| before | targetを開始せず、開いたactionをdispose。すべての期待は未評価 |
+| instrumentation | targetを開始せず、適用済み代替と観測を解放 |
+| target | 失敗の値を保持し、上記の終了別の規則で観測・照合 |
+| observe | 該当条件の観測障害。他の独立した観測を継続 |
+| assert | 不一致・述語例外を記録し、他の条件を継続 |
+| cleanup | 先行する失敗も保持し、残りの解放を試みて後続を中断 |
 
-middleware・差し替え設定・argsの失敗でテスト対象を呼んでいない場合、アサーションを評価しません。
-これを「0回だったのでnotCalledに成功した」とは扱いません。
-テスト対象の呼び出し以外の段階の失敗は、テスト対象に対するerrorの期待を満たしません。
-資源の取得と解放は同じmiddlewareに書き、取得途中で失敗した場合の解放もそこで扱います。
+prepare/compile/before/instrumentation/observe/assertの失敗をtargetの期待した例外にはしません。action.openが途中で失敗してsessionを返せない場合は、openの実装が部分的に取得した資源を解放する責務を持ちます。
+
+## middlewareとnext
+
+middleware / environmentはnextを一度呼び、その完了値を返します。後処理は `try { return await next(fields) } finally { ... }` で待機します。next未呼出し・複数呼出し・返却前の終了は実行時にも失敗にします。外側がcatchしても記録した失敗は消えません。
+
+コンテキストのフィールドはreadonlyで、値の供給は浅い合成です。state/actionのスナップショットのコピーとは別です。環境のscopeによる発行はnextを呼ぶまでに限り、後処理や終了後には発行できません。
+
+## 呼び出し記録とモック
+
+replaceとexpectCallsは同じ試行のBoundaryトークンだけを受け取ります。記録区間はtargetの開始からsettleまでです。prepare・argsFrom・検証・観測器の関数からの呼び出しは記録に含めません。バックグラウンド配送を含む実効果の区間にはactionを使います。
+
+引数は呼び出し開始時に同じスナップショット領域を検査して診断・比較用の値としてコピーし、後の変更を混入させません。コピー不能はinstrumentationの実行失敗とします。thisと本物の戻り値・Promiseを保ち、対象へ返す値そのものをコピーしません。同期throwした呼び出しも記録します。
+
+応答列のonceは開始順に消費し、試行ごとにリセットします。通常動作を必須にし、任意のcallsFakeは提供しません。呼び出し確認と効果の観測の違いを結果へ残します。
 
 ## 適用と復元
 
-そのケースへ至る外側の親→内側の親→子→ケースのモックを、参照・キーの一致で解決します。
-他の経路の設定は混ぜません。内側の設定が外側に優先します。
-再登録は最初の登録位置を保って振る舞いを上書きします。
-実効モックの順に対象を並べ、callsだけにある対象を最初の出現順で追加して適用します。
-`target(object, key)` と同じ対象へのmockは、親から引き継いだものも含めて、対象自体の置き換えになるためエラーです。呼び出しの記録だけなら許可します。
+境界の代替はケース内で指定し、groupから任意のmockを注入しません。対象関数自身・scenario/relationの構成要素と同じ参照の代替を拒否します。作用範囲は環境が公開したobjectのmethod経由に限り、保存済み参照やmodule内部へ暗黙に差し替えを広げません。
 
-書き換え可能なデータプロパティ、またはshadow可能な継承メソッドを対象とします。
-アクセサ、非関数、差し替え不能なプロパティはエラーです。観測だけの場合にもこの条件がかかります。
-元のdescriptorを保存して復元し、継承メソッドをshadowした場合は追加したown propertyを削除します。
-
-CLIのmodule namespaceは内部の中継を使い、読み取り専用のnamespace自体を書き換えません。
-全件の静的なmodule mock/expectCalls対象を実行workerの読込前に準備し、試行ごとに中継先と記録を切り替え・復元します。
-頭脳が保持するblueprintに従い、実行workerは同じ変換済みコードからローカル関数を取得します。
-再評価した定義の構造が異なれば、target実行前に収集エラーにします。
-
-復元の契約はfinallyへ到達する実行を対象とします。
-強制終了や終了しないテスト対象の呼び出しでは後始末を開始できず、外部コードの凍結等で復元できなければ失敗として報告します。
+同じobject/keyに複数の境界トークンを発行することはその試行で拒否します。同じトークンへのreplaceもケース内で一度だけです。書き換え不能・アクセサ・非関数はinstrumentationで拒否し、適用済みのものは元のdescriptorへ復元します。
 
 ## ケース間の状態
 
-各ケースの各試行で経路上のmiddlewareを呼び、モックのsequenceと呼び出し記録を作り直します。同じテストの再実行でも同様です。
-caseは、他のcaseが実行されたか、どの順序で実行されたかに依存してはいけません。process.env、module state、global、filesystem、DB等の共有状態を変更する場合は、そのcase自身の境界で必要な初期化・復元を行います。
-静的に渡したオブジェクトや、factoryが返した共有値までrunnerが複製する保証はありません。独立性が必要な値はmiddleware・argsFromで毎回生成してください。
+トークン・応答列・観測記録は試行ごとに新規作成します。外部DBや共有資源の範囲分離は環境が行い、全外部状態の自動復元は約束しません。順序を持つ操作は一つのscenarioに置きます。
 
-## 期限・再試行・中断
+## 生成入力と再試行
 
-試行の期限にはmiddlewareの前処理・検証・後処理を含めます。timeoutはe.errorで成功にできません。
-middleware自身の期限は前処理と後処理へ独立に適用し、`.use()` では試行期限と両方が効きます。超過の扱いは試行期限と同じで、再試行しません。
-標準CLIは設定したshutdownGraceの経過後に未完了の実行環境を終了させ、次のケースへ未停止の処理を持ち越しません。設定方法は[CLIの時間制限](../reference/cli.md#時間制限)を参照してください。
+forAllはseedからruns件の引数を宣言順に生成します。各サンプルを独立した環境・検証の実行として扱い、最初の失敗で残りを未実行にします。ケースの一試行期限はサンプル全体に適用し、各サンプルのmiddlewareも囲み直します。生成器はpureな単一関数にのみ使用します。
 
-通常の失敗は、後始末が成功し、retryの残りがあれば同じケースを最初から実行します。
-定義は再評価せず、middleware・モックの動作列・引数の生成・対象・期待を新しい試行として実行します。
-timeout・中断・復元や後始末の失敗・定義エラー・middleware契約違反はretryしません。
+ケース全体のretryでは同じseedと入力列を用い、環境を最初から作り直します。失敗したサンプル番号と入力を保持します。観測の再試行とは別で、失敗の履歴を上書きしません。
 
-復元・後始末の失敗では、元の失敗も全て保持して試行をfailedにし、runを中断します。reasonはcleanup-failedですが、timeoutも発生していればtimeoutを優先します。
-まだ実行していない実行対象はcancelledとし、元からskip/todo等だったケースの状態は保ちます。
-再試行や次のケースによって、片付いていない実行状態を引き継ぐことはしません。
-[実行設定の保証](../guides/execution-options.md)と[終了状態の表](../reference/results.md#終了状態の表)を参照してください。
+## skip / todo / only
 
-## only / skip / todo
+定義は収集しますが、skip/todoの環境・観測・targetは開始しません。onlyは選択であり検証条件を変更しません。未実行を成功した検証として報告しません。
 
-runに渡された全ルートとその子孫のどこかにonlyがあれば、onlyだけを実行します。
-他のrunケースはskipped、明示skipはskipped、todoはtodoとして結果に残します。
-実行しないケースではmiddleware・テスト対象の呼び出し・差し替え・記録を開始しません。
-定義時のケース・mock・expectCallsコールバックは、skipでもblueprintを組み立てるために評価します。
+## 診断
 
-CLIの `--ci` はこの設定を使います。通常実行ではskip/todoだけでも失敗としません。
-
-## 結果
-
-RunResultは実行階層に展開した順のtestsを持ち、各要素はkindで対象ケース群（test）とgroupを区別します。
-CaseResultには宣言位置・実行階層上のpath・適用した設定・全試行を残します。構造化した失敗は各試行のfailuresに保持します。
-ケースの成否・flaky・失敗一覧はattemptsから求め、CaseResultに写しを持たせません。
-試行が空のケースにだけnotRunを必須とし、skipped / todo / 実行前のcancelledを区別します。
-各試行のアサーションはexpect / expectCallsの区別と、その配列内の0始まりのindexで対応します。
-expectが構築できなかった場合でも、呼び出し条件のindexをずらしません。
-
-実行時に得た値は、検証時点のDiagnosticValueとして保存します。後始末による値の変更で報告を変えません。
-診断中にgetterやtoJSONは呼ばず、undefined・循環参照等を型付きの構造としてJSONにも残します。
-各条件の不一致・評価失敗・未評価を区別し、実行していない条件を成功にはしません。
-位置・状態の集約・JSON形式は[宣言位置と実行結果](../reference/results.md)、表示と終了コードは[CLI](../reference/cli.md)を参照してください。
+条件はsource（expect / property / relate / expectCalls）と配列内のindexで対応させます。観測段階・区間・対象・期待・実測・原因を保持します。まだcompileできなかった条件は捏造せず、ビルダーの位置と失敗段階を示します。

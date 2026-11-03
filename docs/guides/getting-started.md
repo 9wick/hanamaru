@@ -1,6 +1,6 @@
 # はじめる
 
-このページでは、hanamaruの導入から最初のテスト、モック、middlewareの使い方までを説明します。まずNode.js 22.18以上で始めます。Bun・Denoでの起動方法は[CLI](../reference/cli.md)を参照してください。
+このページでは、導入から最初のテスト、middlewareと、直接観測できない場合の代替手段を説明します。まずNode.js 22.18以上で始めます。Bun・Denoでの起動方法は[CLI](../reference/cli.md)を参照してください。
 
 hanamaruを開発依存に追加し、テストを定義してCLIで実行します。最初の例を実行するための設定ファイルは不要です。依存の配布状況とランタイムの制約は[実装状況](../reference/limitations.md)を参照してください。
 
@@ -77,97 +77,39 @@ npx hanamaru src/math.test.ts
 ```
 
 
+## 副作用は実際の効果を確かめる
+
+`target(effect(fn))` で副作用を扱う入口を選び、use(environment(...))が渡す観測トークンを期待へ指定します。[環境から登録までのコード例](writing-tests.md#環境と観測)を参照してください。
+
+ユーザー登録なら、targetへ登録情報を渡し、保存されたユーザーと今回届いたメールを観測します。
+
+```text
+対象: registerUser
+前提: ケース専用のDBとメールボックス
+入力: Aliceの登録情報
+状態の観測: 登録したユーザーを取得する
+状態の期待: 登録情報と一致する
+actionの観測: 今回の登録に対応するメールの到着
+actionの期待: 宛先・本文・通数が期待と一致する
+```
+
+観測の開始はtargetの実行前、状態の読み取りは指定した完了条件の後です。過去のメールや別ケースのデータを含めず、取得に失敗した場合は観測失敗として報告します。準備と後始末はmiddlewareでまとめられます。[期待と観測](../reference/api-expect.md)に記述のルールがあります。
+
+失敗時もtargetの契約に従います。「登録に失敗したら通知しない」なら、不発生を確かめる観測区間を指定します。失敗だから常に状態不変・副作用なしと決めつけません。
+
 ## モックを使う
 
-`user.ts`。依存の実装は、例を自己完結させるための小さなスタブです。
+効果の直接観測が困難な場合や外部障害を再現する場合には、環境が許可したinfra境界を代替します。
 
-<!-- example: docs/examples/user.ts -->
-```ts
-export interface User { id: string }
-export interface CreateUserInput { name: string }
-
-export const userRepository = {
-  async save(_input: CreateUserInput): Promise<User> {
-    return { id: 'u1' }
-  },
-}
-export const mailService = {
-  async send(_user: User): Promise<void> {},
-}
-export async function createUser(input: CreateUserInput): Promise<User> {
-  const user = await userRepository.save(input)
-  await mailService.send(user)
-  return user
-}
+```text
+対象: registerUser
+環境が許可した境界: 外部メール配送
+境界の設定: 配送要求を拒否する
+入力: Aliceの登録情報
+期待: 配送失敗時の契約が定める結果・状態
 ```
-出典: [docs/examples/user.ts](../examples/user.ts)
 
-`user.test.ts`。
-
-<!-- example: docs/examples/user.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-export const users = new Test()
-  .target(createUser)
-  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.result.toEqual({ id: 'u1' }),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ])
-  )
-  .it('保存に失敗したら通知しない', t => t
-    // このケースだけ、共通設定を上書きする。
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.error.toBeInstanceOf(Error),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').notCalled(),
-    ])
-  )
-
-registerTest(users)
-```
-出典: [docs/examples/user.test.ts](../examples/user.test.ts)
-
-saveの `.mock()` は全ケース共通です。2つ目のケースではrejectする振る舞いに置き換わります。
-sendにはモックを設定していません。expectCallsに指定するだけで、本物のsendを呼びながら記録・検証します。
-振る舞いも置き換えたい場合は `.mock(mailService, 'send', m => m.resolves(undefined))` を共通設定に追加できます。
-
-`e.result` は正常終了、`e.error` はthrow / rejectを期待します。
-同じ配列に両方を入れると型エラーです。expectCallsだけで呼び出しを検証する場合も、正常終了を期待します。
-
-## モックもspyも登録せずに検証する
-
-<!-- example: docs/examples/calls.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-// モックを設定せず、本物の処理がどう呼ばれるかを検証する。
-export const calls = new Test()
-  .target(createUser)
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expectCalls(call => [
-      call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ]))
-
-registerTest(calls)
-```
-出典: [docs/examples/calls.test.ts](../examples/calls.test.ts)
-
-`call` はexpectCallsのコールバック引数です。追加の関数をimportする必要はありません。
-コールバックが返す配列から、実行前にどのメソッドを記録するかを決められます。
+任意の関数や内部ヘルパーを差し替えることはできません。代替環境で観測した効果、境界への呼び出し記録、本物の環境での効果は区別します。[infra境界の代替](../reference/api-mock.md)を参照してください。
 
 ## middlewareから値を渡す
 

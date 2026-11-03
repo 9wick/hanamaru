@@ -1,112 +1,47 @@
-# it ビルダー
+# ケースの記述
 
-ケースでは、必要ならモックを上書きし、引数を決め、期待を返します。
-戻り値・例外と、呼び出しの条件を、それぞれ配列に並べます。
-
-<!-- example: docs/examples/it-builder.test.ts#failure-case -->
-```ts
-.it('保存に失敗したら通知しない', t => t
-  .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-  .args({ name: 'Alice' })
-  .expect(e => [
-    e.error.toBeInstanceOf(Error),
-  ])
-  .expectCalls(call => [
-    call(mailService, 'send').notCalled(),
-  ])
-)
-```
-出典: [docs/examples/it-builder.test.ts](../examples/it-builder.test.ts)
+一つのケースは契約の一側面を検証します。[公開構文](../guides/writing-tests.md)と[型の完成条件](type-inference.md#完成条件)が記述の契約です。
 
 ## args / argsFrom
 
-`.args(...args)` は対象の引数をそのまま受け取ります。
-`.argsFrom(ctx => [...args])` はそのケースの親から子までのmiddlewareで用意したコンテキストから引数タプルを作ります。
-
-<!-- example: docs/examples/it-builder.test.ts#args -->
-```ts
-.it('引数をそのまま渡す', t => t
-  .args(1, 2)
-  .expect(e => [e.result.toBe(3)]))
-.it('コンテキストから引数を作る', t => t
-  .argsFrom(ctx => [ctx.a, ctx.b])
-  .expect(e => [e.result.toBe(3)]))
-```
-出典: [docs/examples/it-builder.test.ts](../examples/it-builder.test.ts)
-
-`.args()` / `.argsFrom()` / `.calls()`は択一です。引数または呼び出し記述は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
-引数のない関数にも `.args()` を書きます。
-argsFromは各試行で、middlewareの前処理の後・テスト対象の呼び出し前に1回評価します。
+対象のParametersに対応する引数を指定します。argsFromには環境準備後のctxを渡します。両者とcalls / forAll / stepsは択一です。引数なしでもargs()を明示します。
 
 ## calls
 
-`.calls(c => ...)`は、targetに宣言した関数への呼び出しと引数を定義します。
-一つの関数・メソッドなら`c.args(...)`、`relation({ encode, decode })`なら`c.encode.args(...)`等を使います。
-返した呼び出し記述、または名前付きレコードが、実行後の`e.result`の型と形を決めます。
-別の呼び出しの記述を引数へ渡すと、その正常な戻り値をawaitして渡します。
-詳しい例と依存・retry・失敗時の契約は[複数の呼び出しで契約をテストする](../guides/multiple-calls.md)を参照してください。
+pure単一・relationに提供します。対象に限定した呼び出しと、その結果参照を使う依存グラフを返します。ctxは渡しません。状態を変える順序列には使えません。[複数呼び出し](../guides/multiple-calls.md)に従います。
 
-callsのexpectにはresultとctxを提供します。途中のthrow / rejectはケースの失敗になり、expectは評価しません。
-mock・timeout・retry・expectCallsはケース全体へ適用できます。
+## steps
 
-## timeout / retry
+scenarioのflowにだけ提供します。s.ctxと対象操作を使って同期的に操作列を記述し、結果refまたは非空のレコードを返します。全操作を宣言順に実行し、未使用結果の操作も省略しません。[flow](../guides/flow.md)に従います。
 
-`.timeout(ms)` / `.retry(count)` でそのケースだけの実行設定を上書きします。
-argsの前後で使え、expect / expectCallsの後には変更できません。
-未指定の項目はgroupやケースに共通する設定から引き継ぎます。eachのtにも同じ操作があります。
-[timeoutとretry](../guides/execution-options.md)を参照してください。
+## forAll
 
-## mock
+pure単一のitにだけ提供します。ブランド付きの生成記述、seed、runsを指定し、propertyまたはrelateを必要とします。入力生成を具体値の曖昧な期待で代替しません。[生成入力](../guides/writing-tests.md#性質)に従います。
 
-`.mock(obj, key, def)` はTestレベルと同じAPIです。
-同じ参照・同じキーなら共通設定を置き換え、新しい組ならそのケースだけに追加します。
-argsの前でも後でも書けます。expect / expectCallsを始めた後は追加できません。
-適用順序は記述位置にかかわらず[実行セマンティクス](../concepts/semantics.md)に従います。
+## 期待と観測
+
+expectは具体値・部分・例外・状態/actionの条件、propertyは名前付きの性質、relateはref間の関係を返します。異なる種類の条件を混ぜることはできません。状態のみ・actionのみで完成でき、戻り値のダミー期待を要求しません。
+
+各入口は一度だけ指定でき、空でない配列を返します。返した条件だけを検証し、完成していない区間・待機指定や、呼び忘れを受け付けません。各ビルダーはprepare後・target前に評価し、実測値ではなく型付きrefと観測条件を構築します。
 
 ## expect / expectCalls
 
-<!-- example: docs/examples/it-builder.test.ts#expectations -->
-```ts
-.expect(e => [
-  e.result.toEqual({ id: 'u1' }),
-])
-.expectCalls(call => [
-  call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-])
-```
-出典: [docs/examples/it-builder.test.ts](../examples/it-builder.test.ts)
+expectCallsはeffect/scenarioで、環境が提供したBoundaryへの条件だけを返せます。純粋関数や任意object/keyには提供しません。境界の呼び出し記録は状態/actionの観測記述に変換できません。
 
-expectは結果・例外、expectCallsは呼び出しを検証します。
-どちらもコールバックから1つ以上のアサーションを配列で返します。
-空配列、マッチャの呼び忘れ、配列のreturn忘れは型エラーです。
+errorがなければ正常終了を期待します。errorと状態/action/expectCallsは併用できます。errorとresult/property/relateは混在できず、calls/scenarioにはerrorを提供しません。
 
-一方だけでもケースとして完成します。両方書く場合はどちらの順でもよく、それぞれ1回だけ設定できます。
-複数の条件は、それぞれの配列に並べます。期待を書いた後にargs・mock・timeout・retryを変更することはできません。
+## mock
 
-| 期待の内容 | 期待する終了 |
-|---|---|
-| expectでresultを返す | 正常終了 |
-| expectでerrorを返す | throw / reject |
-| expectCallsだけを書く | 正常終了 |
-| expectでresultとerrorを混在させる | 型エラー。実行時も不正な期待として失敗 |
+任意mockはありません。入力/操作前にreplaceで許可された境界の応答を設定します。同じ境界のreplaceは一度だけで、対象自身や操作集合の構成要素は置換できません。
 
-判断に使うのは返された記述子です。返していないマッチャを呼んでも、期待や記録対象には追加しません。
+## timeout / retry
+
+入力/操作を決める前に個別の期限・再試行回数を設定します。retryはケース全体、eventuallyは状態の読み取りだけを繰り返します。
 
 ## 呼び出し条件を先に構造化する
 
-expectCallsのコールバックは定義時に1回評価します。
-`call(obj, key)` はメソッドを呼ばず、マッチャがobject・key・条件を持つ記述子を作ります。
-それをblueprintへ保持するため、実行器はテスト対象を呼ぶ前に記録対象を確定できます。
-mockやspyの事前登録は不要で、別途importする補助関数もありません。
-
-この段階ではmiddlewareは未実行です。静的な参照・引数はそのまま保持し、`call.from` と `calledWithFrom` / `calledOnceWithFrom` / `calledNthWithFrom` はctxから取得するresolverを保持します。resolverは各attemptの記録設定前に評価します。[動的な呼び出し条件](api-expect.md#middlewareで生成した参照・値を検証する)を参照してください。
+compileで境界トークンと条件を解決し、beforeの観測準備後に記録を設定します。記録対象はtarget開始からsettleまでです。argsFromや観測器の動作を対象の呼び出しへ混ぜません。
 
 ## 結果の期待を組み立てる時点
 
-expectのコールバックは各試行でテスト対象の呼び出しが終わった後に1回評価します。
-`e.ctx` はmiddlewareが渡した値を順に反映したコンテキストで、`e.result` と `e.error` は記述子を作るためのマッチャです。
-対象が例外を投げた場合もresultの記述子は作れますが、実際の終了と合わなければ失敗します。
-コールバック自体のthrowはテストの失敗であり、テスト対象に期待した例外として扱いません。
-
-呼び出しの記述子は既にblueprintにあるため、expectの構築や結果の照合が失敗しても呼び出しの検証は続けます。
-マッチャの一覧は[マッチャ](api-expect.md)、型の仕組みは[型推論](type-inference.md)を参照してください。
+検証ビルダーはtarget前に評価します。e.ctxは実環境、e.resultは実測値を持たない条件ビルダーです。property/relateもrefを組み立てるだけで、述語の実行・比較は必要な観測値が得られた後です。ビルダーのthrowをtargetの期待した例外にはしません。

@@ -23,7 +23,7 @@ case・target・groupのチェーンで `.require(resource)` と宣言する。
   JSON化で失われる追加プロパティを拒否する。変換や欠落で成功扱いにしない。
 - 供給値は検証時に複製する。依存setupのctxは深くfreezeし、consumerへは実行ごとに複製する。
 - setupはbrain側で依存順に先行実行し、実行workerには供給データだけを送る。
-  perWorkerは実行workerごとの寿命を表す。現行の実行workerは1つ。
+  perWorkerは実行workerごとの寿命を表す。process数はケースの意味を変えません。
 - retryでもresourceは再準備しない。別runでは新しく準備する。
 - setup失敗時はその資源を必要とするcaseをcancelし、独立caseを継続。
   resource自身の結果を報告し、runを失敗扱いにする。
@@ -32,7 +32,7 @@ case・target・groupのチェーンで `.require(resource)` と宣言する。
 
 ## 使用例
 
-<!-- example: docs/examples/resources.test.ts#lifecycle -->
+<!-- example: none — 公開APIの記述契約：外部状態の読み取りをeffectで指定 -->
 ```ts
 const database = resource({
   name: 'database',
@@ -61,10 +61,9 @@ const schema = resource({
   },
 })
 
-const queries = new Test().require(schema).target(query)
+const queries = new Test().require(schema).target(effect(query))
   .it('query', t => t.argsFrom(ctx => [ctx.schemaUrl]).expect(e => [e.result.toBe(1)]))
 ```
-出典: [docs/examples/resources.test.ts](../examples/resources.test.ts)
 
 resourceの結果はrunの `resources` に、各定義の `id`・`name`・`scope` とmiddlewareと同じ形の実行結果を記録する。
 `name` と `timeout` はresource定義の省略可能な設定。

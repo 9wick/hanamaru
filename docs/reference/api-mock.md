@@ -1,151 +1,37 @@
-# モック
+# infra境界の代替
 
-オブジェクトのメソッドを、そのケースで使う振る舞いに置き換えます。
-振る舞いを変えたい依存に対して、オブジェクトとメソッド名を指定します。
+実際の効果を観測することを基本とし、直接観測が困難な場合や外部障害の再現にだけ境界の代替を使います。[完結した例と禁止例](../guides/writing-tests.md#infra境界を代替する)を参照してください。
 
-<!-- example: docs/examples/mock.test.ts#mock -->
-```ts
-.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-```
-出典: [docs/examples/mock.test.ts](../examples/mock.test.ts)
+## 境界を選ぶ
 
-モック用の別名は不要です。第3引数は完成した振る舞いを返します。
-このコールバックは定義時に評価し、プロパティの差し替えは実行時に行います。
+environmentの準備中に `scope.boundary(object, key)` でBoundary<F>を作り、nextからケースへ渡します。caseは `replace(ctx => ctx.outbound, m => m.rejects(error))` のようにトークンから選びます。
+
+scopeは環境だけが持ち、next以降には発行できません。トップレベルにboundary構成子はなく、caseへobject/keyを直接渡せません。純粋関数の入口にはenvironment・replace・expectCallsがありません。
+
+環境は信頼境界です。提供者が内部ヘルパーをinfraと偽って登録しないことまでは型で証明しません。APIが防ぐのはcaseからの無制限な介入と、トークンの種類・所有者・寿命の違反です。
 
 ## 振る舞い
 
-| 記法 | 振る舞い | 値の型 |
-|---|---|---|
-| `m.returns(value)` | valueをそのまま返す | メソッドのReturnType |
-| `m.resolves(value)` | valueでresolveするPromiseを返す | 非同期メソッドのawait後の型 |
-| `m.throws(error)` | 同期的にthrowする | unknown |
-| `m.rejects(error)` | rejectするPromiseを返す | 非同期メソッドのみ、理由はunknown |
-| `m.callsFake(fn)` | fnを代わりに呼ぶ | 元のメソッドの関数型 |
-
-<!-- example: docs/examples/mock.test.ts#calls-fake -->
-```ts
-.mock(userRepository, 'save', m => m.callsFake(async input => ({ id: input.name })))
-```
-出典: [docs/examples/mock.test.ts](../examples/mock.test.ts)
-
-fakeの `this` は呼び出し時のreceiverを引き継ぎます。
-resolves/rejectsは同期関数には使えません。returnsに渡したPromiseはそのまま共有されるので、
-非同期の結果を返すモックには通常resolvesを使います。
+returns / resolves / throws / rejectsを境界の型に応じて使います。任意コードを差し込むcallsFakeはありません。Resultの失敗値は戻り値として扱います。
 
 ## 呼び出しごとに動作を変える
 
-<!-- example: docs/examples/mock.test.ts#sequence -->
-```ts
-.mock(api, 'fetch', m => m
-  .rejectsOnce(new Error('temporary failure'))
-  .resolves({ id: 'u1' }))
-```
-出典: [docs/examples/mock.test.ts](../examples/mock.test.ts)
-
-1回目はreject、2回目以降はresolveします。returnsOnce / resolvesOnce / throwsOnce / rejectsOnce / callsFakeOnceを順に並べられます。
-各値とfakeの型は通常動作と同じです。最後にreturns等の通常動作を指定して完成させます。
-onceだけを返す定義は型エラーです。使い切った後に暗黙のundefinedを返しません。
-
-順序は呼び出し開始順で、Promiseの完了順ではありません。各ケース・各試行で先頭へ戻します。
-余ったonceだけでは失敗にしません。必要な回数はexpectCallsで検証します。
-ケース側のmockでは列全体を上書きし、親の列へ部分的に追記しません。
-blueprintにはkind: sequence、onceの非空配列、fallbackの通常動作を保持します。
-該当メソッドの呼び出し条件が失敗した場合、標準CLIの詳細には設定したonceと継続動作の種類も添えます。
-結果の条件参照とblueprintのmocksから、その設定を構造として対応させられます。
+returnsOnce / resolvesOnce / throwsOnce / rejectsOnceを並べ、最後に通常動作を置きます。onceだけでは未完了です。列を使い切った後の暗黙のundefinedはありません。開始順で消費し、試行ごとにリセットします。
 
 ## 共通設定とケースの上書き
 
-<!-- example: docs/examples/user.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-export const users = new Test()
-  .target(createUser)
-  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.result.toEqual({ id: 'u1' }),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ])
-  )
-  .it('保存に失敗したら通知しない', t => t
-    // このケースだけ、共通設定を上書きする。
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.error.toBeInstanceOf(Error),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').notCalled(),
-    ])
-  )
-
-registerTest(users)
-```
-出典: [docs/examples/user.test.ts](../examples/user.test.ts)
-
-同じオブジェクト参照・同じキーへの登録は、外側の親→内側の親→子→ケースの順で上書きします。
-同じスコープ内では最後に書いたものが有効です。兄弟のスコープへは漏れません。
-別の振る舞いを足すときにも同じmockを使います。変更はそのケースだけに適用されます。
-
-`.blueprint()` は各グループ・テストの共通モックをそのノードのmocksに、ケースのモックをCase.mocksに保持します。
-同じスコープ内の再登録は最初の登録位置を保って1件にまとめます。
-実行器はケースへ至る経路の設定を順に重ね、最初の登録位置を保って振る舞いを上書きします。
-[グループごとの設定の例](../guides/grouping.md)も参照してください。
+environmentは境界の権限と実資源を提供し、置換する条件はケースごとに指定します。groupやTestの共通mockはありません。条件の再利用は、許可済みの型付きトークンを受け取る通常のヘルパーで行えます。caseが新たな権限を追加することはできません。
 
 ## 検証
 
-<!-- example: docs/examples/mock.test.ts#verify -->
-```ts
-.expect(e => [
-  e.result.toEqual({ id: 'u1' }),
-])
-.expectCalls(call => [
-  call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
-  call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-])
-```
-出典: [docs/examples/mock.test.ts](../examples/mock.test.ts)
+`expectCalls(c => [c.boundary(c.ctx.outbound).calledOnceWith('hello')])` のように記述します。calledTimes / calledWith / calledOnceWith / calledNthWith / notCalledを提供します。引数型はFから推論します。calledTimesは0以上、calledNthWithは1以上の安全な整数を要求します。
 
-呼び出しを検証するためのmock登録は不要です。expectCallsは任意のメソッドを指定でき、引数は元のメソッドの型に従います。
-モックを設定したメソッドならその振る舞いを使い、設定していなければ本物を呼びます。
-同じオブジェクト・キーに対する差し替えと記録は1つにまとめ、二重には記録しません。
-[マッチャ](api-expect.md)を参照してください。
+calledWithは一致する呼び出しが1件以上、calledOnceWithは合計1回かつ引数一致です。calledNthWithは開始順のn番目だけを照合し、合計回数は別条件です。本物を呼びながら記録する場合も、許可された境界に限ります。
+
+記録はtargetの開始からsettleまでです。実効果・代替環境の効果・呼び出し記録を診断で区別し、境界が呼ばれたことを効果の達成と同一視しません。
 
 ## 差し替えの範囲
 
-通常オブジェクトでは、そのプロパティを通る呼び出しが対象です。
-既に別変数へ保存された通常オブジェクトのメソッド参照は置き換わりません。
+その試行のscopeが発行したBoundaryだけに適用します。同じobject/keyの重複登録、別試行のトークン、対象自身・操作集合の構成要素の置換を拒否します。
 
-CLIで実行する場合は、module namespaceの関数exportも対象です。
-対象関数が依存を直接importしている場合も、同じモジュールからの呼び出しを差し替え・記録できます。
-
-<!-- example: docs/examples/namespace-mock.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import * as data from './data.ts'
-import { calc } from './calc.ts'
-
-export const namespaceMock = new Test().target(calc)
-  .it('依存を差し替える', t => t
-    .mock(data, 'getData', m => m.returns(10))
-    .args()
-    .expect(e => [e.result.toBe(20)])
-    .expectCalls(call => [call(data, 'getData').calledTimes(1)]))
-
-registerTest(namespaceMock)
-```
-出典: [docs/examples/namespace-mock.test.ts](../examples/namespace-mock.test.ts)
-
-[calc.ts](../examples/calc.ts)は[data.ts](../examples/data.ts)のgetDataを直接importし、2倍して返します。
-定義の収集中は本物を使い、fakeは試行中だけ有効になります。試行終了後に復元し、retry時には記録を初期化します。
-同じファイル内のローカル変数への直接呼び出しや、Viteで外部化したモジュール内部のimportには介入しません。
-
-適用前のプロパティdescriptorを保存し、試行終了時に復元します。
-差し替え不能なプロパティ、アクセサ、実行時に非関数だった値は失敗として扱います。
-復元・記録範囲の契約は[実行セマンティクス](../concepts/semantics.md)を参照してください。
+作用するのは登録objectのmethod経由の呼び出しです。保存済み参照やmodule内部へ暗黙に介入しません。アクセサ・非関数・書き換え不能なプロパティは拒否します。適用済みの置換は終了時に逆順で復元し、解放不能なら後続を中断します。

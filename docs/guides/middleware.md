@@ -3,9 +3,9 @@
 `.use(m)` は、各ケースの実行を囲むmiddlewareを登録します。
 資源の取得と解放を同じスコープに書き、`next({ db })` で後続へ値を渡せます。
 
-<!-- example: docs/examples/middleware.test.ts -->
+<!-- example: none — 公開APIの記述契約：外部状態の読み取りをeffectで指定 -->
 ```ts
-import { Test, registerTest, middleware } from 'hanamaru'
+import { Test, registerTest, middleware, effect } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
 
 export const userCount = new Test()
@@ -17,14 +17,13 @@ export const userCount = new Test()
       await db.close()
     }
   }))
-  .target(countUsers)
+  .target(effect(countUsers))
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 
 registerTest(userCount)
 ```
-出典: [docs/examples/middleware.test.ts](../examples/middleware.test.ts)
 
 [この例](../examples/middleware.test.ts)の[サンプルDB](../examples/database.ts)は、3件のユーザーを持つメモリ上の実装です。
 各試行で開き、期待の検証とモックの復元が終わってからcloseします。

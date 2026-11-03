@@ -1,222 +1,46 @@
 # Test ビルダー
 
-`new Test()` から対象・共通設定・ケースをつないで定義します。
-ここではテストを実行しません。
-
-<!-- example: docs/examples/user.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-export const users = new Test()
-  .target(createUser)
-  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.result.toEqual({ id: 'u1' }),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ])
-  )
-  .it('保存に失敗したら通知しない', t => t
-    // このケースだけ、共通設定を上書きする。
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.error.toBeInstanceOf(Error),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').notCalled(),
-    ])
-  )
-
-registerTest(users)
-```
-出典: [docs/examples/user.test.ts](../examples/user.test.ts)
+Testは対象と用途に応じて次の操作を絞ります。全ての具体例・禁止例は[契約からテストを書く](../guides/writing-tests.md)に定めます。
 
 ## 定義の段階
 
-| 段階 | 使える操作 |
-|---|---|
-| テスト対象・子を追加する前 | use、mock、timeout、retry、target、group |
-| テスト対象を決めた後、ケースの前 | use、mock、timeout、retry、it / each / only / skip / todo |
-| 最初のケースを追加した後 | it / each / only / skip / todo、blueprint |
-| 最初のgroupを追加した後 | group、blueprint |
-
-テスト対象は一度決めたら固定します。最初のケース・group以降は共通設定も固定します。
-一つのテスト対象とケースを持つ対象ケース群、子を持つグループのどちらも `new Test()` から作れます。
-グループ自体はテスト対象・ケースを持たず、子ごとに異なるテスト対象をまとめられます。
-useは `.target()` の前後どちらにも書けます。
-各メソッドは新しいビルダーを返すため、元のビルダーから別の派生を作れます。
-
-<!-- example: docs/spec/middleware-types.ts#derive -->
-```ts
-const base = new Test().target(add)
-const tests = base.it('足す', t => t.args(1, 2).expect(e => [e.result.toBe(3)]))
-// @ts-expect-error cases already declared cannot have their context replaced.
-tests.use(middleware(async (_, next) => next({ n: 1 })))
-// Deriving from the builder before any case starts a separate suite.
-base.use(middleware(async (_, next) => next({ n: 1 })))
-```
-出典: [docs/spec/middleware-types.ts](../spec/middleware-types.ts)
+対象・共通設定を決め、ケースを追加します。最初のケース以降は対象と共通設定を変更できません。groupを追加したチェーンにはtargetやケースを追加できません。
 
 ## テスト対象を指定する: target
 
-<!-- example: docs/examples/test-builder.test.ts#targets -->
-```ts
-const byFunction = new Test().target(createUser)
-const byMethod = new Test().target(userRepository, 'save')
-const namedFunction = new Test().target('ユーザー作成', createUser)
-const namedMethod = new Test().target('保存', userRepository, 'save')
-```
-出典: [docs/examples/test-builder.test.ts](../examples/test-builder.test.ts)
+| 指定 | 意味 | ケース入口 |
+|---|---|---|
+| target(fn)、target(obj, key) | 純粋な関数・メソッド | it / each |
+| target(effect(fn))、target(effect(obj, key)) | 外部状態を読む、または変える関数・メソッド | it / each |
+| target(relation({ encode, decode })) | 純粋な関数群の関係 | it / each |
+| target(scenario({ create, rename, read })) | 順序を持つ公開操作の集合 | flow |
 
-関数、またはオブジェクトとメソッド名を渡します。先頭に名前を付けることもできます。
-複数関数間の関係を対象にする場合は`target('codecの往復関係', relation({ encode, decode }))`と書けます。
-relationは空でない名前付きの関数群を保持し、そのケースでは`.calls()`で呼ぶ関数と引数を指定します。
-名前を省略すると、構成要素のキーを` / `でつないだ名前を使います。宣言するだけでは呼び出しや検証は行いません。
-[複数の呼び出しで契約をテストする](../guides/multiple-calls.md)を参照してください。
-後者は `this` をそのオブジェクトに束縛します。非関数のキーや省略可能なメソッドは型エラーです。
-関数の型から、argsの `Parameters<F>` とresultの `Awaited<ReturnType<F>>` が決まります。
-名前を省略すると関数名、メソッド形式ではメソッド名を使います。名前のない関数には `anonymous` を使います。
-名前は表示用であり、ソース上の識別情報とは扱いません。`new Test()` 自身に名前や実行階層はありません。
-
-## group
-
-<!-- example: docs/examples/group-scopes.test.ts#group -->
-```ts
-const userGroup = new Test()
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .group('ユーザー', [createTests, saveTests])
-```
-出典: [docs/examples/group-scopes.test.ts](../examples/group-scopes.test.ts)
-
-関連するテストを一つのグループにまとめ、共通設定の範囲を作ります。完成済みの対象ケース群またはグループを、空でない配列で渡します。子が一つでも配列にします。
-名前は任意で、一意性も要求しません。
-`group(name, [children])` の名前はその呼び出しで作るグループの名前であり、元の子の名前を変更しません。一回の呼び出しで一つの子グループを追加します。
-親のmock・use・timeout・retryは配下の全ケースへ、子の設定はその子の配下だけへ適用します。
-同じ子を別の親や同じ親の複数箇所へ合成することもでき、それぞれ独立した実行箇所になります。
-
-`group(middleware, [children])` では、middlewareをそのまとまり全体に一度だけ適用できます。`next(fields)` が渡す型は全子のコンテキストへ供給されます。名前付きは `group(name, middleware, [children])` です。
-通常の `.use()` が各caseの各attemptを囲むのに対し、group middlewareは追加した子グループ全体を囲みます。
-
-子は元のコンテキストの型を保ちます。親のコンテキストが必要な子は `new Test<Ctx>()` で要求する型を宣言します。
-group前処理で使う値も、要求は同じ `new Test<Ctx>()` に書きます。値を必要とする時点はmiddlewareの配置から追跡し、供給が間に合わない構成は合成箇所で型エラーにします。
-親がその型を満たさなければgroupで型エラーになります。詳しくは[テストをグループにまとめる](../guides/grouping.md)を参照してください。
-
-## timeout / retry
-
-`.timeout(ms)` と `.retry(count)` は `.target()` の前後に設定でき、groupにも引き継がれます。
-内側で明示した項目だけを上書きし、各ケースのtでも変更できます。最初のケース・group以降は共通設定を固定します。
-既定値はtimeoutが5,000ms、retryが0です。
-[timeoutとretry](../guides/execution-options.md)に設定の解決順・表示・停止保証を記載しています。
+先頭に表示名を付けられます。対象は一度だけ指定し、型は実際の関数から推論します。effectはアプリ関数を変更せず、テストの対象宣言にだけ付けます。オブジェクトとキーの形式はthisを束縛します。
 
 ## use
 
-<!-- example: docs/examples/middleware.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-import { createDatabase, countUsers } from './database.ts'
+middlewareは全種類、environmentはeffect/scenarioだけが受け付けます。環境を使う場合はtargetを先に指定します。environmentのscopeが発行するState・Action・Boundaryトークンをnextでケースへ渡します。[環境の完結例](../guides/writing-tests.md#環境と観測)を参照してください。
 
-export const userCount = new Test()
-  .use(middleware(async (_, next) => {
-    const db = await createDatabase()
-    try {
-      return await next({ db, expected: 3 })
-    } finally {
-      await db.close()
-    }
-  }))
-  .target(countUsers)
-  .it('ユーザー数を取得する', t => t
-    .argsFrom(ctx => [ctx.db])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
+## group
 
-registerTest(userCount)
-```
-出典: [docs/examples/middleware.test.ts](../examples/middleware.test.ts)
-
-ケースの各試行を囲むmiddlewareを登録します。定義時には実行しません。
-`middleware(fn, options?)` が返す値だけを受け取り、関数をそのまま渡すと型エラーです。
-nextに渡したフィールドの型が、middlewareから返す完了値を通じて後続のコンテキストへ伝わります。
-追加がなければ `return await next()` と書けます。値を渡すだけなら `next(fields)` だけを呼びます。
-DB等の資源は `{ db }` のようにフィールドへ入れます。
-
-<!-- example: docs/examples/test-builder.test.ts#stacked -->
-```ts
-const stacked = new Test()
-  .use(middleware(async (_, next) => next({ a: 1 })))
-  .use(middleware(async (ctx, next) => next({ expected: ctx.a + 2 })))
-  .target(add)
-  .it('middlewareを積み重ねる', t => t
-    .argsFrom(ctx => [ctx.a, 2])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
-```
-出典: [docs/examples/test-builder.test.ts](../examples/test-builder.test.ts)
-
-各ケースの各試行は新しい `{}` から始め、親から子の順にmiddlewareを実行します。
-最終的なコンテキストがargsFromと`e.ctx`に渡ります。同名のフィールドは後の値・型を優先します。
-use・mockは最初のケース・groupより前に登録します。
-コンテキストのフィールドは読み取り専用ですが、フィールドが参照するオブジェクト自体は共有します。
-
-nextは後続のmiddleware・対象・期待の検証・復元を囲みます。
-グループでも各試行ごとに呼び、後処理は内側から外側へ戻ります。
-finallyで解放する場合は `return await next(...)` として、完了を待ってから片付けます。
-nextの未呼び出し・複数回・待機漏れは実行時に検査します。
-optionsの `timeout` は前処理・後処理のそれぞれへ適用する期限で、既定値は10,000msです。
-詳しくは[middleware](../guides/middleware.md)と[実行セマンティクス](../concepts/semantics.md)を参照してください。
+完成した子を合成し、middleware・timeout・retryの範囲を定めます。environmentやreplaceをgroupへ置くことはできません。高価な資源はgroup middleware、試行トークンは子のenvironmentで扱います。[グループ](../guides/grouping.md)に従います。
 
 ## mock
 
-<!-- example: docs/examples/mock.test.ts#mock -->
-```ts
-.mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-```
-出典: [docs/examples/mock.test.ts](../examples/mock.test.ts)
+任意object/keyを受け取るmockはありません。ケース内の `replace(ctx => ctx.boundary, behavior)` により、環境が許可した境界だけを代替できます。[infra境界](api-mock.md)に従います。
 
-配下のケースに共通するモックを定義します。対象と振る舞いを一緒に指定します。
-同じオブジェクトの同じキーへの登録は、同一スコープ内では後勝ち、階層間では内側を優先します。
-ケース内の同じ `.mock()` で、そのケースだけ上書きできます。
-モックは[モックAPI](api-mock.md)に詳しく記載しています。
+## timeout / retry
+
+共通設定はケース追加前、個別設定はケースの入力・操作の確定前に指定します。[実行設定](../guides/execution-options.md)に従います。
 
 ## it / only / skip / todo
 
-<!-- example: docs/examples/case-modes.ts#modes -->
-```ts
-.it('保存する', t => t.args({ name: 'Alice' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
-.only('集中して確認する', t => t.args({ name: 'Bob' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
-.skip('修正待ち', t => t.args({ name: 'Carol' }).expect(e => [e.result.toEqual({ id: 'u1' })]))
-.todo('送信失敗時の扱い')
-```
-出典: [docs/examples/case-modes.ts](../examples/case-modes.ts)
-
-it / only / skipは、ケース名と、expectまたはexpectCallsを1つ以上設定したケースを返すコールバックを受け取ります。
-expectとexpectCallsはそれぞれ1回ずつ、どちらの順でも書けます。
-todoは名前だけを受け取ります。名前の一意性は要求しません。
-ケース内で追加・上書きしたモックは次のケースに漏れません。
-
-実行器に渡すテスト全体にonlyがあればonlyだけを実行します。skipとtodoではmiddleware・テスト対象を呼びません。
-詳細は[it ビルダー](api-it.md)と[実行セマンティクス](../concepts/semantics.md)を参照してください。
+itは名前と完成ケースを返すコールバックを受け取ります。only / skipはitと同じ形で選択だけを変えます。todoは名前だけを受け取り未実行を表します。scenarioはflowで定義し、この版ではflow専用のonly/skip/todoは提供しません。CLIの選択は使用できます。
 
 ## each
 
-`each(name, rows, body)` で行ごとのケースを追加します。
-bodyは `(t, row) => ...` の形で、tの操作はitと同じです。eachの後にitや別のeachを続けられます。
-行から引数と期待値の型を検査し、最初のeach以降は共通設定を固定します。
-[each](../guides/each.md)にそのまま使える例と、行名・位置・実行の契約があります。
+対象の型とrowからケースを推論します。各行は独立した完成ケースです。each内にはforAllを提供しません。[each](../guides/each.md)に従います。
 
 ## blueprint（プラグイン向け）
 
-<!-- example: docs/examples/metadata.ts#blueprint -->
-```ts
-const blueprint = users.blueprint()
-```
-出典: [docs/examples/metadata.ts](../examples/metadata.ts)
-
-1ケース以上あるテスト、または完成済みの子を1つ以上持つグループから、読み取り専用のblueprintを取得します。
-todoだけの定義も含みます。
-middleware・テスト対象は実行しません。戻り値の構造は[プラグイン向けblueprint](metadata.md)を参照してください。
-CLIに収集させるファイルでは、必要なコンテキストを用意したルートを `registerTest` に渡します。詳しくは[テストの登録](../guides/registration.md)を参照してください。
+完成した定義から[blueprint](metadata.md)を取得できます。対象kind・入力kind・検証ビルダー・許可済み境界の代替を保持し、定義時に環境・targetを実行しません。
