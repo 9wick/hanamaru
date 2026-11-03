@@ -8,7 +8,7 @@ CLIのJSON出力はRunResultです。各トップレベルノードのsourceは�
 
 ## 宣言位置
 
-it / only / skip / todo / each / flowには、宣言したテストソースの `origin: { file, line, column }` を保持します。
+it / property / only / skip / todo / eachには、宣言したテストソースの `origin: { file, line, column }` を保持します。
 groupには、そのgroup呼び出しの位置をGroupBlueprint.originとGroupResult.originに保持します。親から子を追加した位置はGroupEntry.originと結果の子要素にも残します。
 一回の `group(name, [first, second])` で作ったグループと、その配列内の各子の追加位置は、同じgroup呼び出しの位置です。first・second自身が定義された位置は変更しません。
 fileは絶対パス、ソース行番号・列番号は1始まりです。wrapper内でitを呼んだ場合は、そのitの位置を指します。
@@ -69,8 +69,12 @@ CaseResultにはname・origin・path・row・適用したconfig・durationMs・a
 通常ケースのrowはnullです。eachのrow.valueはケースの最初の試行開始前、未実行なら結果作成時に診断値へ取り込みます。eachのデータ行番号はrow.indexに0始まりで残し、表示するときだけ1始まりにします。
 
 durationMsは最初の試行開始からケース終了・中断までの実時間で、未実行なら0です。
-attemptsは実行順で、attemptは1始まりです。各試行のdurationMsもmiddlewareの前処理開始から後始末終了・中断までを測ります。各試行に状態・時間・テスト対象の終了・アサーションの評価・失敗・後始末の状態を残します。
-失敗は各試行のfailuresにだけ保持します。最後に成功しても過去の試行を消しません。
+attemptsは実行順で、attemptは1始まりです。各試行のdurationMsは候補生成開始（itでは前処理開始）から全後始末終了・中断までを測ります。各試行に状態・時間・評価列・失敗・後始末の状態を残します。
+失敗は各試行のfailuresに保持し、各failureは評価番号または試行全体の段階に対応します。最後に成功しても過去の試行を消しません。
+
+CaseResultはcaseKind（example/property）とcharacteristic（pure/effectful）を保持します。各attemptのevaluationsは入力・targetのoutcome・条件結果・cleanupを持ち、失敗はattempt.failuresのindexで参照して重複保存しません。itは一評価、propertyは生成/縮小の評価列です。生成前に失敗した場合はevaluationsを空とし、試行全体の失敗を残します。
+
+propertyのattemptはseed・生成器の形式バージョン・設定、各評価のkind（generated/shrink）とsample番号、元の反例、縮小経路・採用した反例、打切り理由を保持します。縮小候補の成功は元の契約違反を取り消しません。再現には保存した生成タプルを使い、DB接続などの実資源を再現入力へ混ぜません。
 
 ### 試行の有無と未実行の理由
 
@@ -96,9 +100,9 @@ attemptsは実行順で、attemptは1始まりです。各試行のdurationMsも
 これらはreporterやrunの集約時に計算します。CaseResultにstatus・flaky・failuresの写しを追加せず、JSONにも出しません。
 名前・位置・設定・各試行だけで、どのケースをどう実行し、どの試行がどう終わったかを確認できます。
 
-正常終了はoutcome.kind: return、例外はthrowとして値を保持します。対象を呼んでいなければoutcomeはnullです。
+各評価の正常終了はoutcome.kind: return、例外はthrowとして値を保持します。対象を呼んでいなければoutcomeはnullです。
 Promiseの完了を観測できない中断でもnullとし、成功の戻り値を推測しません。
-診断へ値を取り込むのは検証時点です。後始末で参照先が変わっても保存済みの報告は変えません。
+診断には入力・結果・観測ごとの取得時点で保存した値を使います。後始末で参照先が変わっても保存済みの報告は変えません。
 
 ## 失敗の構造
 
@@ -111,7 +115,7 @@ Promiseの完了を観測できない中断でもnullとし、成功の戻り値
 | timeout | 発生段階、timeoutMs、後始末の完了状態。middlewareでは前処理・後処理の区別も残す |
 
 全てにphaseと人間向けmessageを保持します。phaseはprepare / compile / before / instrumentation / target / observe / assert / cleanupを区別します。messageを解析しなくても、条件・期待・観測・原因が分かります。
-アサーションの参照にはsource（expect / property / relate / expectCalls）、その配列内の0始まりのindex、subject、matcherを持ちます。
+アサーションの参照にはsource（expect / expectCalls / law）、その配列内の0始まりのindex、subject、matcherを持ちます。
 不一致・状態の不変・actionの不発生はそれぞれの用途として識別し、共通の否定フラグへ潰しません。部分検証の対象、関係の双方の値、観測時点・期間・完了条件、代替したinfra境界も診断に残します。
 callにはkeyも残し、sourceとindexからblueprint内のオブジェクト参照へ対応できます。同名メソッドを持つ別オブジェクトを混同しません。
 各配列はtarget前のcompileで構築します。条件のindexは別条件の成功・失敗でずれません。compile自体が失敗した場合はまだ得ていない条件を捏造しません。

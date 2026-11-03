@@ -22,7 +22,7 @@ registerTest(addition)
 
 rowは行データから、argsとresultはテスト対象から型推論します。
 行はオブジェクトでもタプルでも渡せます。IDや行名の追加登録は不要です。
-tは対象の種類に対応するitと同じビルダーです。pureは結果・性質・関係、effectは状態/actionと許可済み境界も扱えます。各行のforAllやscenarioのstepsは提供しません。
+tは対象の種類に対応するitと同じビルダーです。itなので具体値・部分・例外が基本で、effectfulは状態/actionと許可済み境界も扱えます。性質は別のpropertyケースに書きます。各行のforAllやscenarioのstepsは提供しません。
 各行で、引数と一つ以上の期待を設定した完成済みのケースを返します。
 
 名前に関数を渡すこともできます。

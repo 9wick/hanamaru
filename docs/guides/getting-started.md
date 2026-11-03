@@ -79,7 +79,7 @@ npx hanamaru src/math.test.ts
 
 ## 副作用は実際の効果を確かめる
 
-`target(effect(fn))` で副作用を扱う入口を選び、use(environment(...))が渡す観測トークンを期待へ指定します。[環境から登録までのコード例](writing-tests.md#環境と観測)を参照してください。
+`target(fn).effectful()` で副作用を扱う入口を選び、use(environment(...))が渡す観測トークンを期待へ指定します。[環境から登録までのコード例](writing-tests.md#環境と観測)を参照してください。
 
 ユーザー登録なら、targetへ登録情報を渡し、保存されたユーザーと今回届いたメールを観測します。
 
@@ -129,7 +129,7 @@ registerTest(contextAddition)
 ```
 出典: [docs/examples/context.test.ts](../examples/context.test.ts)
 
-middlewareは各ケースの各試行で実行します。`next(fields)` に渡した型が `argsFrom` と `e.ctx` に伝わります。
+middlewareは各評価で実行します。itは試行ごと、propertyは生成例・縮小候補ごとです。`next(fields)` に渡した型が `argsFrom` と `e.ctx` に伝わります。
 資源の取得と解放を同じ場所に書く場合は、nextをtry / finallyで囲みます。詳しくは[middleware](middleware.md)を参照してください。
 共通設定は最初のケース・groupの前に書き、追加した後の変更は型で防ぎます。
 

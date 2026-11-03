@@ -1,77 +1,40 @@
-# 複数の呼び出しで契約をテストする
+# 複数実行を必要とする性質を検証する
 
-関数間の関係や、一つの関数を異なる引数で呼んだ結果を、一つのケースで検証します。対象はtargetへ固定し、callsでその対象への入力と結果の受け渡しを記述します。
+冪等性や往復関係はpropertyで検証します。target(fn)に自由なcallsを提供せず、propertyの法則が必要な実行を管理します。具体例のitに入力生成や任意述語を混ぜません。
 
 ## encodeとdecodeの往復を確かめる
 
-関係を対象にする場合は、名前付きの関数群をrelationへ渡します。対象外の関数をケースから追加することはできません。
-
-<!-- example: docs/examples/multiple-calls.test.ts#codec -->
+<!-- example: none — 公開APIの記述契約：関数間の性質 -->
 ```ts
-import { Test, registerTest, relation } from 'hanamaru'
-
-const encode = (value: string) => new TextEncoder().encode(value)
+import { Test, relation, strings, tuples, roundTrip, registerTest } from 'hanamaru'
+const encode = (text: string) => new TextEncoder().encode(text)
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
-const input = 'こんにちは'
-
-const codec = new Test()
-  .target('codecの往復関係', relation({ encode, decode }))
-  .it('元の値に戻る', t => t
-    .calls(c => {
-      const encoded = c.encode.args(input)
-      return c.decode.args(encoded)
-    })
-    .expect(e => [e.result.toBe(input)]))
-
-registerTest(codec)
+registerTest(new Test().target(relation({ encode, decode })).pure()
+  .property('往復する', p => p.forAll(tuples(strings()))
+    .law(roundTrip('encode', 'decode'))))
 ```
 
-encodedは実行前の呼び出し記述です。実行器がencodeの完了を待ち、その結果をdecodeへ渡します。ここで確かめるのは、指定した入力で往復すると元の値へ戻ることです。
+relationはpureな変換の集合です。法則は対象キーと単一引数の型を検査し、decode(encode(x))と最初の入力を比較します。最初の入力は実行前に保存し、最終結果の変更へ追従させません。法則を作るために別のテスト対象関数で包ませません。
 
-## 同じ関数を二種類の引数で呼ぶ
+## 同じ関数の冪等性
 
-同じ関数の結果間の関係を確かめる場合は、targetを増やしません。
-
-```text
-対象: relationKey
-一つ目の入力: ab, c
-二つ目の入力: a, bc
-期待する関係: 二つの結果が異なる
-```
-
-結果を名前付きで参照し、`.relate(r => [r.different(r.result.field('first'), r.result.field('second'))])` と書きます。[コード例と禁止例](writing-tests.md#関係)に従います。単独の具体値の期待を汎用notで弱める書き方とは区別します。この二例の結果が異なることを、全入力で衝突しない保証にはしません。
-
-## 一回の呼び出しは従来どおり書く
-
-一つの具体的な期待結果を確かめる場合は、対象へ引数と期待値を直接指定します。
-
-<!-- example: docs/examples/multiple-calls.test.ts#single -->
+<!-- example: none — 公開APIの記述契約：冪等性 -->
 ```ts
-.target(relationKey)
-.it('二つの値からキーを作る', t => t
-  .args('ab', 'c')
-  .expect(e => [e.result.toBe('["ab","c"]')]))
+import { Test, strings, tuples, idempotent, registerTest } from 'hanamaru'
+const normalize = (text: string) => text.trim()
+registerTest(new Test().target(normalize)
+  .it('空白を除く', t => t.args(' hello ').expect(e => [e.result.toEqual('hello')]))
+  .property('冪等', p => p.forAll(tuples(strings())).law(idempotent())))
 ```
 
-## callsは操作を実行せず、呼び出しを記述する
+idempotentはpureな単一引数関数で正常結果を再入力できる型に限ります。一評価内でf(x)とf(f(x))を順に実行し、取得した時点の保存値を比較します。
 
-args / argsFromとcallsは択一です。呼び出し記述は型付きの結果参照であり、定義時の実測値として計算・分岐できません。結果参照を別の呼び出しの入力へ渡すと、実行器が依存順に実行します。
+## 具体例と性質を混同しない
 
-同じ呼び出し記述は一試行に一度実行します。同じ引数でも別々に記述した呼び出しは別の実行です。検証する結果に結び付かない記述を、副作用を起こすためだけに並べることはできません。
-
-## targetから書ける呼び出しを絞る
-
-- 呼べるのは宣言したtargetまたはrelationの構成要素だけです。
-- 引数と結果参照の型は対象から推論します。型や保存用IDを重ねて書きません。
-- 空の結果、引数との型不整合、別ケースの参照、循環を拒否します。
-- 比較は実際に得られた入力・結果の参照を使い、具体値・性質・関係の用途を区別します。
-
-型で表せる不正は定義時に拒否し、動的な不正は実行受付で検査します。
+itは具体的な入力と期待結果、propertyは入力生成と成立する性質を持ちます。lawはproperty専用で、expect/argsFrom/stepsと併用しません。異なる入力を手書きで呼んで比較する汎用callsを、具体例に開放しません。
 
 ## 実行と検証の範囲
 
-一つのケース・試行として実行します。他のケースの結果や順序には依存できません。値の依存がない呼び出し同士の順序は保証せず、状態を変える操作の順序は[flow](flow.md)で明示します。
+一つの法則の内部では実行結果を次へ渡しますが、生成例や縮小候補の間は評価を分離します。lawは全呼び出しの正常完了を期待し、途中の例外と未実行の後続を報告します。反例の生成・縮小・再現は[公開構文](writing-tests.md#入力の生成と縮小と再現)に従います。
 
-必要な結果が得られなければ、依存する後続の実行・検証を成功にしません。失敗した対象・入力・原因と、実行済み・未実行・未評価を区別します。期待する失敗もtargetの契約に従い、正常結果を必要とする関係に失敗を混入させません。
-
-callsはpure単一・relationに限り、副作用を伴う操作はscenarioのstepsへ書きます。effect/scenarioでは状態/actionの観測と許可済み境界の呼び出し条件を組み合わせられます。
+状態を持つ操作間の性質は、effectfulなscenarioのpropertyへ操作列を書きます。[操作列](flow.md)を参照してください。

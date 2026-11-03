@@ -66,7 +66,7 @@ npx hanamaru --project e2e
 ```
 
 `e2e` projectは `e2e/root.ts` を読み、そのファイルの登録を収集します。この例では `users` と `orders` を別ファイルからimportしています。子のexportはこのimportに使うだけで、CLIへの登録にはなりません。子もルートも同じファイルに書けます。
-実行時はgroup全体でDockerを共有し、各ケースのデータの準備・復元は子の `.use()` で各attemptを囲む構成にできます。
+実行時はgroup全体でDockerを共有し、各ケースのデータの準備・復元は子の `.use()` で各評価（propertyの生成例・縮小候補を含む）を囲む構成にできます。
 環境を共有してもcase間の順序依存は許しません。取得・解放・コンテキスト供給の詳しい書き方は[group全体をmiddlewareで囲む](grouping.md#group全体をmiddlewareで囲む)を参照してください。
 
 Dockerやgroupはe2eという名前に必須ではありません。各ファイルに単独実行できるルートがあるなら、`e2e: { include: ['e2e/**/*.test.ts'] }` のように複数ファイルを選べます。逆に、この例の `users` を親の供給なしで登録すると型エラーになります。親を必要とする子はgroupへ渡し、供給を含むルートを登録します。詳しくは[登録の契約](registration.md)を参照してください。

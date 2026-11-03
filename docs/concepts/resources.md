@@ -61,7 +61,7 @@ const schema = resource({
   },
 })
 
-const queries = new Test().require(schema).target(effect(query))
+const queries = new Test().require(schema).target(query).effectful()
   .it('query', t => t.argsFrom(ctx => [ctx.schemaUrl]).expect(e => [e.result.toBe(1)]))
 ```
 

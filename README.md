@@ -34,9 +34,11 @@ registerTest(addition)
 
 ## 契約に合わせて検証を選ぶ
 
-[具体的な書き方と禁止例](docs/guides/writing-tests.md)では、pure・effect・relation・scenarioの選択から、環境・観測・期待・登録までを示します。
+[具体的な書き方と禁止例](docs/guides/writing-tests.md)では、対象・pure/effectful・it/propertyの選択から、環境・観測・期待・登録までを示します。
 
-具体例・性質・関係は検証の方法です。戻り値・状態・actionは検証する対象であり、組み合わせて使います。
+targetは対象を、pure()/effectful()は特性を、it/propertyはケースの種類を選びます。省略時はpureで、pure()の明示と同じ意味です。特性はケース追加前に一度だけ宣言でき、途中で切り替えられません。
+
+具体例はit、入力範囲に対する性質は並列のpropertyに書きます。expectはそのケース内の期待です。冪等性など複数実行の関係も性質に含み、通常のitにcallsを提供しません。
 
 | 確かめたい契約 | 書く内容 |
 |---|---|
@@ -66,7 +68,7 @@ registerTest(addition)
 | 共有リソースの依存関係と寿命を管理する | [resource](docs/concepts/resources.md)：必要なテストだけに共有環境を用意する |
 | 制限時間や再試行を指定する | [timeout・retry](docs/guides/execution-options.md)：共通設定またはケースごとに指定する |
 
-各試行では、hanamaruが管理するモック、コンテキスト、呼び出し記録を作り直します。外部DBやモジュール内の状態は自動では復元しないため、必要な初期化や後始末はmiddlewareなどに書きます。
+各評価では、hanamaruが管理する境界の代替、コンテキスト、観測・呼び出し記録を作り直します。propertyでは生成例・縮小候補の間でも初期化します。外部DBやモジュール内の状態は自動では復元しないため、必要な初期化や後始末はmiddlewareなどに書きます。
 
 ## 実行して、失敗の理由を確認する
 
@@ -101,8 +103,8 @@ Node.js 22.18以上、Bun 1.3以上、Deno 2.9.2以上に対応しています�
 - [設計思想](docs/concepts/concepts.md)
 - [具体的な書き方と禁止例](docs/guides/writing-tests.md)
 - [入門ガイド](docs/guides/getting-started.md)
-- [複数の呼び出しで契約をテストする](docs/guides/multiple-calls.md)
-- [シナリオ全体を検証するflow](docs/guides/flow.md)
+- [複数実行を必要とする性質を検証する](docs/guides/multiple-calls.md)
+- [操作列の具体例と性質](docs/guides/flow.md)
 - API：[Test](docs/reference/api-test.md) / [ケース](docs/reference/api-it.md) / [マッチャ](docs/reference/api-expect.md) / [モック](docs/reference/api-mock.md)
 - [型推論](docs/reference/type-inference.md) / [実行の仕組み](docs/concepts/semantics.md)
 - [プラグイン向けblueprint](docs/reference/metadata.md)

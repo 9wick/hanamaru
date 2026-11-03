@@ -1,80 +1,78 @@
 # プラグイン向けblueprint
 
-blueprintは利用者が書いた対象・入力・観測・検証を構造として保持します。取得しても環境・target・観測器・述語を実行しません。登録・実行とは別の操作です。
+blueprintは対象・特性・ケース種類を独立に保持します。取得しても環境・target・観測・生成器を実行しません。利用者がIDや内部構造を書き直す必要はありません。
 
 ## blueprintの構造
 
 | 構造 | 内容 |
 |---|---|
-| Definition | 共通設定とgroupの列 |
-| Group | 表示名、宣言位置、group middleware、非空の子 |
-| Suite | target、attempt middleware/environment、実行設定、非空のケース |
-| Target | kind: pure / effect / relation / scenarioと対象参照。relation/scenarioは非空の名前付き関数群 |
-| Case | 名前・位置・実行指定、入力/操作、検証ビルダー、境界代替、実行設定 |
-| Input | kind: args / args-from / calls / generated / stepsのいずれか。種類ごとの必須値を持つ |
-| Checks | expect / property / relate / expectCallsの登録済みビルダー。各入口は一度だけ |
-| Replacement | environmentのBoundaryを選ぶresolverと、型に対応する応答列・通常動作 |
+| Definition / Group | 共通設定、group middleware、非空の子と宣言位置 |
+| Suite.target | shape: single / relation / scenario、対象の関数参照または名前付き集合 |
+| Suite.characteristic | pure / effectful。省略時pureと明示pureは同じ実行値 |
+| Suite.cases | kind: example / property / todoの判別可能なunion |
+| ExampleCase | 具体的な引数またはsteps、expect/expectCalls、境界代替、設定 |
+| PropertyCase | 生成記述、seed/runs/maxShrinks、検査計画、境界代替、設定 |
+| PropertyPlan | kind: single / scenario / lawと、そのkind固有の必須値 |
+| TodoCase | 名前・位置・未実行の指定。入力や検証なし |
 
-Inputは省略可能フィールドの集合ではなく判別可能なunionです。argsは引数、args-fromはビルダー、callsは構築済み依存グラフ、generatedは生成記述とseed/runs、stepsはctxを受け取るビルダー関数を保持します。定義時のInput.stepsには、まだ操作列はありません。未完了の定義はblueprintの実行対象になりません。todoは入力・検証を持たない別のvariantです。
+ビルダーの明示特性宣言済みフラグは、pure/effectfulを二度呼ぶことを防ぐ型の状態です。完成blueprintの実行意味には省略と明示の差を持たせません。sourceへ明示の有無を保持する場合も実行権限を変えません。
 
-Checksは結果/例外だけを意味しません。状態のみ・actionのみでも完成できます。入力と最低一つの完成条件を必要とし、生成入力ではpropertyまたはrelateを要求します。種類ごとの制約は[型推論](type-inference.md#完成条件)に従います。
+ExampleCaseの入力はargs / args-from / stepsのunionです。singleのPropertyPlanは直接の生成引数またはargsFrom、scenarioはstepsビルダー、lawはブランド付き法則と対象キーを保持します。lawと独自のexpect/expectCallsは混在しません。
 
 ## グループの階層
 
-groupは高価な資源と共通設定のスコープです。親から子へ値の供給と設定を解決し、子の定義を書き換えません。環境の共有はケース間の意味的な順序依存を許可しません。名前は表示用で、位置と構造でケースを対応させます。
+groupは資源・共通設定のスコープです。完成した子を合成し、そのtargetの特性やケース種類を変更しません。environmentはeffectfulな子のuseで各評価に適用し、groupに直接登録できません。
 
-## 呼び出しの記述
+## 操作と法則の記述
 
-callsは対象のキー、引数、先行結果へのrefを保持します。返された結果へ到達する呼び出しだけが実行対象です。stepsのビルダーはprepare後のcompileで評価し、CompiledInput.stepsに全操作を順序付きで保持します。未使用の戻り値を理由に操作を除外しません。
+stepsは定義時にはビルダー関数です。環境準備後、propertyならsampleも揃ったcompileで初めて順序付き操作列へ変換します。全操作を実行し、未使用の戻り値を理由に省略しません。
 
-呼び出し/操作のrefはケースに属します。引数や返却に異なるケースのrefを使うこと、循環・前方参照・対象外の関数を含むことを受付で拒否します。関数内部を解析して依存や副作用を推測しません。
+法則は定義時にkindと型に対応する対象参照を保持します。idempotentは同じ関数を二回、roundTripは指定した二関数を順に実行する計画になります。自由なcallsグラフや任意の関数を実行するコールバックはblueprintに受け付けません。
 
 ## compile前後の入力
 
-Inputは定義時のデータです。CompiledInputは試行ごとの解決済みデータで、args-fromは実引数、stepsは操作列へ変換します。callsは定義済みの依存グラフを試行へ結び付け、generatedは当該サンプルの引数とseed・番号へ変換します。プラグインがblueprintからstepsの全操作を取得できるとは保証せず、実行結果でcompileした操作列と結果を対応させます。
+定義にはresolverとビルダーを保持し、CompiledInputにはその評価の引数・操作列・法則計画を保持します。propertyの生成sampleは対象に渡す前に独立した値として保存し、argsFromやtargetの変更から再現情報を守ります。
+
+sample・args・各操作のrefを、それぞれケース・試行・評価番号へ結び付けます。別候補や別試行の参照を持ち込むことを拒否します。blueprintから環境依存の操作列を事前に取得できるとは約束しません。
 
 ## 期待と観測の記述
 
-ビルダーは各試行の準備後・target前に一度評価し、CompiledChecksへ変換します。コンテキストの実資源と、まだ実行していない結果のValueRefを区別します。実測値を得るためにビルダーを実行後へ延期することはありません。exact/part/action全件一致とboundary-callの期待値はcompileで値領域を検査し、独立したコピーとしてCompiledChecksへ保存します。元の入力やctxがtargetに変更されても期待値は変わりません。toBeと参照同一性のLiveRefだけは参照を保持します。
+expect/expectCallsは各評価のprepare後・target前に一度構築します。itとpropertyは異なる型のexpectビルダーを持ち、条件にもcaseKindを保持します。propertyだけが性質・ref間の関係を作れます。
 
-| 条件のkind | 必須の情報 |
+| 条件kind | 必須情報 |
 |---|---|
-| exact | 対象ref、比較方式、期待値 |
-| part | 対象ref、非空のキー経路、比較方式、期待値 |
-| error | 種別・message・throw値の条件 |
-| property | 対象ref、名前、標準条件または同期述語 |
-| relation | 比較方式と型が対応する二つのref。refはlive/snapshotの出自を保持し、同一性比較はliveのみ |
-| state-unchanged | Stateトークン |
-| action | Actionトークン、区間、全件一致/個数/不発生の条件 |
-| boundary-call | Boundaryトークン、引数・回数・開始順の条件 |
+| exact / part | 対象ref、値か参照かの比較方法、キー経路、期待値 |
+| error | throw値・例外の種別・messageの条件 |
+| predicate / range | 対象refまたは非空のrefレコード、名前、同期述語または範囲 |
+| relation | 二つのrefと比較方法。参照同一性はlive同士だけ |
+| state-unchanged | Stateトークンと前後の取得 |
+| action | Actionトークン、区間、全件一致/個数/不発生 |
+| boundary-call | Boundaryトークン、引数・回数・開始順 |
+| law | 法則kind、対象、sample、比較する実行結果 |
 
-状態のexact/part条件には、取得時点（after）と、即時かeventuallyの待機設定を保持します。before参照やunchangedがあれば、実行前の取得も必要です。property/relateのaction参照も区間を持ちます。
-
-CompiledChecksのsourceはexpect / property / relate / expectCallsと、その返却配列内のindexです。実行前に判明した全条件は、失敗時にも未評価理由を含めて結果へ対応させます。
+exact/part/action全件一致と境界引数の期待値はcompileで値領域を検査してコピーします。toBeと参照同一性だけは生の参照を保持します。条件のsourceはexpect / expectCalls / lawと配列内indexです。lawは法則が定めた比較順のindexを使います。
 
 ## 実行結果の値と参照
 
-CompiledChecksは各refについて、値の検証に必要な部分とidentity比較に必要な参照を保持します。valueはcompile、inputは呼出し直前、resultは各呼出し完了直後に解決します。実行記録には生の値の参照と、検証用の保存値を別々に持ちます。stepsの先行結果の保存値を後続操作で上書きしません。
+valueはcompile、sampleは候補選択直後、inputは呼び出し直前、resultは各呼び出し完了直後に必要な値・部分を保存します。propertyの入力や中間結果を後続の変更へ追従させません。次の操作へ渡す生の戻り値と、検証用の保存値は別に保持します。
+
+LiveRefはinput/result/value、SnapshotRefはsample/state/before/actionです。合成結果レコードのrootはSnapshotRef、fieldで選ぶ個々の結果は元の出自を保ちます。期待・実測は[値領域](../guides/writing-tests.md#スナップショットの値領域)に従います。
 
 ## 評価時点
 
 | 処理 | 評価時点 |
 |---|---|
-| it / each / flowの定義コールバック | 定義時。入力とビルダーを保持する |
-| callsの定義コールバック | 定義時。ctxを提供せず依存グラフを作る |
-| group middleware | 子全体を一度囲む |
-| attempt middleware / environment | 各試行。environmentだけが試行トークンを発行 |
-| argsFrom / steps / 境界resolver / 各検証ビルダー | 準備後・target前。生成入力では各サンプルの準備後 |
-| 状態の前値取得 / action.open | ビルダーの妥当性検査後・target前 |
-| target / scenarioの各操作 | 観測準備後。操作列は順次await |
-| 状態の後値取得 / action.finish | targetのsettle後、条件が定める待機に従う |
-| 性質の述語・関係・一致の照合 | 必要な観測値を取得後 |
-| action.dispose / 代替の復元 / environmentの後処理 | 照合の成否に関係なく終了時 |
-
-stepsはctxを使いますが、実行するのは操作ではなく操作記述の構築だけです。scopeトークンはその試行でしか使用できません。妥当性確認前に差し替えやtarget実行を開始しません。
+| it / property / eachの定義コールバック | 定義時。設定とビルダーを保持 |
+| group middleware / resource | 要求された共有資源の寿命に従う |
+| 候補生成・縮小候補選択 | propertyの試行内。環境を始める前 |
+| attempt middleware / environment | itは試行ごと、propertyは生成例・縮小候補ごと |
+| argsFrom / steps / 境界resolver / expect | 各評価のprepare後・target前 |
+| 状態の前値取得 / action.open | compile検査後・target前 |
+| target / 法則 / scenario | 観測準備後。複数実行は順次await |
+| 状態の後値取得 / action.finish | target計画全体のsettle後、条件の待機に従う |
+| 条件の照合 | 必要な値・観測を取得後 |
+| action.dispose / 復元 / 環境の後処理 | 各評価の終わり。次の候補の前 |
 
 ## 参照を保持する意味
 
-関数と実資源の参照を持つため、blueprintのJSON往復による復元は保証しません。診断用には値と実行情報を別に保存します。状態/actionの観測値は[値領域](../guides/writing-tests.md#スナップショットの値領域)を検査してコピーし、前後の可変参照を共有しません。
-
-ビルダーへ架空のctxを渡して観測値を抽出したり、任意関数の内部を読んで契約を生成したりしません。environmentの許可とcaseが使った境界を対応させ、実効果・代替環境の効果・呼び出し記録を区別します。
+定義には関数・実資源への参照を持てるため、JSON往復による復元は保証しません。結果の診断とpropertyの再現データは独立して保存します。任意関数を解析して純粋性や責任を推測しません。

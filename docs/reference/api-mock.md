@@ -16,7 +16,7 @@ returns / resolves / throws / rejectsを境界の型に応じて使います。�
 
 ## 呼び出しごとに動作を変える
 
-returnsOnce / resolvesOnce / throwsOnce / rejectsOnceを並べ、最後に通常動作を置きます。onceだけでは未完了です。列を使い切った後の暗黙のundefinedはありません。開始順で消費し、試行ごとにリセットします。
+returnsOnce / resolvesOnce / throwsOnce / rejectsOnceを並べ、最後に通常動作を置きます。onceだけでは未完了です。列を使い切った後の暗黙のundefinedはありません。開始順で消費し、評価ごとにリセットします。
 
 ## 共通設定とケースの上書き
 
@@ -32,6 +32,6 @@ calledWithは一致する呼び出しが1件以上、calledOnceWithは合計1回
 
 ## 差し替えの範囲
 
-その試行のscopeが発行したBoundaryだけに適用します。同じobject/keyの重複登録、別試行のトークン、対象自身・操作集合の構成要素の置換を拒否します。
+その評価のscopeが発行したBoundaryだけに適用します。同一評価内のobject/keyの重複登録、別評価・別試行のトークン、対象自身・操作集合の構成要素の置換を拒否します。前評価の復元・解放後は、共有した同じobject/keyへ新しいトークンを発行できます。同じattemptであることは前候補のトークンを再利用する許可にはなりません。
 
 作用するのは登録objectのmethod経由の呼び出しです。保存済み参照やmodule内部へ暗黙に介入しません。アクセサ・非関数・書き換え不能なプロパティは拒否します。適用済みの置換は終了時に逆順で復元し、解放不能なら後続を中断します。

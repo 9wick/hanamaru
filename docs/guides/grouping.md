@@ -4,7 +4,7 @@ groupは完成した子と共通設定をまとめます。資源の共有とケ
 
 ## 関連するテストと共通設定
 
-子のtargetと検証は子に書き、groupには環境の寿命と共通設定を置きます。各effectケースのenvironmentが、観測器と許可済み境界を試行ごとに提供します。
+子のtargetと検証は子に書き、groupには環境の寿命と共通設定を置きます。各effectfulケースのenvironmentが、観測器と許可済み境界を評価ごとに提供します。
 
 ## group全体をmiddlewareで囲む
 
@@ -14,10 +14,10 @@ groupは完成した子と共通設定をまとめます。資源の共有とケ
 ```ts
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Test, effect, environment, middleware, registerTest } from 'hanamaru'
+import { Test, environment, middleware, registerTest } from 'hanamaru'
 
 const save = (path: string, text: string) => writeFile(path, text)
-const files = new Test<{ root: string }>().target(effect(save))
+const files = new Test<{ root: string }>().target(save).effectful()
   .use(environment(async (ctx, scope, next) => {
     const directory = await mkdtemp(join(ctx.root, 'case-'))
     try {
@@ -47,7 +47,7 @@ registerTest(new Test().group('files', middleware(async (_, next) => {
 
 子が必要な値だけを `new Test<R>()` で要求します。供給元のuse/groupを子の型へ埋め込みません。親は必要な時点までに値を供給し、不足や順序違反を型で拒否します。
 
-環境のscopeはgroup middlewareに渡しません。environmentをgroupへ直接渡すこともできません。groupで資源を共有し、子のenvironmentで試行固有のトークンを発行します。
+環境のscopeはgroup middlewareに渡しません。environmentをgroupへ直接渡すこともできません。groupで資源を共有し、子のenvironmentで評価固有のトークンを発行します。
 
 <!-- example: none — 公開APIの記述契約：供給の禁止例。filesは上の定義 -->
 ```ts
@@ -67,7 +67,7 @@ groupを入れ子にしてmiddleware・timeout・retryの適用範囲を分け�
 
 ## 親で用意したコンテキストを子へ渡す
 
-group middlewareのnextで供給した値は、子の各試行のコンテキストへ入ります。子のenvironmentはその値を読み、試行専用の状態と観測器を作れます。子の後処理を終えてから、親の資源を解放します。
+group middlewareのnextで供給した値は、子の各評価のコンテキストへ入ります。子のenvironmentはその値を読み、評価専用の状態と観測器を作れます。子の後処理を終えてから、親の資源を解放します。
 
 ## 別ファイルのテストをまとめる
 
@@ -79,4 +79,4 @@ group middlewareのnextで供給した値は、子の各試行のコンテキス
 
 ## timeoutとretryも継承する
 
-timeoutは各試行に、retryは失敗したケースの再試行に適用します。group全体の再実行ではありません。group middlewareは全子を一度囲み、attemptのenvironmentは試行ごとに作り直します。
+timeoutは各試行に、retryは失敗したケースの再試行に適用します。group全体の再実行ではありません。group middlewareは全子を一度囲み、environmentは評価ごとに作り直し、propertyの生成例・縮小候補の間でも初期化します。

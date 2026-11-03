@@ -1,82 +1,89 @@
 # 型推論
 
-対象・環境・選んだ検証方法から型を推論します。公開構文と負例は[契約からテストを書く](../guides/writing-tests.md)に定めます。
+対象の形、pure/effectfulの特性、it/propertyのケース種類を別の型情報として保持します。[公開構文と禁止例](../guides/writing-tests.md)が契約です。
 
 ## 対象とコンテキスト
 
-| 指定 | 決まる型・操作 |
+| 宣言 | 決まるもの |
 |---|---|
-| target(fn) / target(obj, key) | pure。ParametersとAwaited ReturnType。it / each / args / calls |
-| target(effect(fn)) | effect。ParametersとAwaited ReturnType。it / each / args。environmentと境界の代替を許可 |
-| target(relation(functions)) | pure-relation。関数名ごとの呼び出しと戻り値。callsのみ |
-| target(scenario(functions)) | scenario。操作名ごとの引数と結果。flow / stepsのみ |
-| use(middleware(...)) | next(fields)の型をコンテキストへ追加 |
-| use(environment(...)) | effect / scenarioのみ。値とState・Action・Boundaryトークンの型を追加 |
+| target(fn) / target(obj, key) | 単一の対象、Parameters、Awaited ReturnType。省略時pure |
+| target(relation(functions)) | 純粋変換の法則が使う非空の関数集合 |
+| target(scenario(operations)) | 順序を持つケースで使う非空の公開操作集合。省略時pure |
+| pure() / effectful() | 対象の特性。明示は一度だけ |
+| it / each | 具体例のビルダー。eachは行からrowを推論 |
+| property | 入力生成と性質検査のビルダー |
+| use(middleware(...)) | next(fields)から後続コンテキストを推論 |
+| use(environment(...)) | effectfulのみ。評価固有のState/Action/Boundaryも供給 |
 
-環境を付ける前にtargetの種類を決めます。middlewareは全種類で使えますが、scopeを受け取らず観測器や境界を発行できません。pureな対象にenvironmentのある共通設定を引き継がせる合成も型エラーです。
+relationはpure専用で、propertyと法則を記述します。effectfulな複数操作はscenarioを選びます。関数自身の型やアプリ側の宣言を書き換える必要はありません。
+
+## 特性の宣言
+
+省略時pureと明示pureの使える操作・実行意味は同じです。ただしビルダーは明示済みかを型で保持し、未宣言の間だけpure/effectfulを一度選べます。最初のit / property / each / only / skip / todoで固定し、その後は両メソッドを提供しません。同じ宣言の重複も禁止です。
+
+pureの省略状態からeffectfulを選べます。選ぶ前にenvironmentを付けることはできません。middleware・require・timeout等は宣言済みフラグを保持して派生します。イミュータブルな元のビルダーから別の派生を作ることは可能です。
 
 ## middlewareから型を伝える
 
-next(fields)の型を後続へ伝えます。フィールドはreadonly、同名は内側が置換します。資源の参照を浅く渡すことと、状態観測の値をコピーすることは別です。
+middleware/environmentのnext(fields)からフィールドを推論し、後続へ合成します。フィールドはreadonly、参照先の資源は浅く渡します。状態/actionの保存値は別にコピーします。
 
-middlewareとenvironmentはnextを一度呼び、その完了値を返します。素の関数・通常オブジェクトを完了値として返すことは型エラーです。nextの回数・待機・試行後の呼び出しは実行時にも検査します。
+environmentはeffectfulを宣言した対象のuseに限り、scopeで評価トークンを発行します。groupへenvironmentを渡すこと、pureへ親からenvironmentを注入することはできません。高価な資源はgroup middlewareやresourceで共有し、子のenvironmentで各評価の初期化と観測を用意します。
 
 ## 設定とケース追加を分ける
 
-共通設定は最初のケース・groupの前に固定します。targetを再指定できません。ケースではreplace・timeout・retryを入力/操作の確定前に指定し、入力/操作後に戻れません。
+| ケース | 入力・操作の前 | 入力・操作の後 | 完成条件 |
+|---|---|---|---|
+| 単一targetのit/each | args / argsFrom、実行設定。effectfulならreplace | expect、effectfulならexpectCalls | 完成した条件が1件以上 |
+| scenarioのit | steps、実行設定。effectfulならreplace | expect、effectfulならexpectCalls | stepsが返すrefと条件が1件以上 |
+| 単一targetのproperty | forAll、実行設定。effectfulならreplace | 必要ならargsFrom、その後expect。effectfulならexpectCalls | forAllと条件が1件以上 |
+| pure単一のproperty・標準法則 | forAll、実行設定 | law(idempotent()) | 対象と入力の型に適合する法則 |
+| relationのproperty | forAll、実行設定 | law(roundTrip(...)) | 構成要素の型と入力に適合する法則 |
+| scenarioのproperty | forAll、実行設定。effectfulならreplace | steps、その後expect。effectfulならexpectCalls | forAll・操作列・条件が1件以上 |
 
-| ケースの段階 | 許される記述 | 完成したケースとして返せるか |
-|---|---|---|
-| pure単一・入力前 | args / argsFrom / calls / forAll、実行設定 | 不可 |
-| pure-relation・操作前 | calls、実行設定 | 不可 |
-| effect・入力前 | args / argsFrom、replace、実行設定 | 不可 |
-| scenario・操作前 | steps、replace、実行設定 | 不可 |
-| 入力/操作済み、検証なし | 用途に合うexpect / property / relate / expectCalls | 不可 |
-| 有効な検証あり | 未指定の検証入口を追加 | 可 |
-| forAllで具体値expectのみ | property / relateを追加 | 不可 |
-| forAllでpropertyまたはrelateあり | 未指定の検証入口を追加 | 可 |
+propertyとitは同じSuiteへ追加できます。ケース内のproperty、relate、calls、Suiteのflowは提供しません。scenarioもit/propertyを使い、対象の形がstepsを利用できるかを決めます。
 
-expect / property / relate / expectCallsはそれぞれ一度だけ指定でき、コールバックは空でない条件配列を返します。組合せの順序は任意です。入力なしの関数にもargs()を必要とします。
+単一targetのpropertyでargsFromを省略できるのは、生成タプルが対象のParametersへ適合する場合だけです。適合しないforAllの後はargsFromで束縛するまでexpectを提供しません。argsFrom(ctx, sample)の戻り値をParametersへ検査します。scenarioではsampleからs.inputを、宣言した操作からsの各メソッドを推論します。
+
+lawとexpect/expectCalls/argsFrom/stepsは択一です。idempotentはpureな単一引数関数で正常結果を再入力できること、roundTripは宣言した二つの単一引数関数を型の適合する順に合成できることを要求します。
 
 ## 完成条件
 
-| 対象 | 完成に使える条件 | 禁止する条件・組合せ |
-|---|---|---|
-| pure単一 | 結果の一致・部分、例外、性質、関係 | 状態/action/境界。errorとresult/property/relateの混在 |
-| pure-relation / calls | 結果の一致・部分、性質、関係 | error、状態/action/境界 |
-| effect | 結果・例外・状態・action・性質・関係・境界呼び出し | errorとresult/property/relateの混在 |
-| scenario | 結果・状態・action・性質・関係・境界呼び出し | error、任意関数の追加、非同期steps |
+expect/expectCallsは各ケースに一度だけ、順序は任意で、返却する条件配列は非空です。入力なしのitにもargs()を明示します。propertyは空の引数でもforAll(tuples())を明示します。
 
-状態のみ・actionのみ・境界呼び出しのみでも完成できます。error条件がないケースは正常終了を期待します。errorと状態/action/境界呼び出しは組み合わせられます。error条件がないことを「結果を検証した」と診断することはありません。
+状態のみ・actionのみ・境界呼び出しのみでも完成できます。戻り値のダミー検証や全責任の網羅を要求しません。error条件がなければ正常終了を期待します。
 
-完了していないactionの区間指定や、eventuallyの設定だけでは条件になりません。toEqual等の終端操作が必要です。todoは別の未実行定義で、検証済みの成功にしません。
+errorとresult由来の条件は混在できません。errorとinput/sample・状態/action・境界の条件は併用できます。propertyも例外についての性質を検証できます。scenarioとlawは全操作の正常完了を期待し、errorを提供しません。
 
-## グループとコンテキスト
+actionの区間指定だけ、eventuallyだけ、forAllだけでは未完了です。各条件の終端操作と必要な入力/操作を揃えるまで登録できません。
 
-独立した子だけが `new Test<R>()` で必要なコンテキストを要求します。親が供給する値とそのタイミングを合成時に照合します。子のgroup前処理で必要な値を、後から動くattemptのmiddlewareで供給することはできません。
+## ケースごとの期待の型
 
-group middlewareは資源を共有できますが、試行のトークンを生成しません。environmentは各effect/scenarioのuseで各試行に適用します。groupへenvironmentを渡すこと、試行で生成したトークンを親groupや別試行へ保存して使うことは許可しません。
+itのexpectは具体値・部分・例外・状態/actionだけを提供します。propertyのexpectにはon(ref).satisfies/inRangeと、ref同士のequal/different/sameReference/differentReference/lessThanも提供します。これらをitに持ち込むことはできません。expectは素のbooleanを受け取りません。
+
+itとpropertyの条件はケース種類と所有者に紐づきます。型で種類の混用を拒否し、同じ型でも別ケース・別評価のrefや条件を混ぜた場合はcompileで拒否します。
 
 ## 参照と記述子の型
 
-State<T>、Action<E>、Boundary<F>、ValueRef<T>（LiveRefまたはSnapshotRef）と条件の各型はブランドで区別し、利用者がオブジェクトリテラルから作れないようにします。
+State<T>、Action<E>、Boundary<F>、各条件とrefはブランドで区別します。input/result/valueはLiveRef、sample/state/before/actionはSnapshotRefです。結果レコードの合成rootはSnapshotRefで、fieldで選ぶ操作結果は元の出自を保ちます。
 
-expectは具体値・部分・例外・状態/action条件、propertyはPropertyCondition、relateはRelationCondition、expectCallsはBoundaryCallConditionだけを受け取ります。素のbooleanや別用途の条件は受け取りません。同期booleanを要求する述語はPromiseを返せません。
+参照同一性の比較はLiveRef同士だけです。コピーしたstate等を渡すことを型・compileで拒否します。field/partのキーと、境界の引数は元の型から検査します。省略可能フィールドはundefinedの可能性を保持します。
 
-ValueRef.field(key)、入力の位置、境界の引数は元の型から検査します。input/result/value由来のLiveRefと、state/before/action由来のSnapshotRefを区別し、fieldも出自を保ちます。LiveRefにも値比較用の保存値があり、照合時に生の可変値を読み直すことはありません。sameReference / differentReferenceはLiveRefしか受け取れず、コピー済みの観測値を渡すことは型・compileの両方で拒否します。StateとActionの取り違え、境界トークンの代わりにobject/keyを渡す操作を拒否します。異なる試行の同じ型のトークン・refを混ぜたことは、所有者の実行時検査でも拒否します。TypeScriptが全インスタンスの同一性を判定できるとはしません。
+値比較はrefの出自に応じた時点の保存値を使い、後から可変値を読み直しません。期待値もcompile時に保存します。[値領域](../guides/writing-tests.md#スナップショットの値領域)にないクラスや関数をコピー後も元の型であると偽りません。静的に分かる不正は型で、prototype等は取得時にも検査します。
 
-State/Actionと値比較の期待値は[スナップショットの値領域](../guides/writing-tests.md#スナップショットの値領域)に制限します。関数メンバー等の静的に禁止できる値は拒否し、独自prototype・accessor等は取得時にも検査します。観測器がデータへ投影した場合はその返り値型を使い、コピーで失われるクラスのメソッド型を保持しません。
+## グループとコンテキスト
+
+独立した子はnew Test<R>()で必要な値を要求します。親の供給と必要になる時点を検査し、要求の残る子を単独登録できません。group前処理は後で開始する評価のmiddlewareへ依存できません。
 
 ## 型の限界
 
-pure宣言が真であること、述語が恒真でないこと、観測器やinfra境界の業務的な妥当性は自動証明しません。これは信頼する環境提供者とレビューの責務です。
+pure宣言の真偽、任意述語が恒真でないこと、環境の接続先や業務上のinfra境界の妥当性は自動証明しません。許された拡張口に信頼を置くことと、ケース内の任意介入を許すことは別です。
 
-数値の範囲、refの所有者・循環・同一性、action区間の矛盾、状態のコピー可能性、観測の失敗は実行受付または試行の対応段階で検査します。型を回避した不正を未評価や成功へ置き換えません。
+同一性・循環・数値範囲・観測期間・トークンの寿命・コピー可能性は、実行受付または対応する段階で検査します。型を回避した不正を成功へ変換しません。
 
 ## 検証
 
-[公開構文の許可例・禁止例](../guides/writing-tests.md)を型と実行の受け入れ条件にします。例の成功だけでなく、用途外の操作が補完に現れず型エラーになることを確認します。実行時の所有者・期間・観測障害は[実行セマンティクス](../concepts/semantics.md)に従って検証します。
+許可例と禁止例を型契約へ落とし、補完に出る操作もケース種類と特性に一致させます。動的な所有者・観測障害・生成/縮小の実行は[実行仕様](../concepts/semantics.md)に従います。
 
 ## each・実行設定・sequence
 
-eachは行からrowを推論し、その対象の種類に合う完成ケースを要求します。forAllはpure単一のitだけに提供します。境界のonce列には通常動作が必要です。timeout・retryは入力/操作の確定前に指定します。
+eachは単一targetの具体例の省略形です。forAllはpropertyだけ、stepsはscenarioだけに提供します。特性はtarget側で固定され、行や生成例で切り替えられません。境界のonce列には通常動作を必須とします。
