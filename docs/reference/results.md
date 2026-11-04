@@ -4,6 +4,7 @@ CLIのJSON出力はRunResultです。各トップレベルノードのsourceは�
 複数projectが同じファイルを選んでも結果を複製せず、source.projectsへ所属名をまとめます。
 
 テストを書く人に位置やIDの入力を要求せず、blueprintと結果から宣言位置・各試行・失敗内容を取得できます。
+観測にはevidenceと読取引数・時点を保持し、call-recordを実効果の検証として表示しません。
 条件の型と構造は[型推論](type-inference.md)と[blueprint](metadata.md)に従います。
 
 ## 宣言位置
@@ -18,16 +19,16 @@ blueprint取得やCLI起動の位置では上書きしません。同じ子を�
 標準CLIが直接実行するNode/Bun/Deno向けソースは[対応環境](limitations.md)の範囲です。
 ライブラリ利用で事前変換したコードは、元ソースへ対応するsource mapがある場合を対応範囲とします。
 位置を提供できない定義は定義エラーです。ユーザーに位置を手入力させるAPIは設けません。
-テスト対象の実装位置と、編集・移動・改名をまたぐidentityは初版の保証に含めません。
+テスト対象の実装位置と、編集・移動・改名をまたぐidentityは保証しません。
 
 ```text
 ユーザー登録
   createUser
     ✗ 保存して通知する  tests/user-cases.ts:12:4
       group: tests/users.test.ts:8:4
-      call(send).calledOnceWith
-        expected: 合計1回、引数 [{ id: 'u1' }]
-        actual:   合計2回
+      action(delivery).count  [evidence: substitute-effect]
+        expected: 到着1件、内容 [{ id: 'u1' }]
+        actual:   到着2件
           1: [{ id: 'u1' }]
           2: [{ id: 'u2' }]
 ```
@@ -42,7 +43,7 @@ JSONでもErrorのstackを文字列の診断値として保持します。取得
 
 具体値とpartで選んだ部分の`toEqual`の失敗は、通常のオブジェクト・配列・プリミティブについて不一致パスと値を表示します。
 部分検証では指定したキー経路と、その部分の差分を表示し、選ばなかった部分を検証したとは報告しません。欠けたプロパティや配列要素は`<missing>`と表示し、差分が20箇所を超えた場合は省略を明示します。
-参照・循環やMap/Set等の診断値から比較内容を確定できない場合、または関係の比較では、expected/actualの全体を表示します。
+参照・循環やMap/Set等の診断値から比較内容を確定できない場合、通常の差分を作れない場合はexpected/actualの全体を表示します。on(refs).satisfiesでは述語名と、指定したref構造に対応する保存値を表示します。
 JSONのexpected/actualと比較基準は変わりません。
 
 ```text
@@ -74,7 +75,7 @@ attemptsは実行順で、attemptは1始まりです。各試行のdurationMsは
 
 CaseResultはcaseKind（example/property）とcharacteristic（pure/effectful）を保持します。各attemptのevaluationsは入力・targetのoutcome・条件結果・cleanupを持ち、失敗はattempt.failuresのindexで参照して重複保存しません。itは一評価、propertyは生成/縮小の評価列です。生成前に失敗した場合はevaluationsを空とし、試行全体の失敗を残します。
 
-propertyのattemptはseed・生成器の形式バージョン・設定、各評価のkind（generated/shrink）とsample番号、元の反例、縮小経路・採用した反例、打切り理由を保持します。縮小候補の成功は元の契約違反を取り消しません。再現には保存した生成タプルを使い、DB接続などの実資源を再現入力へ混ぜません。
+propertyのattemptは入力源の分類（fixed/generated）とseed・生成器の形式バージョン・設定、各評価のkind（generated/shrink）とsample番号、元の反例、縮小経路・採用した反例、打切り理由を保持します。縮小候補の成功は元の契約違反を取り消しません。再現には保存した生成タプルを使い、DB接続などの実資源を再現入力へ混ぜません。
 
 ### 試行の有無と未実行の理由
 
@@ -104,6 +105,14 @@ propertyのattemptはseed・生成器の形式バージョン・設定、各評�
 Promiseの完了を観測できない中断でもnullとし、成功の戻り値を推測しません。
 診断には入力・結果・観測ごとの取得時点で保存した値を使います。後始末で参照先が変わっても保存済みの報告は変えません。
 
+評価記録のoutcomeは計画全体の終了情報、失敗kindのoutcomeは期待する終了との差、公開refのe.outcomeは検証用の参照です。同じ語でも役割は異なります。
+
+stepsの各操作の終了・未実行を記録し、明示的な最終操作はその操作indexで識別します。e.error/e.outcomeはそのindexの終了だけを参照します。前段失敗で最終が未実行なら、その期待は未評価であり、前段の例外を最終結果として表示しません。失敗記録はattempt.failuresへ一度だけ保持し、操作・条件からindexで参照します。
+
+先行の通常操作がthrowした場合は、kind: outcome、期待return・実際throwとして、その操作の0始まりoperationIndexを添えます。表示の操作番号は1始まりです。これは利用者の期待条件とは別に、先行操作が必要な正常結果を得られなかった失敗です。
+
+finalが期待どおりthrowした場合、評価記録のoutcome.kindは実際の終了を表すthrowのままです。条件と後始末が成功すれば評価と試行はpassedにできます。前段がthrowした場合も評価記録はthrowですが、originのoperationIndexと最終操作のnot-runを残し、試行はfailedです。試行番号（attempt）と操作番号は別のフィールドで、finalを試行と呼びません。
+
 ## 失敗の構造
 
 | kind | 保持する情報 |
@@ -114,39 +123,41 @@ Promiseの完了を観測できない中断でもnullとし、成功の戻り値
 | observation | State/Action参照、before/after/open/finishの段階、区間・取得条件、原因 |
 | timeout | 発生段階、timeoutMs、後始末の完了状態。middlewareでは前処理・後処理の区別も残す |
 
-全てにphaseと人間向けmessageを保持します。phaseはprepare / compile / before / instrumentation / target / observe / assert / cleanupを区別します。messageを解析しなくても、条件・期待・観測・原因が分かります。
-アサーションの参照にはsource（expect / expectCalls / law）、その配列内の0始まりのindex、subject、matcherを持ちます。
-不一致・状態の不変・actionの不発生はそれぞれの用途として識別し、共通の否定フラグへ潰しません。部分検証の対象、関係の双方の値、観測時点・期間・完了条件、代替したinfra境界も診断に残します。
-callにはkeyも残し、sourceとindexからblueprint内のオブジェクト参照へ対応できます。同名メソッドを持つ別オブジェクトを混同しません。
+全てにphaseと人間向けmessageを保持します。phaseはprepare / compile / before / target / checkpoint / observe / assert / cleanupを区別します。messageを解析しなくても、条件・期待・観測・原因が分かります。
+アサーションの参照にはsource（expect）、その配列内の0始まりのindex、subject、matcherを持ちます。
+不一致・状態の不変・actionの不発生はそれぞれの用途として識別し、共通の否定フラグへ潰しません。部分検証の対象、名前付きrefの各値、観測時点・期間・完了条件、観測トークンとevidenceも診断に残します。
+観測にはトークンの参照・引数・before/after/checkpointの時点を残し、条件indexからその定義へ対応できます。
 各配列はtarget前のcompileで構築します。条件のindexは別条件の成功・失敗でずれません。compile自体が失敗した場合はまだ得ていない条件を捏造しません。
 
 各条件はpassed / failed / not-evaluatedとして記録し、未評価には理由を残します。
-middlewareの失敗でテスト対象を呼べない場合、既知の呼び出し条件はnot-evaluatedです。prepare/compileで構築できなかった条件は捏造しません。
-呼び出し0回の成功と、検証していない状態を区別します。
+middlewareの失敗でテスト対象を呼べない場合、既知の観測条件はnot-evaluatedです。prepare/compileで構築できなかった条件は捏造しません。
+観測区間の不発生の成功と、検証していない状態を区別します。
 複数条件の失敗・原因・後始末の失敗を全て残し、最後の例外で前の失敗を消しません。
+
+outcomeを使うpropertyは期待終了をreturn-or-throwと記録し、実際の枝と保存したpayloadを述語の入力として表示します。withErrorの型不一致・射影失敗・述語のfalseを区別します。環境や実行器の失敗はこのunionへ変換しません。
+
+例外refを使う性質は、終了種別とofTypeの型条件を先に照合します。型が違えば条件不一致を記録し、存在しないフィールドを捏造して述語を呼びません。型が一致した場合のフィールド取得失敗は観測障害、述語のfalseは通常の条件不一致です。
 
 ### 各マッチャの期待値と観測値
 
-呼び出し条件は、許可されたinfra境界での代替の証拠です。状態やactionの観測とは区別します。以下はDiagnosticValueへ変換する前の内容です。表の関数・RegExp等も診断の構造として保持します。
+call-recordのstate/actionは呼び出しの証拠です。target自身の状態、実資源の効果、fakeのモデル上の効果と区別します。以下はDiagnosticValueへ変換する前の内容です。表の関数・RegExp等も診断の構造として保持します。
 
 | 条件 | expected | actual |
 |---|---|---|
-| 具体値の一致 | 指定した期待値 | 対象の結果または観測値 |
+| toEqual | 指定した期待値の比較表現 | 対象の結果または観測値の比較表現 |
+| toBe | 指定した値または参照 | 実測値または参照の同一性 |
+| toBeCloseTo | 指定した数値とabsoluteTolerance | 実測数値と差の絶対値 |
 | 部分の一致 | 指定した部分と期待値 | その部分の観測値 |
-| 性質 | 指定した条件 | 条件の対象になった入力・結果・観測値 |
-| 関係 | 値同士が満たす関係 | 比較した双方の値 |
+| on(refs).satisfies | 述語名 | 指定したrefまたは名前付きrefレコードに対応する保存値 |
 | 状態の不変 | 実行前の状態 | 実行後の状態 |
 | actionの不発生 | 指定区間で発生なし | 区間内の出来事 |
-| toBeInstanceOf | 指定したコンストラクタ | 例外の値 |
+| error.ofType | 指定したコンストラクタと部分条件 | 例外の値 |
 | error.message.toEqual | 指定した文字列 | Errorのmessage、またはErrorではない実際のthrow値 |
 | error.toEqual | 指定したthrow値 | 実際のthrow値 |
-| calledTimes | 指定した回数 | 合計呼び出し回数 |
-| notCalled | 0 | 合計呼び出し回数 |
-| calledWith | 指定した引数タプル | 全呼び出しの引数タプルの配列 |
-| calledOnceWith | { count: 1, args: 指定した引数 } | { count: 合計回数, calls: 全引数タプルの配列 } |
-| calledNthWith | { n: 指定した番号, args: 指定した引数 } | { count: 合計回数, args: n回目の引数、存在しなければnull } |
+| action.count | 指定した件数 | 観測区間内の出来事の数 |
 
-引数なしの呼び出しは空配列です。存在しないn回目を空配列として扱いません。
+呼び出し記録もevidence: call-recordのstate/actionとして扱い、独立したcalledTimes等のマッチャ体系は持ちません。
+
 述語のthrowはexecutionの失敗に原因を残し、その条件の評価結果をfailedにします。
 
 ## 診断用の値とJSON

@@ -54,7 +54,7 @@ targetは対象を、pure()/effectful()は特性を、it/propertyはケースの
 
 [複数呼び出しの関係](docs/guides/multiple-calls.md)、[期待と観測](docs/reference/api-expect.md)、[操作列](docs/guides/flow.md)で、それぞれの書き方と制約を説明します。
 
-直接観測が困難な場合や外部障害を再現する場合には、環境が許可した[infra境界の代替](docs/reference/api-mock.md)を使います。内部の任意関数は差し替え対象にできません。
+直接観測が困難な場合や外部障害を再現する場合には、環境が提供する[型付きの代替](docs/reference/api-mock.md)を使います。内部の任意関数は差し替え対象にできません。
 
 ## テストの準備と共通設定をまとめる
 
@@ -68,7 +68,7 @@ targetは対象を、pure()/effectful()は特性を、it/propertyはケースの
 | 共有リソースの依存関係と寿命を管理する | [resource](docs/concepts/resources.md)：必要なテストだけに共有環境を用意する |
 | 制限時間や再試行を指定する | [timeout・retry](docs/guides/execution-options.md)：共通設定またはケースごとに指定する |
 
-各評価では、hanamaruが管理する境界の代替、コンテキスト、観測・呼び出し記録を作り直します。propertyでは生成例・縮小候補の間でも初期化します。外部DBやモジュール内の状態は自動では復元しないため、必要な初期化や後始末はmiddlewareなどに書きます。
+各評価では、hanamaruが管理する環境の依存、コンテキスト、観測記録を作り直します。propertyでは生成例・縮小候補の間でも初期化します。外部DBやモジュール内の状態は自動では復元しないため、必要な初期化や後始末はmiddlewareなどに書きます。
 
 ## 実行して、失敗の理由を確認する
 

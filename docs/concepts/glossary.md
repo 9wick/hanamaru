@@ -134,7 +134,7 @@ itは具体例、propertyは入力範囲に対する性質のケースです。p
 
 ### テスト対象
 
-- 識別子: `.target(fn)`、`.target(name, fn)`、`.target(obj, key)`、`.target(fn).effectful()`、`.target(relation(functions))`、`.target(scenario(operations))`、`SuiteBlueprint.target`
+- 識別子: `.target(fn)`、`.target(name, fn)`、`.target(obj, key)`、`.target(fn).effectful()`、`target(Class, key).from(resolver)`、scenarioの`method(Class, key)`、`.target(scenario(operations))`、`SuiteBlueprint.target`
 - 定義: ケースが契約を検証する関数・メソッド、または関数間の関係。戻り値・例外だけでなく、その責任に含まれる副作用も検証の対象です。
 - 文脈: テストを書く人が、ケースで確かめたい振る舞いを指定するときに使います。
 - ルール: `.target()` で指定した関数・メソッドを、その後に追加する各ケースが呼び出します。名前を付けるなら第一引数に渡し、省略時は関数名・メソッド名を対象ケース群の表示名に使います。モックや呼び出しの検証で指定するメソッド、CLIが選ぶファイル・ケースとは区別します。`.target()` は指定する操作、`SuiteBlueprint.target` はblueprintに残す参照です。結果の `phase: 'target'` は呼び出し段階を示します。
@@ -152,6 +152,17 @@ itは具体例、propertyは入力範囲に対する性質のケースです。p
 - 定義: ケースの試行期限と再試行回数を決める設定。
 - 文脈: 共通設定はgroupや `.target()` の前後に、個別設定はケースに書きます。実行時に配下のケースへ適用します。
 - ルール: 項目ごとに外側から内側へ継承し、内側の指定で上書きします。middlewareが渡すコンテキストとは別に保持します。
+
+### 明示的な最終操作（final）
+
+- 識別子: stepsの `s.target.final(...args)` / `s.<宣言キー>.final(...args)`。
+- 定義: stepsの最後に一度だけ指定し、その操作の終了をerror/outcomeでも検証できるようにする記述。
+- ルール: 後続操作を置けず、返されたFinalStepRefをstepsの返却に含めます。前段は正常完了が必要です。error/outcomeを指定しなければ正常終了を期待します。retry一回分の試行（attempt）とは別の概念です。
+
+### FinalStepRef
+
+- 定義: 明示的な最終操作を表す型付きの記述。実際の戻り値ではありません。
+- ルール: 次の操作の引数やfieldの選択に使えません。stepsから直接、または先行結果と同じ平坦なレコードの一フィールドとして返します。実行前のcompileで順序と所有者を検査します。
 
 ### 試行（attempt）
 
@@ -193,12 +204,12 @@ itは具体例、propertyは入力範囲に対する性質のケースです。p
 ### 検証条件
 
 - 定義: 実際の値や呼び出し記録と照合する一件の条件。
-- 文脈: it/propertyのexpectまたはexpectCallsに並べ、観測後に評価します。
+- 文脈: it/propertyのexpectに並べ、観測後に評価します。
 - ルール: 一つの期待に複数の検証条件を使えます。
 
 ### マッチャ
 
-- 識別子: `toBe`、`toEqual`、`calledTimes` など。
+- 識別子: `toBe`、`toEqual`、`toBeCloseTo` など。
 - 定義: 検証条件の照合方法を選ぶ操作。
 - 文脈: テストを書く人が条件を記述するときに呼びます。
 - ルール: マッチャを呼ぶ時点では照合せず、記述子を作ります。
@@ -261,7 +272,7 @@ itは具体例、propertyは入力範囲に対する性質のケースです。p
 - 文脈: テストを書く人が、DB・サーバー・テナントなどの前提を整えるときに使います。
 - ルール:
   - すべて `middleware()` で作ります。関数をそのまま `.use()` や `.group()` に渡しません。
-  - `next(fields)` でケースへ値を渡せます。値を渡さず状態を整えるだけでも構いません。effectfulな対象ではenvironmentのnextからも値・観測トークン・Boundaryを供給できます。
+  - `next(fields)` でケースへ値を渡せます。値を渡さず状態を整えるだけでも構いません。effectfulな対象ではenvironmentのnextからも値・依存・観測トークンを供給できます。
   - 複数のmiddlewareは入れ子になり、後処理は逆順に動きます。
   - `.use(m)` では各評価を囲み、`.group(m, [children])` では子のまとまり全体を一度だけ囲みます。どちらでも同じmiddlewareを使えます。
   - HonoやExpressのmiddlewareと違い、nextを呼ばずに打ち切ることはできません。nextは必ず1回呼びます。nextの失敗をcatchしても、テストの失敗は取り消せません。
@@ -291,20 +302,18 @@ itは具体例、propertyは入力範囲に対する性質のケースです。p
   - `.use()` で使う場合は、試行期限とmiddleware自身の期限の両方が効きます。
   - `.group()` で使う場合、middlewareはどの試行にも含まれないため、効くのはmiddleware自身の期限だけです。
 
-## モックと呼び出しの検証
+## 環境による代替と証拠
 
-### モック（mock）
+### 環境のfake
 
-- 識別子: `replace(ctx => ctx.boundary, m => ...)`
-- 定義: メソッドの振る舞いを差し替えること。
-- ルール: 呼び出しの検証とは独立しています。検証のためにモックする必要はありません。
+- 定義: 依存の公開インターフェースを満たす型付きの代替。
+- ルール: 環境で提供し、引数に応じた応答・状態・障害を表す。内部メソッドの順序に応じるstubを強制しない。任意object/keyの差し替えAPIは設けない。
 
-### 呼び出しの検証
+### 証拠の種類
 
-- 識別子: `.expectCalls(c => [...])`、`c.boundary(c.ctx.outbound)`
-- 定義: ケースの実行中にメソッドがどう呼ばれたかを、回数・引数で検証すること。
-- ルール: 環境が許可したBoundaryだけを記録できます。置換していなければ本物を呼びます。記録はtargetの開始からsettleまでで、状態/actionの観測とは別です。
-- 使わない語: `e.mock()`、「モックの検証」。
+- 識別子: state/actionのevidence。
+- 定義: real-effect、substitute-effect、call-recordのいずれか。
+- ルール: 環境が観測点に応じて宣言し、caseから変更できない。state/actionの形とは独立で、意味の真実性は自動証明しない。
 
 ## 使わない語
 
@@ -315,4 +324,4 @@ itは具体例、propertyは入力範囲に対する性質のケースです。p
 | fixture | 意味が伝わりにくい | middleware |
 | `.describe()` | 対象ケース群とグループの名前を別の操作で指定する必要がない | `.target(name, fn)`、`.group(name, [children])` |
 | groupのtimeout / targetのtimeout | groupやテスト対象に期限があるように読める | 試行期限 |
-| `e.mock()` | 呼び出しの検証をモックに限定してしまう | `c.boundary(c.ctx.outbound)` |
+| 任意メソッドへのmock | 内部実装へケースが介入する | 環境の型付きfakeと観測 |

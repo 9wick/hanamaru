@@ -15,7 +15,7 @@ if (import.meta.hanamaru) {
 }
 ```
 
-runnerが管理する読込環境ではimport.meta.hanamaruにTest・registerTest・middleware・environment・resource・relation・scenario・integers・strings・arrays・tuples・idempotent・roundTripが提供されます。
+runnerが管理する読込環境ではimport.meta.hanamaruにTest・registerTest・middleware・environment・resource・scenario・method・valueAdapter・integers・strings・arrays・tuples・constant・boolean・record・oneOfが提供されます。
 通常のNode.jsでこのファイルをimportするとimport.meta.hanamaruは未定義で、登録ブロックは評価しません。
 TypeScriptではhanamaruの型だけをimportするとImportMetaの型が使えます。
 

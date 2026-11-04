@@ -51,7 +51,7 @@ e.fromで期待値ごとにコールバックを追加する案は撤回しま�
 - flowは今回の計画外です。操作記述・値の受け渡し・実行単位を今回確定しません。
 - each専用のonly/skip/todo表記は未採用です。通常のonlyとCLIのfilterは展開後のケースに作用します。
 - signal、custom matcherの登録API、タグ・注記、snapshotは追加しません。
-- module mockを含めないという初期判断は、その後の実装で変更済みです。現行の範囲は[モック](../reference/api-mock.md)、今後のinfra境界への制限は[UX/DX契約](../guides/testing-contracts.md#infraの代替と呼び出し確認を限定する)に従います。
+- module mockを含めないという初期判断は、その後の実装で変更済みです。現行の範囲は[モック](../reference/api-mock.md)、今後のinfra境界への制限は[UX/DX契約](../guides/testing-contracts.md#infraの代替と入力条件を整える)に従います。
 
 後続設計は[複数呼び出しの契約案](../guides/multiple-calls.md)と[flowの検討範囲](../guides/flow.md)に分けて説明します。relation / callsは実装済みで、flowは未実装です。設計上の採否と未決事項は下記の判断記録に残します。
 

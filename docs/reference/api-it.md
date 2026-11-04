@@ -1,51 +1,45 @@
 # ケースの記述
 
-itとpropertyはtarget配下で並ぶケース定義の入口です。どちらも一つの契約の一側面を検証できます。[具体的な構文](../guides/writing-tests.md)と[型の完成条件](type-inference.md#完成条件)に従います。
+itとpropertyはtarget配下の並列のケース入口です。property/relateをit内へ追加するAPIはありません。[公開構文](../guides/writing-tests.md)に従います。
 
 ## args / argsFrom
 
-単一targetのitでは、args(...values)またはargsFrom(ctx => tuple)を一度指定します。引数なしにもargs()を要求します。型は対象のParametersに従います。
+単一targetのitはargsまたはargsFrom(ctx => tuple)で具体的な一回の引数を指定します。引数なしにもargs()を要求します。
 
-単一targetのpropertyではforAllの生成タプルをそのまま渡すか、argsFrom((ctx, sample) => tuple)で実資源を添えて束縛します。固定のargsは提供しません。argsFromは生成例ごとにprepare後・target前に評価します。
+単一targetのpropertyはforAllのタプルを直接使うか、argsFrom((ctx, sample) => tuple)で依存やデータを束縛します。複数実行が必要ならargsFromの代わりにstepsを選びます。クラスの依存はtargetのfromへ供給でき、データ引数へ移す必要はありません。
 
 ## propertyとforAll
 
-property(name, p => p.forAll(source, options).expect(...))と書きます。forAllはpropertyに一度だけ使え、itにはありません。pure/effectfulのどちらにも使えます。法則による検査ではexpectの代わりにlawを選びます。
-
-## law
-
-pureな単一関数のidempotent、pureなrelationのroundTripを指定できます。forAllの入力型と法則の適用条件を検査します。lawとargsFrom/steps/expect/expectCallsは併用できません。法則が実行と照合を所有し、ケースから任意関数を呼べません。
+propertyはforAllを一度指定し、その入力範囲に対するexpectを必要とします。標準の単一実行、またはstepsによる対象限定の操作列を検査できます。空の生成範囲を拒否しますが、一点の範囲や空タプルは許します。探索範囲の広さを自動で保証しません。
 
 ## steps
 
-scenarioだけに提供します。itではs.ctxから具体的な操作を記述し、propertyではforAllのsampleをs.inputとして使えます。定義コールバックは同期的に操作記述を作り、実測値による分岐や任意関数の追加はできません。返すのは操作結果のrefまたは非空の名前付きレコードです。
+単一targetのpropertyではs.target.args、scenarioではsの宣言キーを使えます。scenarioではpure/effectfulを問わずit/propertyに提供します。単一targetのitには提供しません。
 
-実行器は全操作を宣言順にawaitし、未使用の戻り値を理由に操作を省略しません。複数実行の性質を記述する自由なcallsは提供しません。[操作列](../guides/flow.md)に従います。
+s.ctxは準備済み環境、propertyのs.inputはcompile時点で確定した具体的な生成タプルです。s.inputは読み取り・計算・分岐に使えますが、操作結果のrefはまだ実測値ではありません。同期コールバックで全操作を記述し、結果refまたは非空の結果レコードを返します。全操作を宣言順にawaitします。実測値による分岐・任意関数を渡すcall・asyncな定義は拒否します。
 
 ## 期待と観測
 
-expectはitでもpropertyでも使いますが、渡すビルダーの型が違います。itは具体値・部分・例外・状態/action、propertyはそれらに加えてrefの性質・関係条件を提供します。propertyやrelateというケース内の検証操作はありません。
+itは具体値・部分・許容誤差・状態/actionの条件（例外は単一実行または明示的な最終操作のみ）、propertyはそれらに加えon(refs).satisfiesを使えます。expectは一度だけ、非空の完成条件配列を返します。状態/actionだけでも完成できます。
 
-条件配列は非空で、各条件を終端操作まで完成させます。状態のみ・actionのみでも完成でき、戻り値のダミー検証は要求しません。lawはそれ自体が完成した検査です。
+複数実行の法則はstepsとexpectで表せます。専用relation/lawの閉じた集合を実装者が追加しないと新しい性質を書けない設計にはしません。
 
-## expect / expectCalls
+## errorと明示的な最終操作
 
-各入口はケースに一度だけです。expectCallsはeffectfulなit/propertyだけで、許可済みBoundaryの呼び出し条件を受け取ります。効果の観測へ変換することはできません。
+errorは単一実行と、finalで指定した明示的な最終操作の終了を検証します。stepsの前段はargsで正常完了を要求し、最終操作だけfinal(...args)にできます。FinalStepRefは一つだけ、直接または平坦な結果レコードの一フィールドとして返します。
 
-errorがなければ正常終了を期待します。errorと正常結果refの混在は拒否しますが、errorと状態/action/境界条件は併用できます。scenarioとlawの途中の例外は常に失敗です。
+error/outcomeの指定がなければfinalも正常終了を期待します。最終の制約はcompileで検査し、後続操作・複数final・返されないfinalを拒否します。FinalStepRefは次の操作の引数にはできません。it/propertyのどちらでも最後のerrorを期待でき、propertyならoutcomeでreturn/throwを一つの性質として扱えます。
 
-## mock
+最後の正常結果とそのerror/outcomeは混在できません。先行操作の成功結果は併用できます。前段の例外は失敗として後続を止め、最後に期待した例外には流用しません。finalなしのstepsは全操作の正常完了を要求します。Result型の失敗値は通常の結果です。
 
-effectfulなケースだけがreplace(ctx => ctx.boundary, behavior)を入力/生成/操作の指定前に置けます。生成例や縮小候補ごとに境界を再解決します。内部関数を任意に指定するmockはありません。
+## 環境
+
+case内のmock/replaceはありません。useするenvironmentの設定や型付きfakeが外部条件を作ります。対象自身の実装を変えるためのフレームワークの差し替え口は提供しません。
 
 ## timeout / retry
 
-ケースの入力/forAll/stepsの前に設定します。retryはpropertyの生成・縮小を含むケース全体、eventuallyは状態取得だけの再試行です。
-
-## 呼び出し条件を先に構造化する
-
-prepare後のcompileで境界トークンとexpect/expectCallsを解決し、必要な観測をtarget前に開始します。境界呼び出しの記録はtarget開始からsettleまでで、argsFrom・観測器・検証処理を含めません。
+入力/forAll/stepsより前に指定します。retryは全ケース、eventuallyは状態の読み取りだけの再試行です。
 
 ## 結果の期待を組み立てる時点
 
-expectのビルダーはtarget前に評価します。ctxは準備された環境、resultやinput等は実測値ではなく型付きのrefです。値の取得と保存の後に条件を照合します。ビルダーの失敗をtargetが期待どおり失敗したことにはしません。
+各評価のprepare後、from・argsFrom・steps・expectをcompileします。実環境とrefを区別し、結果依存の観測は実行後に引数を解決します。ビルダーのthrowはtargetの例外ではありません。

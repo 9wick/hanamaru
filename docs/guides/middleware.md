@@ -26,7 +26,7 @@ registerTest(userCount)
 ```
 
 [この例](../examples/middleware.test.ts)の[サンプルDB](../examples/database.ts)は、3件のユーザーを持つメモリ上の実装です。
-各評価で開き、期待の検証とモックの復元が終わってからcloseします。
+各評価で開き、期待の検証と観測の終了が終わってからcloseします。
 ケースが失敗してもfinallyを通ります。
 
 ## middlewareを作る
@@ -86,7 +86,7 @@ middlewareの引数コンテキストは呼び出し時点の値のままです�
 ```
 出典: [docs/examples/context-flow.test.ts](../examples/context-flow.test.ts)
 
-値はmiddlewareのnextから供給します。effectfulな対象ではenvironmentのnextからも値・観測トークン・Boundaryを供給できます。
+値はmiddlewareのnextから供給します。effectfulな対象ではenvironmentのnextからも値・依存・観測トークンを供給できます。
 複数のmiddlewareは書いた順に実行します。グループでは親から子へ進み、後処理は逆順です。
 どれも定義時には実行せず、実行する各評価で呼びます。itの一試行は一評価、propertyの一試行は生成例・縮小候補の複数評価です。
 共通設定なので、最初のケース・groupより前に登録します。

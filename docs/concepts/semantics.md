@@ -1,142 +1,132 @@
 # 実行セマンティクス
 
-定義から得た対象・入力・観測・期待を、独立した試行として実行します。利用者向けの書き方は[公開APIの記述契約](../guides/writing-tests.md)に従います。
+対象・特性・it/propertyから実行計画を作り、契約に対応する効果を観測します。[公開構文](../guides/writing-tests.md)に従います。
 
 ## 定義と実行の境界
 
-Testのチェーンは定義を作り、targetを実行しません。it / property / eachのコールバックは定義時に呼びます。pure/effectfulの宣言を解決して対象の形と別に保持します。argsFrom・steps・検証ビルダー・境界resolverは保持し、各評価の環境準備後に評価します。
+定義時にit/property/eachのコールバックを評価し、対象とビルダーを保持します。from・argsFrom・steps・expectは環境準備後に評価します。blueprint取得では対象・観測・環境を実行しません。
 
-registerTestは親からの供給が不要な完成定義を登録します。blueprintの取得は環境も観測も開始しません。定義コールバックのthrow、空のeach・子・条件、静的に不正な設定は定義エラーです。
+pure/effectfulはケース前に一度だけ明示できます。省略時pureは同じ実行意味です。最初のケース後の切替、scenarioのitへの任意述語、itへの入力生成や任意述語を拒否します。
 
 ## テストの受付
 
-全定義の対象shape、characteristic、caseKind、入力/生成、完成条件、参照、設定値を検査します。省略時pureは明示pureと同じです。特性の重複・ケース追加後の変更、pureへのenvironment、itへのforAll・性質条件、propertyの入力生成欠落、lawの型不適合、対象自身の境界代替、対象外・別評価のref等を拒否します。実資源の参照が必要な検査は評価のcompile段階で行います。
+対象のキー・形・特性、receiverの供給、完成条件、設定値と参照を検査します。静的な不正は開始前に拒否します。実際のinstanceや観測器が必要な検査はcompileで行います。
 
-受付エラーではtargetを開始しません。CLIは収集・受付の失敗をコード2、開始した試行の失敗をコード1として区別します。評価のcompileで検出する動的な不正もコード1で段階と原因を示します。
-
-各ケースは他のケースの実行順・実行有無へ依存しません。名前の重複ではなく構造と宣言位置で対応させます。同じ定義を別経路へ合成したものは、それぞれ独立した実行箇所です。
+受付失敗はCLIコード2、開始した試行の失敗はコード1です。ケースは他ケースの実行順に依存しません。
 
 ## Runとprocess
 
-Runが所有する開始済み処理と後始末が終わってからRunを完了します。同じhost runtimeでactiveなRunは一つとし、完了後に次を開始できます。実行戦略としてのprocess数や配置をケースの意味にしません。
+Runの開始済み処理と後始末を完了してからRunを終了します。process数や配置をケースの意味に含めず、同じhost runtimeでactiveなRunは一つとします。
 
 ## group middleware
 
-`group(middleware, [children])` は子全体を一度囲みます。useは各評価に適用し、propertyでは生成例・縮小候補ごとに囲み直します。groupの前処理は親groupの安定したctxを受け、後から開始するattemptのctxに依存できません。
-
-共有資源はgroup middlewareで用意できますが、environmentをgroupへ渡すことはできません。観測器・境界トークンは子のenvironmentが評価ごとに作ります。共有資源内のデータの初期化・ケースごとの範囲分離は環境が提供します。
-
-groupの前処理失敗では子を開始せず、groupの失敗と子の未実行理由を残します。通常の前処理例外で解放が完了すればgroup外は続行できます。timeout・後処理失敗は後続を中断します。
-
-## 実行設定の解決
-
-timeoutとretryは外側から内側へ、明示された値だけを上書きします。既定は試行5,000ms・retry 0回です。ケースでは入力/操作の確定前に指定します。観測の期限・間隔は条件ごとに指定し、ケース全体のtimeout/retryと混同しません。
+group middlewareは子全体を一度囲みます。useのmiddleware/environmentは各評価を囲みます。groupは資源を共有できますが、観測器は評価ごとに作り、次の評価までに初期化・解放を完了します。
 
 ## 試行と評価
 
-ケースはit由来のexampleかpropertyです。retry一回分をattemptとし、exampleのattemptは一評価、propertyのattemptは生成・反例探索・縮小の複数評価を含みます。以下の手順を各評価で行います。propertyの評価開始前には候補sampleを選び、変更から保護するコピーを保存します。
+retry一回分がattemptです。itは一評価、propertyは生成と縮小の複数評価を含みます。一つのsteps内では必要な状態を保ち、候補間では新しい環境で始めます。
+
+## 実行設定の解決
+
+timeout/retryは外側から内側へ明示値だけを上書きし、既定は5,000ms/0回です。propertyの試行期限は生成・全候補の評価・縮小・後始末を含み、候補ごとにはリセットしません。
 
 ## 一評価の手順
 
-1. **prepare**：useのmiddlewareとenvironmentを順に開始する。新しいctxと評価所有者を作り、環境のscopeがトークンを発行する。
-2. **compile**：argsFromまたはstepsを構築し、境界resolverとexpect/expectCalls、またはlawの計画を一度構築する。対象の引数・観測条件・期待する終了を確定する。toEqual・part・action全件一致・境界の引数条件の期待値は、スナップショット領域を検査して独立したコピーとして保存する。保存失敗ならtargetを開始しない。toBeと参照同一性のLiveRefはコピーしない。期待のValueRefは実測値ではない。条件・トークンの所有者・action区間の矛盾を検査する。参照同一性の条件へSnapshotRefを渡していた場合も拒否する。
-3. **before**：before参照またはunchangedのstateを読み、コピーする。使用するactionを宣言順にopenする。openが完了するまでtargetを開始しない。
-4. **instrumentation**：許可済み境界の代替と呼び出し記録を設定する。適用途中の失敗では適用済みのものを復元する。
-5. **target**：一回の関数、lawの定める複数実行、またはscenarioのstepsを実行する。Promise/thenableをawaitし、正常結果・throw/rejectを区別して保持する。
-6. **observe**：targetのsettle時刻を基準に、後状態の取得とactionの期間待機を開始する。同じstateの即時後値は一度読み共有する。eventuallyはその条件のreadだけを再試行する。必要なaction.finishを区間終了ごとに一度呼び、値をコピーする。actionの環境側記録は発生時点の値であり、finish時点に可変データを読み直す実装は契約違反である。
-7. **assert**：期待する終了を照合し、取得できた値の条件をすべて評価する。失敗後も独立した条件は評価する。観測待機は条件を満たすためにtargetを再実行しない。
-8. **cleanup**：開いたactionを逆順にdisposeし、境界を逆順に復元してから、environment/middlewareの後処理を内側から外側へawaitする。失敗を消さず、解放不能なら後続を中断する。
+1. prepare：middleware/environmentを開始し、評価固有の依存・観測器を用意する。
+2. compile：fromを解決してreceiverを検査し、argsFrom/steps/expectを構築する。期待値と定数の比較表現を保存し、refの所有者・観測引数の取得時点を検査する。
+3. before：実行前の状態を読み、action.openを開始する。全準備が成功してからtargetへ進む。
+4. target：一回の対象またはstepsの操作列を実行し、各正常結果の必要な値をその時点で保存する。
+5. checkpoint：after(stepRef)の観測を、指定操作の結果保存後・次の操作より前に実行する。
+6. observe：計画全体のsettle後、結果依存の状態引数を解決して読み、必要な待機とaction.finishを行う。
+7. assert：取得した値を照合し、不一致・述語例外・取得不能・未評価を区別する。
+8. cleanup：開始したactionを逆順にdisposeし、environment/middlewareの後処理を内側から外側へ待つ。
 
-prepareからcleanupまでが試行期限に含まれます。propertyでは候補生成・全評価・縮小を含めて一つの試行期限を計り、候補ごとに期限をリセットしません。途中で条件が不一致でもcleanupを省略しません。stateの読み取りはreadonlyの観測責務とし、[値領域](../guides/writing-tests.md#スナップショットの値領域)の検査後にコピーします。structuredCloneの成功だけを受入条件にはしません。コピー不能・取得不能を空値へ変換しません。actionの期間はtarget開始前のopen完了から、settleまたはsettle後の指定時間までです。
+s.inputはcompileで利用できる具体値であり、sampleに応じて引数を計算できます。CallRef/FinalStepRefは未実行の記述なので、その値に応じた分岐はできません。
 
-複数actionのopenは宣言順、期間終了のタイマーは同じsettle時刻を基準にします。長い期間のactionを待つことで短い期間が伸びないよう、それぞれのfinishを独立に開始します。出力の条件順は宣言順を保ちます。
+フレームワークは任意メソッドの置換や復元を行いません。環境が用意したfakeや接続先の初期化・解放は、その環境の責務です。後始末不能では後続を中断します。
 
-## 結果refの取得と保存
+## receiverと対象の固定
 
-compileで各条件が要求する値と参照同一性の用途を判別します。valueはcompile時、sampleは候補選択直後、inputは呼び出し直前、各resultはその呼び出しの正常完了直後に、必要な値・部分をスナップショット領域へ検査して保存します。結果のfield/partもその時点で解決します。生の参照を必要とする条件では同時に参照を保持し、値の保存と混同しません。
+クラス形式のfromは各評価で一度解決します。instanceof指定クラスと、指定キーが呼出し可能なデータプロパティであることを検査します。継承instance、prototypeメソッド、instanceの関数フィールドを許します。固定するのは宣言クラスと公開操作名までです。供給instanceが契約を守る実装であるかは環境提供者の責任であり、メソッド本体を不正にstubへ変えていないことを自動証明しません。getter拒否はreceiver解決段階に任意の処理を起動しないためです。
 
-law/stepsでは、各結果の保存を後続操作より前に行います。結果refを次の引数へ解決するときは生の値を渡し、期待・性質・値の関係を照合するときは保存値を使います。結果レコードも各結果の保存値から組み立てます。LiveRefであることを理由に、値比較を照合時点の可変値へ遅らせません。
+staticなtarget(obj,key)はその受け手を固定します。scenarioのmethod記述子はfromのinstanceマップから受け手を解決します。結果を見て対象や受け手を切り替えることはできません。
 
-保存に失敗したら観測障害として試行を失敗にし、後続のlaw/stepsを停止します。target自身のthrowとは区別し、取得可能な状態/actionの後観測と解放は継続します。検証に使わない中間値をコピーすることはありません。
+## 観測引数とチェックポイント
+
+stateの定数引数はcompile、input/sample引数は呼出し前、結果引数は該当操作の完了後に型付きデータとして保存します。readにはその保存値を渡し、後続の変更で別のキーを読まないようにします。
+
+state(...).before()/unchangedは実行前に引数が揃う場合だけです。beforeはpropertyで前後関係を表すrefであり、前値だけでは検証を完成できません。afterは指定操作の完了までに全引数が揃うことを必要とします。他の観測に依存する引数は受け付けません。これにより観測をtargetの操作集合へ追加せずに、返されたIDや各操作の結果から読む対象を決められます。
+
+結果が存在しない場合、依存する観測は理由付きの未評価とします。正常結果が必要な条件をerror期待へ混ぜた定義はcompileで拒否します。結果依存のafter-planを未実行のまま成功にはしません。
 
 ## 待機と観測値
 
-eventuallyはtargetのsettle直後に一度read・比較します。不一致ならintervalMs後に再取得し、withinMsの期限で最後の未完了取得も打ち切って失敗を記録します。開始済みの処理が停止しない場合は後始末未完了として扱い、結果を後から成功へ変更しません。期限内の最初の一致で完了し、その後の不変は保証しません。
+state.eventuallyはsettle直後からread・照合だけを繰り返します。不一致だけをintervalMs後に再試行し、取得失敗・コピー失敗は即時に観測障害とします。期限内の最初の一致で完了し、以後ずっと不変であるとは報告しません。期限で取得が未終了なら後始末未完了として扱います。
 
-actionは正の一致が早く成立しても指定区間を短縮しません。不発生も区間終了とfinish成功後にだけ判定します。finishの失敗はactionの全条件の観測障害となり、noneを成功にしません。
+actionはopen完了からtarget計画のsettle、またはsettle後の指定時間まで記録します。早く肯定条件が成立しても区間を短縮せず、それぞれのfinishを指定時刻に開始します。環境は発生時に履歴を保存し、finishで可変の最終状態から過去を再構成しません。
 
-observeの一つの失敗で他の独立した観測を省略しません。ただし試行timeout・外部中断・接続の解放不能など、実行境界の安全な終了ができない場合は残りを未評価としcleanupへ進みます。
+比較表現・型付きデータ・identityを[値の比較](../reference/value-comparison.md)の規則で保持します。期待値や先行結果が後続変更に追従することを防ぎます。
 
 ## 正常終了・例外の期待
 
-error条件がなければ正常終了を期待します。errorと状態/action/境界条件は併用できます。errorと正常resultを参照する条件は併用できません。propertyでもerrorとinput/sample・状態/actionの条件を組み合わせられます。law・scenarioは正常完了だけを期待し、途中のthrow/rejectは常に失敗です。
+終了期待はreturn / throw / return-or-throwです。outcome由来のrefがあればreturn-or-throw、error条件または例外refがあればthrow、それ以外はreturnです。単一実行ではその対象、明示的な最終操作のあるstepsでは最後の操作が終了期待の対象です。
 
-| 実際の終了 | 結果・例外の照合 | 状態・actionの観測 |
+stepsの通常のargsは全て正常完了を要求します。最後に一度だけfinalを記述し、そのFinalStepRefを直接または返却レコードへ含めれば、最後だけerror（it/property）またはoutcome（property）で検査できます。error/outcomeがなければfinalもreturnを期待します。複数final・後続操作・返却されないfinalはcompileで拒否します。FinalStepRefを次の操作へ渡すことはできません。
+
+最後のerror/outcomeと、最後の正常resultに依存する条件・観測は混在できません。先行操作の成功結果は併用できます。compileでrefの元操作と依存を追跡し、返却レコード全体が最後の正常結果を含む場合も拒否します。
+
+| 終了 | 結果の検証 | 効果の観測 |
 |---|---|---|
-| 正常終了 | resultを評価。error期待なら不一致 | 指定した観測と待機を実行 |
-| throw/reject | error条件と照合。正常期待なら不一致 | settle後の観測・待機を継続 |
-| law/stepsの途中のthrow | 原因と未実行操作を記録。存在しない結果は未評価 | 操作列全体のsettleとして、取得可能な観測を継続 |
-| timeout・外部中断 | error条件で成功にできない | 未完了の区間・値は未評価。取得済み情報を残し後始末 |
+| 正常 | 期待対象のresultまたはoutcomeのreturn枝。error期待なら不一致 | 引数が揃う観測を実行 |
+| 単一対象または明示的な最終操作のthrow/reject | errorまたはoutcomeのthrow枝。正常期待なら不一致 | 定数・input（単一実行）・sample・先行成功結果に依存する観測を継続 |
+| stepsの先行操作のthrow、またはfinalなしの操作のthrow | 予期しない失敗。明示的な最終操作があれば未実行として記録。最後のerrorを満たさない | 既に得た結果・sample・引数非依存の観測を継続 |
+| timeout/中断 | error期待で成功にできない | 未完了を未評価として解放 |
 
-return undefinedとthrow undefinedは別です。targetを開始していない場合は、空の記録から不発生・notCalledを成功にしません。
+finalが終了を検査する範囲は、その対象関数の呼び出しと戻ったPromiseのsettleだけです。引数refの解決、結果保存、checkpoint、環境・検証の失敗を対象のthrowへ変換しません。先行操作の例外型が期待と一致しても、最後のerror/outcomeへ代入しません。
+
+error.ofTypeとoutcome.withErrorは、期待対象のthrow/rejectが得られた時点でinstanceofを検査します。不一致は条件失敗で、射影・field取得・述語は実行しません。合致した場合だけ元の例外から必要なデータを保存します。射影の失敗は観測障害です。環境・実行器の失敗やtimeoutをoutcomeのthrow枝に入れません。
+
+明示的な最終操作の後はafter-planで観測し、after(stepRef)は先行の通常操作だけに使えます。取得できなかった結果を引数にする観測は未評価とし、空の状態や履歴へ置き換えません。targetを開始していない場合も不発生の成功にはしません。
 
 ## 途中の失敗
 
-| 段階 | 処理 |
+| 段階 | 扱い |
 |---|---|
-| prepare | 未開始の下流は動かさず、取得済み資源を後始末 |
-| compile | target・観測を開始せず、準備した環境を解放 |
-| before | targetを開始せず、開いたactionをdispose。すべての期待は未評価 |
-| instrumentation | targetを開始せず、適用済み代替と観測を解放 |
-| target | 失敗の値を保持し、上記の終了別の規則で観測・照合 |
-| observe | 該当条件の観測障害。他の独立した観測を継続 |
-| assert | 不一致・述語例外を記録し、他の条件を継続 |
-| cleanup | 先行する失敗も保持し、残りの解放を試みて後続を中断 |
+| prepare/compile/before | targetを開始せず取得済み資源・セッションを解放 |
+| target | 終了種別に従って照合と観測 |
+| checkpoint | 取得不能なら後続操作を止め、取得可能な後観測と解放を続行 |
+| observe | 該当条件の観測障害。他の独立した観測は続行 |
+| assert | 不一致・述語例外を保持し、他の条件を続行 |
+| cleanup | 元の失敗も保持し、残りの解放を試みて後続を中断 |
 
-prepare/compile/before/instrumentation/observe/assertの失敗をtargetの期待した例外にはしません。action.openが途中で失敗してsessionを返せない場合は、openの実装が部分的に取得した資源を解放する責務を持ちます。
+open途中で失敗しセッションを返せない場合、その提供者が部分取得した資源を解放します。試行期限超過等では待機を止め、未完了を成功に変換しません。
 
 ## middlewareとnext
 
-middleware / environmentはnextを一度呼び、その完了値を返します。後処理は `try { return await next(fields) } finally { ... }` で待機します。next未呼出し・複数呼出し・返却前の終了は実行時にも失敗にします。外側がcatchしても記録した失敗は消えません。
+middleware/environmentはnextを一度呼び、その完了値を返します。後処理にはreturn await nextを使って下流を待ちます。未呼出し・複数呼出し・早すぎる終了は実行時にも検査します。catchしても記録済みの失敗は消えません。
 
-コンテキストのフィールドはreadonlyで、値の供給は浅い合成です。state/actionのスナップショットのコピーとは別です。環境のscopeによる発行はnextを呼ぶまでに限り、後処理や終了後には発行できません。
+scopeはnext以前に観測器を発行し、所有者は評価単位です。同じattempt内でも別候補のトークンを持ち込めません。前評価の解放後に共有資源から新しい観測器を作れます。
 
-## 呼び出し記録とモック
+## 証拠の種類
 
-replaceとexpectCallsは同じ評価のBoundaryトークンだけを受け取ります。記録区間はtargetの開始からsettleまでです。prepare・argsFrom・検証・観測器の関数からの呼び出しは記録に含めません。バックグラウンド配送を含む実効果の区間にはactionを使います。
-
-引数は呼び出し開始時に同じスナップショット領域を検査して診断・比較用の値としてコピーし、後の変更を混入させません。コピー不能はinstrumentationの実行失敗とします。thisと本物の戻り値・Promiseを保ち、対象へ返す値そのものをコピーしません。同期throwした呼び出しも記録します。
-
-応答列のonceは開始順に消費し、各評価でリセットします。通常動作を必須にし、任意のcallsFakeは提供しません。呼び出し確認と効果の観測の違いを結果へ残します。
-
-## 適用と復元
-
-境界の代替はケース内で指定し、groupから任意のmockを注入しません。対象関数自身・scenario/relationの構成要素と同じ参照の代替を拒否します。作用範囲は環境が公開したobjectのmethod経由に限り、保存済み参照やmodule内部へ暗黙に差し替えを広げません。
-
-同じobject/keyに複数の境界トークンを発行することは同一評価内で拒否します。前の評価を復元・解放した後なら、共有した同じobject/keyに次の評価の新しいトークンを発行できます。前の評価のトークンは同じattempt内でも再利用できません。同じトークンへのreplaceもケース内で一度だけです。書き換え不能・アクセサ・非関数はinstrumentationで拒否し、適用済みのものは元のdescriptorへ復元します。
-
-## ケース間の状態
-
-トークン・応答列・観測記録は評価ごとに新規作成します。外部DBや共有資源の範囲分離は環境が行い、全外部状態の自動復元は約束しません。順序を持つ操作は一つのscenarioに置きます。
+evidenceは環境が選んだ観測点の宣言で、real-effect/substitute-effect/call-recordをそのまま記録します。state/actionの形から証拠の強さを自動認定しません。直接観測できない場合のcall-recordを受信・永続化の保証へ格上げしません。
 
 ## 生成入力と再試行
 
-propertyはforAllの生成器・seed・runs・maxShrinksを持ちます。seedを省略した場合も、生成開始前に値を決めて結果へ記録します。整数・文字列・配列・タプルの範囲条件を守ってruns件を順に生成し、最初の契約違反で残りの通常生成を止めます。
+propertyはseedからruns件を順に生成します。既定runsは固定入力源で1、その他で100、maxShrinks=1000です。seedは安全な整数、runsは正の安全な整数、maxShrinksは0以上の安全な整数です。省略seedも結果へ残します。
 
-各生成例は独立した評価です。middleware/environmentと境界の応答列・観測履歴を作り直し、評価の後始末が終わるまで次へ進みません。共有resource/group資源の寿命は維持しますが、環境が候補ごとの初期化・範囲分離を担います。法則の二回の実行、scenarioの一操作列は一評価内であり、途中で環境を初期化しません。
+constantは定義時にデータを保存し、評価ごとにコピーします。constantのみのtuples/recordと空タプルは固定入力源で、縮小候補を持ちません。boolean、record、oneOfを含む生成記述も定義に保持します。oneOfは非空で、縮小してもいずれかの選択肢が表す範囲内です。
 
-失敗した候補から範囲内の縮小候補を作り、最大maxShrinks回まで評価します。同じ条件indexの不一致、または同じ法則/操作位置の予期しないtarget終了を再現した候補だけを採用し、再びその候補から探索します。前提を満たさない候補を生成して除外する方式にはせず、生成器が範囲内の候補を作ります。候補列は形式バージョンとseedから決定的に再現できます。
+最初の契約違反で通常生成を止め、範囲内の縮小候補を評価します。同じ条件indexの不一致、または同じ操作位置の予期しない終了を再現した候補だけを採用します。最大maxShrinks回で探索を止め、残した反例が大域的に最小とは報告しません。
 
-準備・compile・観測器・述語の例外・後始末の失敗、試行timeout・外部中断は反例の縮小対象ではありません。縮小中にこれらが起きた場合も無視せず探索を止め、元の契約違反と追加の失敗を保持します。条件不一致に至る有限期間の観測（期限内に状態が一致しなかった等）は反例ですが、読み取り不能や終了しない観測処理は観測障害です。
+各生成例・縮小候補はprepareからcleanupまで独立です。propertyのsteps内の操作間では状態を保ちます。準備・compile・観測器・述語・後始末の例外や試行timeoutは縮小する契約違反ではなく、探索を止める検証基盤の失敗です。元の反例と追加の失敗を両方保持します。
 
-入力sampleは資源を含まないスナップショット可能なデータです。argsFrom(ctx, sample)がDB等の実資源を添えます。sampleと再現データは独立して保持し、入力を変更するeffectfulなtargetが生成器の入力列や縮小元を変更できないようにします。
-
-retryでは同じseed・生成器形式・設定で候補探索を最初から行います。環境は新しく用意し、前のattemptの失敗を消しません。再現にはseedに加えて縮小後の入力を残し、範囲の形式を変更した場合もその具体値から回帰テストを記述できます。最大予算での打切りを明示し、反例が大域的に最小とは報告しません。
+retryでは同じseed・設定・生成器形式で探索を最初から行います。保存するのは資源を含まないsampleで、argsFromやfromが環境を供給します。targetの入力変更で再現データを更新しません。
 
 ## skip / todo / only
 
-定義は収集しますが、skip/todoの環境・観測・targetは開始しません。onlyは選択であり検証条件を変更しません。未実行を成功した検証として報告しません。
+定義を収集しますが、skip/todoでは環境・観測・targetを開始しません。onlyは提供されるitの選択で、検証の意味を変えません。
 
 ## 診断
 
-条件はsource（expect / expectCalls / law）と配列内のindexで対応させます。観測段階・区間・対象・期待・実測・原因を保持します。まだcompileできなかった条件は捏造せず、ビルダーの位置と失敗段階を示します。
+条件はsource: expectと配列内indexで対応します。評価番号・入力・比較方法・観測引数・時点・evidence・実測値・原因を残します。compileできなかった条件を捏造しません。

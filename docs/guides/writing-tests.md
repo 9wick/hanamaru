@@ -1,500 +1,464 @@
 # 契約からテストを書く
 
-このページのコードが公開APIの記述契約です。対象の特性とケースの種類を別々に選び、許可例・禁止例を対で示します。業務契約を別スキーマへ書き直す必要はありません。
+targetで対象、pure/effectfulで特性、it/propertyでケースの種類を選びます。expectはケース内の期待です。このページのコードと禁止例を公開構文の契約とします。
 
 ## 対象と入口
 
-```text
-target：何の契約を検証するか
-  pure / effectful：対象の特性（省略時pure）
-    it：具体例のケース
-    property：入力範囲に対する性質のケース
-```
-
-expectはケース内で期待を書く操作です。itとpropertyを、expectとpropertyの選択に置き換えません。eachは具体例を行で並べるitの省略形です。
-
-<!-- example: none — 公開APIの記述契約：特性とケース入口 -->
+<!-- example: none — 公開APIの記述契約：具体例と性質 -->
 ```ts
-import { Test, strings, tuples, idempotent, registerTest } from 'hanamaru'
-
+import { Test, strings, tuples, registerTest } from 'hanamaru'
 const normalize = (text: string) => text.trim()
-const texts = new Test().target(normalize).pure()
-  .it('前後の空白を除く', t => t.args(' hello ')
-    .expect(e => [e.result.toEqual('hello')]))
-  .property('冪等である', p => p
-    .forAll(tuples(strings()), { seed: 7, runs: 100 })
-    .law(idempotent()))
-registerTest(texts)
+registerTest(new Test().target(normalize).pure()
+  .it('空白を除く', t => t.args(' hello ').expect(e => [e.result.toEqual('hello')]))
+  .property('冪等である', p => p.forAll(tuples(strings())).steps(s => {
+    const first = s.target.args(s.input[0])
+    return { first, second: s.target.args(first) }
+  }).expect(e => [e.on({ first: e.result.field('first'), second: e.result.field('second') })
+    .satisfies('二度適用しても同じ', ({ first, second }) => first === second)])))
 ```
 
-`target(fn)` と `target(fn).pure()` は型・動作とも同じpureな対象です。pureは入力以外の変動する状態に依存せず、入力や外部状態を変更しないという宣言です。DBの読み取り・現在時刻の取得もeffectfulです。非同期であることだけではeffectfulにしません。
+省略時pureは明示pureと型・動作が同じです。pureは入力以外の変動状態に依存せず、入力や外部を変えないという宣言です。外部の読み取りもeffectfulで、非同期だけではeffectfulにしません。内部の純粋性を自動証明する機能ではありません。
 
-`pure()` / `effectful()` の明示はtarget後・最初のケース前に一度だけです。両方の指定、同じ宣言の重複、ケース追加後の変更はできません。省略状態のpureは、最初の明示宣言としてeffectfulを選ぶことを妨げません。定義はイミュータブルなので、元の未宣言ビルダーから別の派生を作ることはできます。
+pure()/effectful()の明示はtarget後・最初のケース前に一度だけです。重複、両方の指定、ケース後の切替を拒否します。environmentはeffectfulを選んだ後にだけuseできます。イミュータブルな未宣言ビルダーから別の派生を作ることはできます。
 
-environmentを使うなら、そのuseより前にeffectfulを選びます。通常のmiddlewareを使った後も、ケース追加前で明示宣言がまだなければ選べます。省略を含め、最初のケースで特性は固定されます。純粋性の宣言が正しいかを関数内部から自動判定する保証ではありません。
-
-<!-- example: none — 公開APIの記述契約：特性の変更を禁止 -->
+<!-- example: none — 公開APIの記述契約：用途外の記述を拒否 -->
 ```ts
-import { Test } from 'hanamaru'
+import { Test, integers, tuples } from 'hanamaru'
 const add = (a: number, b: number) => a + b
-new Test().target(add).pure().effectful() // 型エラー: 宣言済み
-new Test().target(add).pure().pure()      // 型エラー: 重複
+new Test().target(add).pure().effectful() // 型エラー: 明示済み
+new Test().target(add).pure().pure() // 型エラー: 重複
 new Test().target(add).it('足す', t => t.args(1, 2)
   .expect(e => [e.result.toEqual(3)])).effectful() // 型エラー: ケース追加後
+new Test().target(add).it('生成', t => t.forAll(tuples(integers(), integers()))) // 型エラー
+new Test().target(add).it('繰り返す', t => t.steps(s => s.target.args(1, 2))) // 型エラー
+new Test().target(add).it('任意条件', t => t.args(1, 2)
+  .expect(e => [e.on(e.result).satisfies('正', n => n > 0)])) // 型エラー
 ```
 
 ## 具体値と部分
 
-itは具体的な入力と期待を書きます。単一関数のitにはargs / argsFromとexpectを提供し、一回の対象実行を検証します。関係の検査に必要な複数実行はpropertyの法則に属し、itにcalls・forAll・任意述語はありません。
+単一targetのitはargsまたはargsFromで一回の入力を指定します。argsの値は定義で受け取った参照をそのまま渡し、対象へ渡す値は自動複製しません。入力の同一性の契約を保つためです。入力を変更する対象や再試行で新しいオブジェクトが必要なら、argsFromで評価ごとに作ります。期待値の比較用保存はこれとは別です。具体値はtoEqual、参照はtoBe、数値の許容誤差はtoBeCloseTo(expected, { absoluteTolerance })を使います。許容誤差は有限の0以上で、期待・実測も有限の数値を要求します。共通notや任意述語はありません。
 
-<!-- example: none — 公開APIの記述契約：具体例と禁止例 -->
+part(key)で部分を明示できます。プロパティがgetterなら、明示したその部分の取得時にだけ読みます。取得失敗を不在と混同しません。部分の検証を出力全体の一致として報告しません。
+
+<!-- example: none — 公開APIの記述契約：標準の値をそのまま比較 -->
 ```ts
-import { Test, tuples, integers, registerTest } from 'hanamaru'
-const add = (a: number, b: number) => a + b
-const tests = new Test().target(add)
-  .it('足す', t => t.args(1, 2).expect(e => [e.result.toEqual(3)]))
-registerTest(tests)
-
-new Test().target(add).it('型違い', t => t.args(1, 2)
-  .expect(e => [e.result.toEqual('3')])) // 型エラー
-new Test().target(add).it('弱い期待', t => t.args(1, 2)
-  .expect(e => [e.result.not.toBe(0)])) // 型エラー: 汎用notはない
-new Test().target(add).it('生成', t => t.forAll(tuples(integers(), integers()))) // 型エラー
-new Test().target(add).it('複数実行', t => t.calls(c => c.args(1, 2))) // 型エラー
-new Test().target(add).it('ケース内で変更', t => t.args(1, 2)
-  .property(() => true)) // 型エラー: propertyはtarget配下のケース入口
-new Test().target(add).it('性質の混入', t => t.args(1, 2)
-  .expect(e => [e.on(e.result).satisfies('正', n => n > 0)])) // 型エラー
+import { Test, registerTest } from 'hanamaru'
+const encode = (text: string) => new TextEncoder().encode(text)
+registerTest(new Test().target(encode)
+  .it('Aを符号化する', t => t.args('A')
+    .expect(e => [e.result.toEqual(new Uint8Array([65]))])))
+const ratio = (a: number, b: number) => a / b
+registerTest(new Test().target(ratio)
+  .it('3分の1', t => t.args(1, 3)
+    .expect(e => [e.result.toBeCloseTo(0.333333, { absoluteTolerance: 0.000001 })])))
 ```
 
-`toEqual(value)` は値の一致、`toBe(value)` はObject.isです。`result.part('name').toEqual('Alice')` は指定した部分だけの検証です。partは存在するキーを一段ずつ選び、全体の一致と診断を区別します。関数値を期待値に渡しても、述語として実行しません。
+toEqualはMap/Set/TypedArray/Dateと通常のクラスの公開データも比較できます。比較のためにアプリの戻り値をプレーンオブジェクトへ変更させません。期待値は実行前に独立した比較表現へ保存します。[値の比較](../reference/value-comparison.md)に規則があります。
 
 ## 性質
 
-propertyはtarget配下のケース入口です。名前・入力生成器・検査内容を持ち、入力の生成・反例の縮小・再現を実行器が管理します。ケースの中にpropertyやrelateを追加する操作はありません。
+propertyはforAllで入力範囲を指定し、expectで性質を表します。単一targetは生成タプルを引数にして一度実行します。資源を添える場合はargsFrom((ctx, sample) => tuple)、複数実行が必要ならstepsを選びます。両方の併用はできません。
 
-<!-- example: none — 公開APIの記述契約：性質のケース -->
+<!-- example: none — 公開APIの記述契約：可換性 -->
 ```ts
-import { Test, arrays, integers, tuples, registerTest } from 'hanamaru'
-const sort = (values: readonly number[]) => [...values].sort((a, b) => a - b)
-const tests = new Test().target(sort)
-  .property('昇順になる', p => p
-    .forAll(tuples(arrays(integers({ min: -100, max: 100 }))))
-    .expect(e => [e.on(e.result).satisfies('昇順', values =>
-      values.every((value, index) => index === 0 || values[index - 1] <= value))]))
-registerTest(tests)
-
-new Test().target(sort).property('具体入力へ変更', p =>
-  p.args([2, 1])) // 型エラー: propertyはforAllで入力範囲を指定
-new Test().target(sort).property('非同期述語', p => p
-  .forAll(tuples(arrays(integers())))
-  .expect(e => [e.on(e.result).satisfies('昇順', async () => true)])) // 型エラー
+import { Test, integers, tuples, registerTest } from 'hanamaru'
+const add = (a: number, b: number) => a + b
+registerTest(new Test().target(add)
+  .property('可換である', p => p
+    .forAll(tuples(integers({ min: -100, max: 100 }), integers({ min: -100, max: 100 })))
+    .steps(s => ({ ab: s.target.args(s.input[0], s.input[1]), ba: s.target.args(s.input[1], s.input[0]) }))
+    .expect(e => [e.on({ ab: e.result.field('ab'), ba: e.result.field('ba') })
+      .satisfies('順序を入れ替えても同じ', ({ ab, ba }) => ab === ba)])))
 ```
 
-propertyのexpectは、itと同じ具体値・部分・例外条件に加え、型付きrefを使う条件を提供します。
+onにはrefまたは非空の名前付きrefレコードを渡します。satisfiesは名前と同期booleanの述語を受け取り、必要な保存値が揃ってから評価します。関係もこの性質の表現で扱い、equal/different/lessThan/inRange等の別系列の条件APIを増やしません。refそのものを通常の演算子に渡せません。
 
-- `e.on(ref).satisfies(name, predicate)`：取得した値についての同期booleanの条件。
-- `e.on({ input: e.input(0), result: e.result }).satisfies(...)`：非空の名前付きrefレコードを、同じ形の保存値として受け取る条件。
-- `e.on(ref).inRange({ min, max })`：数値の両端を含む範囲。
-- `e.equal(a, b)` / `different(a, b)`：保存値の一致・不一致。
-- `e.sameReference(a, b)` / `differentReference(a, b)`：生の参照のObject.is。
-- `e.lessThan(a, b)`：数値の大小。
+任意述語の意味や、恒真条件でないことは自動証明しません。propertyを選ぶこと自体が正しい性質の証明にはなりません。空タプルや一点の範囲も正当な入力領域なので許しますが、診断には探索した範囲と件数を示し、広い範囲を検証したとは扱いません。
 
-述語は読み取りだけを行います。IOや任意の関数呼び出しを自動検出する保証はなく、恒真条件でないことも型だけでは保証しません。型は対象refと用途を制限し、性質の意味はレビュー対象です。単にpropertyを選べば正しい法則になるとは扱いません。
+固定入力について性質を確かめる場合はconstantを使います。空の生成タプルにargsFromで入力を隠す必要はありません。
+
+<!-- example: none — 公開APIの記述契約：固定入力の性質 -->
+```ts
+import { Test, constant, tuples, registerTest } from 'hanamaru'
+const sort = (values: readonly number[]) => [...values].sort((a, b) => a - b)
+registerTest(new Test().target(sort)
+  .property('回帰入力も昇順になる', p => p.forAll(tuples(constant([3, 1, 2])))
+    .expect(e => [e.on(e.result).satisfies('昇順', values =>
+      values.every((value, index) => index === 0 || values[index - 1] <= value))])))
+```
+
+失敗の内容も入力に対する性質として書けます。propertyでは型を絞った例外のfieldをrefとして使い、通常のonで比較します。
+
+<!-- example: none — 公開APIの記述契約：例外と生成入力の関係 -->
+```ts
+import { Test, strings, tuples, registerTest } from 'hanamaru'
+class TooLong extends Error {
+  constructor(readonly length: number) { super('too long') }
+}
+const acceptShort = (text: string) => {
+  if (text.length > 8) throw new TooLong(text.length)
+  return text
+}
+registerTest(new Test().target(acceptShort)
+  .property('拒否した入力の長さを返す', p => p
+    .forAll(tuples(strings({ minLength: 9, maxLength: 20 })))
+    .expect(e => [e.on({ actual: e.error.ofType(TooLong).field('length'), input: e.input(0) })
+      .satisfies('lengthを保持する', ({ actual, input }) => actual === input.length)])))
+// 型エラー: Errorへ絞っただけではlengthフィールドは指定できない。
+new Test().target(acceptShort).property('型が不足', p => p
+  .forAll(tuples(strings({ minLength: 9, maxLength: 20 })))
+  .expect(e => [e.on(e.error.ofType(Error).field('length')).satisfies('長さ', n => n > 8)]))
+```
+
+例外refを含むexpectはthrow/rejectを期待します。同じ終了対象の正常resultとの混在を型とcompileで拒否し、指定した例外型と違う場合は型条件の不一致として失敗します。クラス全体を述語へ渡す場合は、通常の結果と同じ保存規則に従いprojectで必要なデータへ投影できます。
+
+## 成功と失敗が混在する性質
+
+単一実行のpropertyにはoutcome refを提供します。入力範囲を成功と失敗に分割したり、targetをtry/catchで包み直したりせず、両方の契約を一つの述語で検査できます。
+
+<!-- example: none — 公開APIの記述契約：正常と例外が混在する入力範囲 -->
+```ts
+import { Test, strings, tuples, registerTest } from 'hanamaru'
+class TooLong extends Error {
+  constructor(readonly length: number) { super('too long') }
+}
+const acceptShort = (text: string) => {
+  if (text.length > 8) throw new TooLong(text.length)
+  return text
+}
+registerTest(new Test().target(acceptShort)
+  .property('長さに応じて受理または拒否する', p => p.forAll(tuples(strings({ maxLength: 20 })))
+    .expect(e => [e.on({ input: e.input(0),
+      outcome: e.outcome.withError(TooLong, error => ({ length: error.length })) })
+      .satisfies('終了と内容', ({ input, outcome }) => input.length <= 8
+        ? outcome.kind === 'return' && outcome.value === input
+        : outcome.kind === 'throw' && outcome.error.length === input.length)])))
+```
+
+outcomeはreturn/throwの判別unionです。withError(Ctor, projectError)はthrowした場合だけ型を検査し、元の例外から必要なデータを保存します。正常終了も許し、正常側のvalueは対象の戻り値型です。projectErrorを省略すると例外側のerrorはnullで、型の一致だけを要求します。例えばパーサのoutcome.withError(ParseError)なら、成功する入力とParseErrorだけで失敗する入力の両方を許せます。
+
+指定と違う例外型は条件不一致として失敗し、射影や述語を呼びません。射影の失敗は観測障害です。outcomeを使うケースは同じ終了対象の正常resultやerror専用の条件/refを併用できません。input/sample依存の観測や前後状態は併用できます。outcomeは単一実行のpropertyと、明示的な最終操作を返すpropertyのstepsで使えます。it・観測引数には提供しません。
+
+生のoutcomeの型は `{ kind: 'return'; value: R } | { kind: 'throw'; error: unknown }` です。例外を勝手な型のコピーへ変換せず、onへ内容を渡す場合はwithErrorかprojectを使います。終了種別だけならoutcome.field('kind')をonへ渡せます。これらの保存規則は[値の比較](../reference/value-comparison.md)に従います。
+
+上のacceptShortに対し、終了種別の指定を矛盾させる書き方は拒否します。
+
+<!-- example: none — 公開APIの記述契約：outcomeと正常結果の混在を禁止 -->
+```ts
+new Test().target(acceptShort).property('矛盾', p => p.forAll(tuples(strings()))
+  .expect(e => [
+    e.result.toEqual(''),
+    e.on(e.outcome.field('kind')).satisfies('どちらも扱う', kind => kind === 'return' || kind === 'throw'),
+  ])) // 型エラー: returnだけの期待とreturn-or-throwは同じケースへ混在できない。
+```
 
 ## 入力の生成と縮小と再現
 
-`p.forAll(source, options)` はpropertyに一度だけ指定します。sourceはtuplesで作る生成データのタプルです。単一関数ではそのまま対象の引数に対応し、必要なら `.argsFrom((ctx, sample) => [...])` で環境の資源を添えます。argsFromは生成値を対象へ束縛する操作で、propertyを固定入力へ切り替える入口ではありません。
+integers、strings、arrays、tuples、constant、boolean、record、oneOfで入力を生成します。integersは安全な整数（省略時全域）、stringsはUnicodeスカラー値の列、arraysは密な配列で、長さの既定範囲は0〜100です。範囲の両端は含みます。空の範囲・負の長さ・型不整合を拒否します。
 
-pure/effectfulのどちらにもpropertyを提供します。effectfulでは各生成例・各縮小候補を新しいmiddleware/environmentで囲み、DB等の初期状態と観測を毎回用意します。一つの候補の内部で必要な状態の共有は保ち、候補間へ持ち越しません。
+forAll(source, { seed, runs, maxShrinks })で探索を調整できます。seedは安全な整数で省略時は生成して記録、runsは正の安全な整数で、固定入力源以外の既定は100、maxShrinksは0以上で既定1000です。普段はsourceだけを書けます。
 
-| 構成子・設定 | 契約 |
-|---|---|
-| integers({ min, max }) | 両端を含む安全な整数。省略時は安全な整数全域 |
-| strings({ minLength, maxLength }) | Unicodeスカラー値の列。長さはコードポイント単位。省略時0〜100 |
-| arrays(source, { minLength, maxLength }) | 要素生成器から作る密な配列。省略時0〜100 |
-| tuples(...sources) | 入力の各要素を生成。引数なしの対象には空タプルも指定可能 |
-| seed | 安全な整数。省略時に生成して結果へ残す |
-| runs | 正の安全な整数。既定100 |
-| maxShrinks | 0以上の安全な整数。既定1000。0なら縮小しない |
+constant(value)は型付き保存可能な値を定義時に保存し、評価ごとに独立したコピーを渡します。boolean()は真偽値、record({ key: source })は各フィールドを生成し、oneOf(...sources)は非空の選択肢から生成します。縮小もその選択肢のいずれかが表す範囲を守ります。constantだけからなるtuples/recordと空タプルは固定入力源で、runs省略時は一評価・縮小なしです。明示runsで繰り返す場合も固定入力であることを表示し、探索範囲が広いとは報告しません。
 
-min/maxや長さの矛盾、負の長さ等は拒否します。生成器はブランド付きの構成値で、任意オブジェクトの偽造や暗黙の入力除外は受け付けません。生成範囲内の小さな値へ向かう候補を有限予算内で検査し、同じ条件の不一致または同じ予期しない終了を再現する候補だけを反例として採用します。世界で最小の反例であるとは保証しません。
-
-結果にはseed・生成器の形式バージョン・サンプル番号・元の反例・採用した縮小経路・縮小後の入力・予算で停止したかを残します。同じ形式バージョンとseedで入力列を再現でき、縮小後の入力をitのargsやscenarioのstepsへ写して具体例として再現することもできます。
-
-準備・compile・観測器・検証述語の例外・後始末の失敗は、契約違反の反例として縮小しません。これらはテスト環境や検証処理の失敗です。反例候補がその種の失敗を起こした場合も、その失敗を報告して探索を止めます。
+反例は生成範囲を守って縮小し、元の入力と採用した縮小後の入力を残します。最大予算までに見つけた反例であり、世界で最小とは保証しません。詳細な停止・再現規則は[結果](../reference/results.md)と[実行仕様](../concepts/semantics.md)に定めます。
 
 ## 関係
 
-冪等性や往復関係も性質です。利用者がcallsで呼び出し順を組むのではなく、propertyに法則を指定します。
+複数の対象はscenarioで宣言します。pure/effectfulを問わず、scenarioのitは具体的な操作列と具体値の期待、propertyは入力範囲に対する性質を持ちます。関係のためだけのrelationや閉じたlaw集合は設けません。標準法則を補助関数にする場合も、同じ対象限定のstepsとexpectを組み立てる省略形です。
 
-<!-- example: none — 公開APIの記述契約：複数実行を必要とする性質 -->
+<!-- example: none — 公開APIの記述契約：参照実装との一致 -->
 ```ts
-import { Test, relation, strings, tuples, idempotent, roundTrip, registerTest } from 'hanamaru'
-const normalize = (value: string) => value.trim()
-registerTest(new Test().target(normalize)
-  .property('冪等', p => p.forAll(tuples(strings())).law(idempotent())))
-
-const encode = (value: string) => new TextEncoder().encode(value)
-const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
-registerTest(new Test().target(relation({ encode, decode })).pure()
-  .property('往復すると元に戻る', p => p.forAll(tuples(strings()))
-    .law(roundTrip('encode', 'decode'))))
+import { Test, scenario, integers, tuples, registerTest } from 'hanamaru'
+const optimized = (n: number) => n * 2
+const reference = (n: number) => n + n
+registerTest(new Test().target(scenario({ optimized, reference }))
+  .property('参照実装と一致する', p => p.forAll(tuples(integers({ min: -100, max: 100 })))
+    .steps(s => ({ actual: s.optimized.args(s.input[0]), expected: s.reference.args(s.input[0]) }))
+    .expect(e => [e.on(e.result).satisfies('同じ値', values => values.actual === values.expected)])))
+// 型エラー: scenarioでもitに任意述語は提供しない。
+new Test().target(scenario({ optimized })).it('性質の混入', t => t
+  .steps(s => s.optimized.args(2))
+  .expect(e => [e.on(e.result).satisfies('正', n => n > 0)]))
 ```
-
-`idempotent()` はpureな単一引数関数に限り、f(x)を一度求め、さらにf(f(x))を実行して両結果の値を比較します。正常結果を同じ引数位置へ渡せる型が必要です。roundTripの二つのキーはrelationに宣言した単一引数関数から選び、先行の正常結果が後続の引数へ適合し、最終結果と最初の入力を値比較できる型を要求します。
-
-法則はブランド付きの構成値です。`.law(...)` はpropertyのforAll直後だけに置け、expect・expectCalls・argsFrom・stepsとの併用はできません。これら二つの法則はpure専用です。relationは純粋な関数群の法則を表す対象なので、effectful宣言・it・eachは提供しません。副作用を持つ操作間の性質はscenarioのpropertyで記述します。
-
-独自の単一実行の性質はexpectのonで書けます。任意の関数を実行するcallsや汎用callを拡張口にはしません。複数実行を伴う新しい法則は、対象・型の条件・実行・比較・失敗診断を定めた法則構成子として追加する必要があります。
-
-propertyのexpectでは `e.input(index)`（束縛後の対象の引数）、`e.sample(index)`（生成したデータ）、`e.result`、`e.value(constant)` を参照できます。scenarioでは一意な引数タプルがないためinputを提供せず、sampleと返却結果を使います。名前付きの結果レコードは `e.result.field('first')` で選べます。refを通常の比較演算子へ渡して実測値の代わりにはできません。
-
-input/result/valueはLiveRef、sample/state/before/actionはコピー済みのSnapshotRefです。参照同一性はLiveRef同士だけを受け取り、fieldも出自を保ちます。結果レコードの合成rootは実際の関数の戻り値ではないためSnapshotRefとし、fieldで選んだ各操作結果はその出自を保ちます。値の関係の少なくとも一方は実行結果か観測値に由来するrefを必要とし、定数同士・入力だけ・同一ref同士の比較はcompileで拒否します。
-
-## 値の取得時点と参照同一性
-
-LiveRefは生の参照を保持できる出自を表し、値の比較が後から可変参照を読むという意味ではありません。検証方法に応じて、生の参照と検証用の保存値を分けます。
-
-| refの出自 | 値として保存する時点 | 生の参照を保持する時点 |
-|---|---|---|
-| value(constant) | compile時 | compile時 |
-| sample(index) | 候補選択直後 | 保持しない |
-| input(index) | targetを呼ぶ直前 | 同じ時点 |
-| 単一targetのresult | targetがsettleし正常結果を得た直後 | 同じ時点 |
-| 法則 / stepsの各結果 | 各呼び出しがsettleした直後、後続を始める前 | 同じ時点 |
-| state / before | 指定した読み取り直後 | 保持しない |
-| action | 環境が発生時に保存し、finish後に検査してコピー | 保持しない |
-
-値を使うexpectのtoEqual・性質の述語・equal/different/lessThanは、この時点の保存値を読みます。toBe・sameReference/differentReferenceだけが、取得時点に確定した生の参照を読みます。field/partの経路もその時点で解決し、後でプロパティをたどり直しません。
-
-保存するのは条件が必要とする値・部分だけです。例えばencodeのUint8Arrayをdecodeへ渡すだけなら、値の検証用にコピーする必要はありません。法則/stepsの引数へ渡すのは実際の戻り値であり、検証用のコピーへ置き換えません。
-
-結果レコードの値比較は、各結果が得られた時点の保存値から組み立てます。後続操作が先行readの生のオブジェクトを書き換えても、先行readの検証値は変わりません。必要な値がスナップショット領域外ならその取得段階で失敗し、法則/stepsの後続を停止します。既に開始したaction等はtargetのsettle後の規則に従って観測・解放し、取得不能な値を条件成立にはしません。
 
 ## 環境と観測
 
-environmentは各評価を囲む環境の定義です。第2引数のscopeだけがstate・action・boundaryを発行できます。これらの構成子はトップレベルへexportしません。環境は信頼する拡張境界であり、その提供者が読み取りや接続先の妥当性に責任を持ちます。
+対象の固定と、評価ごとのインスタンス供給は別です。クラスのメソッドはtarget(UserService, 'register')で責任を指定し、from(ctx => ctx.users)で受け手を供給します。fromは環境準備後に一度解決します。フレームワークがコンストラクタを呼ぶことはありません。
 
-次の例のアプリケーションはMapへ保存し、購読口を持つローカルのメールボックスへ配達します。これがこの小さなアプリの実際の状態・効果であり、保存関数・配送関数の呼び出し記録ではありません。
+次はコンストラクタへ依存を注入し、メソッドへデータだけを渡すアプリです。テスト用のrepo/配送システムは代替環境なので、その観測のevidenceをsubstitute-effectと明示します。サービスへ渡すのは送信口だけで、受信側の観測口や記録は渡しません。
 
-<!-- example: none — 公開APIの記述契約：環境から観測までの完結例 -->
+<!-- example: none — 公開APIの記述契約：DIサービスと結果依存の受信側観測 -->
 ```ts
 import { Test, environment, registerTest } from 'hanamaru'
 
-type User = { id: string; name: string; email: string }
-type Mail = { to: string; body: string }
-type Mailbox = {
-  deliver(mail: Mail): void
-  onDelivery(listener: (mail: Mail) => void): () => void
-}
-function createMailbox(): Mailbox {
-  const inbox: Mail[] = []
-  const listeners = new Set<(mail: Mail) => void>()
-  return {
-    deliver(mail) {
-      inbox.push(structuredClone(mail))
-      for (const listener of listeners) listener(mail)
-    },
-    onDelivery(listener) {
-      listeners.add(listener)
-      return () => { listeners.delete(listener) }
-    },
+type Input = { name: string; email: string }
+type User = Input & { id: string }
+type Mail = { userId: string; to: string; body: string }
+type Receipt = { receiptId: number; userId: string; recipient: string; text: string }
+type Users = { save(user: User): Promise<void>; find(id: string): Promise<User | null> }
+type Sender = { send(mail: Mail): Promise<void> }
+class DeliveryError extends Error { readonly code = 'unavailable' }
+class UserService {
+  constructor(private users: Users, private sender: Sender, private nextId: () => string) {}
+  async register(input: Input): Promise<User> {
+    const user = { ...input, id: this.nextId() }
+    await this.users.save(user)
+    await this.sender.send({ userId: user.id, to: user.email, body: `Welcome ${user.name}` })
+    return user
   }
 }
-function registerUser(db: Map<string, User>, mailbox: Mailbox, user: User): void {
-  db.set(user.id, { ...user })
-  mailbox.deliver({ to: user.email, body: `Welcome ${user.name}` })
-}
 
-const local = environment(async (_, scope, next) => {
-  const db = new Map<string, User>()
-  const mailbox = createMailbox()
-  const input: User = { id: 'u1', name: 'Alice', email: 'alice@example.test' }
-  const saved = scope.state({ read: () => db.get('u1') ?? null })
-  const delivered = scope.action<Mail>({
-    open: () => {
-      const events: Mail[] = []
-      const unsubscribe = mailbox.onDelivery(mail => {
-        events.push(structuredClone(mail))
-      })
-      return {
-        finish: () => { unsubscribe(); return events },
-        dispose: unsubscribe,
-      }
-    },
-  })
-  return next({ db, mailbox, saved, delivered, input })
-})
-const users = new Test().target(registerUser).effectful().use(local)
-  .it('保存する', t => t.argsFrom(c => [c.db, c.mailbox, c.input])
-    .expect(e => [e.state(e.ctx.saved).toEqual(e.ctx.input)]))
-  .it('メールが届く', t => t.argsFrom(c => [c.db, c.mailbox, c.input])
-    .expect(e => [e.action(e.ctx.delivered).untilTargetSettles()
-      .toEqual([{ to: e.ctx.input.email, body: 'Welcome Alice' }])]))
-registerTest(users)
-
-// 型エラー: pureなtargetにはenvironmentを登録できない。
-new Test().target((n: number) => n + 1).use(local)
-// 型エラー: actionの代わりに通常のオブジェクトを渡せない。
-new Test().target(registerUser).effectful().use(local)
-  .it('偽の観測', t => t.argsFrom(c => [c.db, c.mailbox, c.input])
-    .expect(e => [e.action({ events: [] }).untilTargetSettles().none()]))
-```
-
-stateのreadは同期値またはPromiseを返せます。実行器は読み取り直後に[スナップショットの値領域](#スナップショットの値領域)を検査し、独立したコピーを保存します。期待値は照合時ではなく、compile時に同じ規則で保存します。参照同一性に使うtoBeとLiveRefは、この値の保存とは区別します。
-
-保存の例のinputはenvironmentで評価ごとに作ります。targetが誤って `input.name = 'Wrong'` としてから保存した場合、compileで保存した期待値のAliceは変わらず、状態のtoEqualは失敗します。ケース間にもその変更を持ち越しません。
-
-actionのopenはtargetより前に呼ばれ、`{ finish, dispose }`（どちらも同期またはPromise）を返します。finishは記録を閉じ、そのセッションの全出来事を配列で一度だけ返します。disposeは記録の終了・成否に関係なく資源を解放します。ネットワークの購読ならopenは購読開始をawaitし、接続障害はfinishの失敗として伝えます。出来事は発生時点の値として環境側で保存し、後から可変参照を読む記録にはしません。
-
-`untilTargetSettles()` は記録開始からtargetのsettleまで、`forAfterTarget(ms)` は記録開始からsettle後msまでを観測します。正の有限msを指定し、条件が早く成立しても区間を短縮しません。複数条件で同じactionを使う場合は同じ区間が必要です。異なる区間を混ぜたケースはtarget開始前に拒否します。finishが返した配列は、実行器がスナップショットの値領域を検査してコピーします。任意のセッション関数が内容を偽らないことは環境提供者の責務です。
-
-次のケースは上のMailboxとlocalを使い、配送後の元オブジェクトの変更が、到着済みのメールを変更しないことを検証します。
-
-<!-- example: none — 公開APIの記述契約：配送時点の値を保存 -->
-```ts
-const deliverThenChange = (mailbox: Mailbox) => {
-  const mail = { to: 'alice@example.test', body: 'hello' }
-  mailbox.deliver(mail)
-  mail.to = 'changed@example.test'
-}
-registerTest(new Test().target(deliverThenChange).effectful().use(local)
-  .it('到着時の宛先を検証する', t => t.argsFrom(c => [c.mailbox])
-    .expect(e => [e.action(e.ctx.delivered).untilTargetSettles()
-      .toEqual([{ to: 'alice@example.test', body: 'hello' }])])) )
-```
-
-購読開始前の過去のメールはeventsへ入らず、配送コールバック内でコピーするため、finishまでの変更にも追従しません。期待をchanged@example.testにすると失敗します。
-
-## スナップショットの値領域
-
-値として保存できるのはnull・undefined・boolean・string・number（NaN/Infinity/-0を保持）・bigintと、それらからなる密な通常配列・通常のプレーンオブジェクトです。DateはDate.prototypeを持つ組込みDateだけを許し、時刻値をコピーします。その他の独自prototype、null prototype、関数、symbol、accessor、非列挙プロパティ、配列の追加プロパティ、循環は拒否します。共有参照は値として複製でき、その同一性は保証しません。Proxy等の値の読み取りを偽装する仕組みは観測器の信頼境界の外です。
-
-この規則はstateのread、actionのイベント、toEqual・partのtoEqual・action全件一致の期待値、境界呼び出しの値比較に共通です。独自クラスをstructuredCloneできたことだけで受理しません。型から関数メンバー等が分かる値は定義できず、prototype等は実際の取得時にも検査します。任意Tを受けてコピー後も同じクラス型であると偽る型は提供しません。
-
-実資源や独自クラスを観測したい場合は、readまたは環境側のイベント収集で必要なデータへ明示的に投影します。State/Actionの型はその投影後の戻り値から推論します。MapやSetなら内容を配列・プレーンデータへ変換して観測します。生の戻り値の参照そのものを検証したい場合は、コピーしないresult.toBeまたはLiveRef同士の参照比較を使います。
-
-<!-- example: none — 公開APIの記述契約：期待値の固定とクラス観測の禁止例 -->
-```ts
-import { Test, environment, registerTest } from 'hanamaru'
-
-// 契約違反の実装。この例はfailedになるべき負例。
-function corrupt(input: { name: string }, saved: { name: string }): void {
-  input.name = 'Wrong'
-  saved.name = input.name
-}
-const local = environment(async (_, scope, next) => {
-  const input = { name: 'Alice' }
-  const saved = { name: '' }
-  const observed = scope.state({ read: () => saved })
-  return next({ input, saved, observed })
-})
-registerTest(new Test().target(corrupt).effectful().use(local)
-  .it('入力変更で期待値を変えない', t => t.argsFrom(c => [c.input, c.saved])
-    .expect(e => [e.state(e.ctx.observed).toEqual(e.ctx.input)])))
-// expected: { name: 'Alice' }, actual: { name: 'Wrong' }
-
-class UserRecord { name = 'Alice'; label() { return this.name } }
-const invalid = environment(async (_, scope, next) => {
-  // 型エラー: メソッドを持つクラスをスナップショット型として使えない。
-  const observed = scope.state({ read: () => new UserRecord() })
-  return next({ observed })
-})
-// 正しい観測は read: () => ({ name: record.name }) のように投影する。
-```
-
-期待値の保存失敗はcompileの失敗でtargetを開始しません。実測値の取得・保存失敗は観測失敗であり、不一致や不在とは区別します。条件の意味を変える自動的なJSON化・フィールド省略・参照共有へのフォールバックは行いません。
-
-## 状態・actionの書き分け
-
-以下の断片は上のusersに追加するケースの期待部分です。
-
-<!-- example: none — 公開APIの記述契約：観測の条件 -->
-```ts
-// 状態の前後の一致。readをtarget前後に呼ぶ。
-.expect(e => [e.state(e.ctx.saved).unchanged()])
-// settle後から期限内に一致するまでreadだけを繰り返す。
-.expect(e => [e.state(e.ctx.saved)
-  .eventually({ withinMs: 500, intervalMs: 10 }).toEqual(e.ctx.input)])
-// settle後100msまで観測し、今回のメールが一件もないことを確認する。
-.expect(e => [e.action(e.ctx.delivered).forAfterTarget(100).none()])
-
-```
-
-次の例は上のusersの登録に代えて、propertyを追加した定義を登録します。生成した名前と保存された名前の関係を検証します。入力や観測値は取得時点に保存され、targetの変更に比較対象まで追従しません。
-
-<!-- example: none — 公開APIの記述契約：effectfulなproperty -->
-```ts
-import { strings, tuples } from 'hanamaru'
-registerTest(users.property('どの名前も保存される', p => p
-  .forAll(tuples(strings({ minLength: 1, maxLength: 12 })), { seed: 3, runs: 50 })
-  .argsFrom((ctx, [name]) => [ctx.db, ctx.mailbox, { ...ctx.input, name }])
-  .expect(e => [e.on({ saved: e.state(e.ctx.saved), input: e.input(2) })
-    .satisfies('名前を保持する', ({ saved, input }) => saved?.name === input.name)])))
-```
-
-environmentは各生成例・各縮小候補で作り直します。述語から可変のctxを読み直すのではなく、expectビルダー内で不変の値へ確定するか、input/valueの保存値を使います。
-
-stateは `toEqual` / `part(key).toEqual` / `unchanged` を提供します。eventuallyの後はtoEqualまたはpartだけで、unchangedは使えません。withinMsとintervalMsは正の有限値、intervalMsはwithinMs以下です。取得失敗・コピー失敗・述語の例外は再試行せず失敗とします。最初の成功で待機を終えますが、その後ずっと不変である保証にはしません。
-
-actionは区間を決めてから `toEqual(events)`（全件・順序込み）、`count(n)`、`none()` を選べます。nは0以上の安全な整数です。countは内容を検証した扱いにはしません。noneは指定区間の不発生であり、無期限の保証ではありません。
-
-propertyのexpectはeffectfulな対象で `state(token)`（実行後）、`before(token)`（実行前）、`action(token).untilTargetSettles()` / `.forAfterTarget(ms)` をrefとして使えます。beforeを使用したstateは前後を読みます。eventuallyを指定した状態ビルダーはrefには変換できません。待機が必要な一致は同じexpect配列に独立したtoEqual条件として書きます。
-
-<!-- example: none — 公開APIの記述契約：コピー済み観測値の参照比較を禁止 -->
-```ts
-// 型エラー: コピー済み状態はLiveRefではなく、identity比較へ渡せない。
-users.property('コピーの同一性を比較しない', p => p
-  .forAll(tuples(strings()))
-  .argsFrom((ctx, [name]) => [ctx.db, ctx.mailbox, { ...ctx.input, name }])
-  .expect(e => [e.differentReference(e.before(e.ctx.saved), e.state(e.ctx.saved))]))
-```
-
-## 失敗時も同じ観測を使う
-
-<!-- example: none — 公開APIの記述契約：失敗と不発生 -->
-```ts
-import { Test, environment, registerTest } from 'hanamaru'
-
-type Notifications = { send(message: string): void }
-function register(value: string, notifications: Notifications): void {
-  if (value === 'invalid') throw new Error('denied')
-  notifications.send(`registered: ${value}`)
-}
-const local = environment(async (_, scope, next) => {
-  const inbox: string[] = []
-  const listeners = new Set<(message: string) => void>()
-  const notifications: Notifications = {
-    send(message) {
-      inbox.push(message)
-      for (const listener of listeners) listener(message)
-    },
-  }
-  const sent = scope.action<string>({
-    open: () => {
-      const history: string[] = []
-      const record = (message: string) => { history.push(message) }
+function local(options: { rejectedAddress?: string } = {}) {
+  return environment(async (_, scope, next) => {
+    const rows = new Map<string, User>()
+    const users: Users = {
+      async save(user) { rows.set(user.id, structuredClone(user)) },
+      async find(id) { return rows.get(id) ?? null },
+    }
+    const requests: Mail[] = []
+    const inbox: Receipt[] = []
+    const listeners = new Set<(receipt: Receipt) => void>()
+    let receiptId = 0
+    // 外部配送の代替モデル: 宛先を正規化し、受領番号を付けた配送済み状態を作る。
+    const receive = (mail: Mail) => {
+      const receipt = { receiptId: ++receiptId, userId: mail.userId,
+        recipient: mail.to.toLowerCase(), text: mail.body }
+      inbox.push(receipt)
+      for (const listener of listeners) listener(receipt)
+    }
+    const sender: Sender = {
+      async send(mail) {
+        requests.push(structuredClone(mail))
+        if (mail.to === options.rejectedAddress) throw new DeliveryError('delivery unavailable')
+        await Promise.resolve()
+        receive(mail)
+      },
+    }
+    let id = 0
+    const service = new UserService(users, sender, () => `user-${++id}`)
+    const saved = scope.state({ evidence: 'substitute-effect', read: (key: string) => users.find(key) })
+    const savedByEmail = scope.state({ evidence: 'substitute-effect',
+      read: (email: string) => [...rows.values()].filter(user => user.email === email) })
+    const received = scope.state({ evidence: 'substitute-effect',
+      read: (key: string) => inbox.filter(mail => mail.userId === key) })
+    const requestLog = scope.state({ evidence: 'call-record', read: () => requests })
+    const deliveries = scope.action<Receipt>({ evidence: 'substitute-effect', open: () => {
+      const events: Receipt[] = []
+      const record = (receipt: Receipt) => { events.push(structuredClone(receipt)) }
       listeners.add(record)
       return {
-        finish: () => { listeners.delete(record); return history },
+        finish: () => { listeners.delete(record); return events },
         dispose: () => { listeners.delete(record) },
       }
-    },
+    } })
+    return next({ service, saved, savedByEmail, received, deliveries, requestLog })
   })
-  return next({ sent, notifications })
-})
-registerTest(new Test().target(register).effectful().use(local)
-  .it('拒否時は通知しない', t => t.argsFrom(c => ['invalid', c.notifications]).expect(e => [
-    e.error.toBeInstanceOf(Error), e.error.message.toEqual('denied'),
-    e.action(e.ctx.sent).untilTargetSettles().none(),
+}
+const base = new Test().target(UserService, 'register').effectful()
+const input: Input = { name: 'Alice', email: 'alice@example.test' }
+registerTest(base.use(local()).from(ctx => ctx.service)
+  .it('採番されたユーザーが保存され、メールが届く', t => t.argsFrom(() => [{ ...input }]).expect(e => [
+    e.state(e.ctx.saved, e.result.field('id')).part('name').toEqual('Alice'),
+    e.state(e.ctx.received, e.result.field('id')).part(0).part('recipient').toEqual(input.email),
+    e.action(e.ctx.deliveries).untilTargetSettles().count(1),
+  ])))
+registerTest(base.use(local({ rejectedAddress: input.email })).from(ctx => ctx.service)
+  .it('配送に失敗する', t => t.argsFrom(() => [{ ...input }]).expect(e => [
+    e.error.ofType(DeliveryError).part('code').toEqual('unavailable'),
+    e.state(e.ctx.savedByEmail, e.input(0).field('email')).part('length').toEqual(1),
+    e.action(e.ctx.deliveries).untilTargetSettles().none(),
   ])))
 ```
 
-このローカル通知サービスはinboxへの配達を実際の効果として持ち、その出来事を購読します。targetへは送信操作だけを渡し、inbox・listeners・観測履歴historyは渡しません。通知を入力検証より前へ移すバグがあれば、例外の条件が一致してもnoneが失敗します。targetが最終状態を変更しても、独立した出来事の履歴を消せる構造にはしません。
+このサンプルの登録処理は、配送に失敗しても先に保存したユーザーを残す契約です。失敗時はresultのIDがないため、入力のemailで保存状態を観測しています。
 
-expectのerror条件はthrow/rejectを期待します。`error.toEqual(value)` はthrowされた任意値、`error.toBeInstanceOf(ctor)` と `error.message.toEqual(text)` は例外の安定した情報を照合します。messageはError以外に一致しません。error条件とresultを参照する条件は同一ケースに混在できません。propertyでも失敗の性質を検証できますが、errorと正常結果の参照は混在させられません。errorと状態/action/境界の呼び出し条件は組み合わせられます。
+targetで固定するのは宣言したクラスと公開メソッド名です。受け手と、そのinstanceが提供する実装は各評価で供給されます。クラス形式はfromを必須とし、指定クラスのinstanceと呼び出せるデータプロパティのメソッドを実行時にも検査します。継承したinstanceやinstance上の関数フィールドも扱い、prototype上の関数参照との一致は要求しません。この検査は操作の名前・受け手の型と供給時点を守るもので、メソッド本体の同一性を証明するものではありません。環境でtarget自身のメソッドをstubへ上書きすれば契約の検証にはなりませんが、そのような任意のJavaScriptの介入をsandbox化する保証はありません。別のクラス・欠けたメソッド・getterを使ったメソッド供給は、receiverを解決するだけで別の利用者コードが走ることを避けるため拒否します。
 
-error条件がなければ正常終了を期待します。状態のみ・actionのみでも完成でき、戻り値の無意味な検証を追加する必要はありません。throw/rejectは観測の待機・照合を省略する理由にはせず、取得できる効果を引き続き確かめます。
+インスタンスの公開メソッドを指定する既存のtarget(obj, key)も使えます。その場合は受け手も固定で、fromは提供しません。fromはtargetの変更ではなく、宣言したクラス/メソッドの受け手の供給です。
+
+## 状態・actionの書き分け
+
+stateはreadの引数と戻り値から型を推論し、e.state(token, ...args)で定数またはinput/sample/resultのrefを束縛します。通常は対象計画のsettle後に読みます。結果を使う観測をscenarioの対象操作に追加する必要はありません。
+
+propertyのstate(...).before()は実行前の値のrefで、on/projectへ渡せます。unchangedは前後の一致条件です。どちらも実行前に同じ保存した引数で読みます。結果依存の引数はまだ存在しないので、この用途には使えません。stepsの途中を観測する場合はstate(...).after(stepRef)で、その操作の完了直後・次の操作より前に読みます。引数refがその時点までに解決できない場合はcompileで拒否します。
+
+eventuallyは読み取りだけを再試行し、targetを呼び直しません。afterとeventuallyの併用は許さず、途中観測は一度の読み取りに限ります。状態の前後一致とactionの不発生は別です。
+
+actionはopenで記録開始、finishで区間内の履歴取得、disposeで解放します。untilTargetSettlesまたはforAfterTarget(ms)で有限の区間を定めます。観測器は発生時点のデータを保存し、targetが消せる最終配列だけを履歴にしません。
+
+次は実際のtargetの状態について、入金前後の関係を検証する例です。
+
+<!-- example: none — 公開APIの記述契約：前状態と後状態の性質 -->
+```ts
+import { Test, environment, integers, tuples, registerTest } from 'hanamaru'
+class Account {
+  balance = 10
+  deposit(amount: number): void { this.balance += amount }
+}
+const accountEnvironment = environment(async (_, scope, next) => {
+  const account = new Account()
+  const balance = scope.state({ evidence: 'real-effect', read: () => account.balance })
+  return next({ account, balance })
+})
+registerTest(new Test().target(Account, 'deposit').effectful().use(accountEnvironment)
+  .from(ctx => ctx.account)
+  .property('入金額だけ残高が増える', p => p.forAll(tuples(integers({ min: 0, max: 100 })))
+    .expect(e => [e.on({ before: e.state(e.ctx.balance).before(),
+      after: e.state(e.ctx.balance), amount: e.input(0) })
+      .satisfies('増分', ({ before, after, amount }) => after === before + amount)])))
+```
+
+input/sample/result/state/before/afterのrefと利用可能な時点は[refの入口](../reference/type-inference.md#refの入口)に定めます。beforeだけを条件にしてtargetを検証した扱いにはしません。
+
+## 証拠の種類
+
+state/actionは時間的な観測の形、evidenceは観測元の宣言です。必須の値は次の三つで、プロセス内外では分類しません。
+
+| evidence | 観測するもの |
+|---|---|
+| real-effect | target自身の実状態、または置換していない依存・資源で成立した状態や出来事 |
+| substitute-effect | 依存の契約（状態遷移・受理・拒否等）を模したfakeが生成・保持するモデル上の状態や出来事 |
+| call-record | 依存へ渡された引数・呼び出し回数・返却を記録したもの |
+
+同じfakeでも、sendへ渡されたrequestsはcall-record、受理後にモデルが作る配送済みinboxはsubstitute-effectです。拒否時はrequestsに呼び出しが記録されても配送済みは0件です。標準の失敗ケースは保存状態と配送済みの効果（いずれもsubstitute-effect）だけを検証し、call-recordの再送回数は契約に含めていません。このモデルの適合性は環境提供者が保証し、本物の配送まで証明したとは報告しません。引数を単に保存しただけなら、受信側という名前を付けてもcall-recordです。
+
+Recordsのsizeのように実際のtarget自身の状態を読む場合はreal-effectです。判定基準は観測元であり、同一プロセスにあることやテスト用の環境であることだけではsubstitute-effectにしません。
+
+フレームワークは宣言の真実性を自動認証しません。evidenceは型による証拠の格付けではなく、実行結果で検証範囲を誤認させないための環境提供者による明示です。caseからの変更・欠落を拒否し、観測結果・JSON・表示に残します。
 
 ## infra境界を代替する
 
-<!-- example: none — 公開APIの記述契約：許可済み境界のみを代替 -->
-```ts
-import { Test, environment, registerTest } from 'hanamaru'
+mock/replace/expectCallsと、Boundary・順序付きのreturnsOnce等は提供しません。環境が型付きのfakeと観測口を用意し、引数に応じた応答や外部障害を表します。上のlocal({ rejectedAddress })も入力に対応したfakeであり、内部の呼び出し順を固定していません。
 
-type Delivery = { send(message: string): Promise<void> }
-const sendNotice = (delivery: Delivery, message: string) => delivery.send(message)
-const deliveryEnvironment = environment(async (_, scope, next) => {
-  const inbox: string[] = []
-  const delivery: Delivery = { async send(message) { inbox.push(message) } }
-  const outbound = scope.boundary(delivery, 'send')
-  return next({ delivery, outbound })
-})
-registerTest(new Test().target(sendNotice).effectful().use(deliveryEnvironment)
-  .it('配送の拒否を返す', t => t
-    .replace(c => c.outbound, m => m.rejects(new Error('unavailable')))
-    .argsFrom(c => [c.delivery, 'hello'])
-    .expect(e => [e.error.message.toEqual('unavailable')])
-    .expectCalls(c => [c.boundary(c.ctx.outbound).calledOnceWith('hello')])) )
-
-// 型エラー: caseは境界を新設できない。通常objectとkeyも渡せない。
-new Test().target(sendNotice).effectful().it('任意の差し替え', t =>
-  t.replace({ send() {} }, 'send', m => m.returns(undefined)))
-```
-
-scope.boundaryは環境の準備中だけ使えます。返すトークンはその環境インスタンスが作った評価に属します。対象自身やscenarioの操作関数の代替は受付時に拒否します。トークンの持ち出し・偽造・別評価・別試行での再利用も拒否します。環境提供者が不適切な内部関数を境界登録しないことは信頼境界の責務であり、関数の業務上の意味を自動判定する保証ではありません。
-
-replaceはケースにのみ置け、境界の型に対応した `returns` / `resolves` / `throws` / `rejects` を選びます。`returnsOnce` / `resolvesOnce` / `throwsOnce` / `rejectsOnce` の列には最後の通常動作を必須とします。任意関数を渡すcallsFakeはありません。expectCallsは `boundary(token)` から `calledTimes` / `calledWith` / `calledOnceWith` / `calledNthWith` / `notCalled` を選びます。置換しない本物の境界も記録できます。
+時計・乱数・外部入力の固定も環境の仕事です。これらの入力制御そのものは『効果を呼び出し確認で代用した』ことではありません。出力をどこで観測したかをevidenceで区別します。ケースは選んだ環境のctxを使い、任意object/keyの差し替えAPIは持ちません。環境や任意の利用者コードの善意まで型で保証しません。
 
 ## 操作列
 
-<!-- example: none — 公開APIの記述契約：操作列と禁止例 -->
-```ts
-import { Test, scenario, environment, registerTest } from 'hanamaru'
+stepsは宣言した対象だけを実行できます。単一targetのpropertyではs.target、scenarioでは宣言キーを使います。scenarioのitでは具体値・部分・許容誤差と、effectfulなら状態/actionを期待し、任意述語や結果間の性質条件を提供しません。errorは単一実行、またはfinalで指定した最終操作に使えます。単一targetのitは一回の呼び出しに限りますが、宣言済みの対象集合に対する具体的な回帰例は許します。
 
-const create = (db: Map<string, string>, id: string, name: string) => {
-  db.set(id, name)
-  return id
+scenarioはpure/effectfulのどちらでもit/propertyの両方を持ちます。純粋な具体例を書くためにeffectfulと偽る必要はありません。propertyのstepsはcompile時点で確定した具体的なsampleをs.input、環境をs.ctxで受け取り、全操作を宣言順にawaitします。返却しなかった操作も実行します。
+
+<!-- example: none — 公開APIの記述契約：effectfulな冪等性と途中観測 -->
+```ts
+import { Test, environment, strings, tuples, registerTest } from 'hanamaru'
+class Records {
+  private rows = new Set<string>()
+  upsert(key: string): void { this.rows.add(key) }
+  size(): number { return this.rows.size }
 }
-const rename = (db: Map<string, string>, id: string, name: string) => { db.set(id, name) }
-const read = (db: Map<string, string>, id: string) => db.get(id) ?? null
-const local = environment(async (_, _scope, next) => next({ db: new Map<string, string>() }))
-const users = new Test().target(scenario({ create, rename, read })).effectful().use(local)
-  .it('更新後を取得する', t => t.steps(s => {
-    const id = s.create.args(s.ctx.db, 'u1', 'Alice')
-    s.rename.args(s.ctx.db, id, 'Bob')
-    return s.read.args(s.ctx.db, id)
-  }).expect(e => [e.result.toEqual('Bob')]))
-registerTest(users)
-
-// 型エラー: scenarioの操作列をcallsとして実行できない。
-new Test().target(scenario({ create, read })).it('混同', t => t.calls(() => {}))
+const local = environment(async (_, scope, next) => {
+  const store = new Records()
+  const count = scope.state({ evidence: 'real-effect', read: () => store.size() })
+  return next({ store, count })
+})
+registerTest(new Test().target(Records, 'upsert').effectful().use(local).from(c => c.store)
+  .property('再送しても件数が増えない', p => p.forAll(tuples(strings())).steps(s => ({
+    first: s.target.args(s.input[0]), second: s.target.args(s.input[0]),
+  })).expect(e => [
+    e.on({ first: e.state(e.ctx.count).after(e.result.field('first')),
+           second: e.state(e.ctx.count).after(e.result.field('second')) })
+      .satisfies('件数を保持する', ({ first, second }) => first === 1 && second === first),
+  ])))
 ```
 
-stepsは同期の定義コールバックであり、実行器が記述された全操作を宣言順に一度ずつawaitします。返されないrenameも実行されます。stepsはscenario専用です。単一関数のitやpropertyへ自由な複数呼び出しを追加する入口にはしません。
+stepsの結果refはvoidでも操作の完了を識別できます。s.inputはrefではなく具体値なので、変更せずに計算・分岐へ使えます。一方、CallRef/FinalStepRefは未実行の記述であり、通常の計算や実測値での分岐へ使えません。対象外の関数追加・asyncな定義コールバックも拒否します。取得済み結果や途中観測の検証値は後続変更に追従しません。
 
-stepsは最後の結果に限らず、実行した操作のrefまたは非空の名前付きレコードを返せます。参照は先行操作の結果だけを引数に使えます。`ref.field(key)` は正常結果のプロパティ参照です。実測値による分岐・任意関数の追加・async定義コールバックは許可しません。
+## 公開操作の後の失敗を検証する
 
-scenarioは全操作の正常完了を期待します。途中のthrow/rejectは失敗として後続を止め、error条件で成功にできません。失敗そのものを期待する契約は単一のeffectfulなit/propertyで書きます。Result型で表す業務上の失敗は正常結果として扱えます。観測は操作列全体を囲み、途中段階の状態が必要なら公開のread操作をstepsへ置き、その結果を返して照合します。
+stepsの最後にだけ `s.target.final(...args)` または宣言キーの `s.register.final(...args)` を置けます。前段は通常のargsで正常終了を要求し、最後の操作だけerror（it/property）またはoutcome（property）で検証します。fakeの内部へ前提をseedする必要はありません。
 
-同じ対象集合で、生成した名前についての性質も書けます。次の例は上のusersの登録に代えるものです。
-
-<!-- example: none — 公開APIの記述契約：操作列のproperty -->
+<!-- example: none — 公開APIの記述契約：前段操作の後に拒否される契約 -->
 ```ts
-import { strings, tuples } from 'hanamaru'
-registerTest(users.property('作成した名前を取得できる', p => p
-  .forAll(tuples(strings({ minLength: 1, maxLength: 12 })))
-  .steps(s => {
-    const id = s.create.args(s.ctx.db, 'u1', s.input[0])
-    return s.read.args(s.ctx.db, id)
-  })
-  .expect(e => [e.equal(e.result, e.sample(0))])))
+import { Test, scenario, method, environment, strings, tuples, registerTest } from 'hanamaru'
+class DuplicateKey extends Error {
+  constructor(readonly key: string) { super('duplicate') }
+}
+class Registry {
+  private keys = new Set<string>()
+  register(key: string): string {
+    if (this.keys.has(key)) throw new DuplicateKey(key)
+    this.keys.add(key)
+    return key
+  }
+  size(): number { return this.keys.size }
+}
+const local = environment(async (_, scope, next) => {
+  const registry = new Registry()
+  const size = scope.state({ evidence: 'real-effect', read: () => registry.size() })
+  return next({ registry, size })
+})
+registerTest(new Test().target(scenario({ register: method(Registry, 'register') }))
+  .effectful().use(local).from(c => ({ register: c.registry }))
+  .it('同じキーの2回目は拒否する', t => t.steps(s => {
+    s.register.args('a')
+    return s.register.final('a')
+  }).expect(e => [
+    e.error.ofType(DuplicateKey).part('key').toEqual('a'),
+    e.state(e.ctx.size).toEqual(1),
+  ])))
+registerTest(new Test().target(Registry, 'register').effectful().use(local).from(c => c.registry)
+  .property('登録済みのキーを再登録できない', p => p.forAll(tuples(strings()))
+    .steps(s => {
+      const registered = s.target.args(s.input[0])
+      return { registered, duplicate: s.target.final(s.input[0]) }
+    }).expect(e => [
+      e.on({ existing: e.result.field('registered'), rejected: e.error.ofType(DuplicateKey).field('key') })
+        .satisfies('既存キーを通知する', ({ existing, rejected }) => existing === rejected),
+      e.state(e.ctx.size).toEqual(1),
+    ])))
 ```
 
-ここでs.inputは生成タプルのデータであり、e.sampleはその保存値へのrefです。各候補ごとにlocalのDBを作り直し、作成と取得の間では同じDBを使います。
+上のRegistry/localを使えば、最後の入力によって受理と拒否が分かれる性質もoutcomeで検査できます。
 
-## 操作途中の値を後から変えない
-
-<!-- example: none — 公開APIの記述契約：操作途中の観測値の保存 -->
+<!-- example: none — 公開APIの記述契約：明示的な最終操作のoutcome -->
 ```ts
-import { Test, scenario, environment, registerTest } from 'hanamaru'
-
-const read = (box: { value: number }) => box
-const change = (box: { value: number }) => { box.value = 2 }
-const local = environment(async (_, _scope, next) => next({ box: { value: 1 } }))
-registerTest(new Test().target(scenario({ read, change })).effectful().use(local)
-  .it('先行readの値は1', t => t.steps(s => {
-    const first = s.read.args(s.ctx.box)
-    s.change.args(s.ctx.box)
-    return first
-  }).expect(e => [e.result.toEqual({ value: 1 })]))
-  .it('後続変更で先行readを書き換えた期待は失敗', t => t.steps(s => {
-    const first = s.read.args(s.ctx.box)
-    s.change.args(s.ctx.box)
-    return first
-  }).expect(e => [e.result.toEqual({ value: 2 })])))
-// 1件目はpassed。2件目はexpected: { value: 2 }, actual: { value: 1 }でfailed。
+import { boolean } from 'hanamaru'
+registerTest(new Test().target(Registry, 'register').effectful().use(local).from(c => c.registry)
+  .property('既存キーだけ拒否する', p => p.forAll(tuples(strings(), boolean())).steps(s => {
+    s.target.args(s.input[0])
+    return s.target.final(s.input[1] ? s.input[0] : `${s.input[0]}!`)
+  }).expect(e => [e.on({ key: e.sample(0), duplicate: e.sample(1),
+    last: e.outcome.withError(DuplicateKey, error => ({ key: error.key })) })
+    .satisfies('最終操作の契約', ({ key, duplicate, last }) => duplicate
+      ? last.kind === 'throw' && last.error.key === key
+      : last.kind === 'return' && last.value === `${key}!`)])))
 ```
 
-同じ保存規則をpropertyのexpect内の `e.equal(e.state(e.ctx.saved), e.value(e.ctx.input))` にも適用します。valueの入力はcompile時に保存されるため、targetがinputを書き換えて保存した場合に比較対象まで追従することはありません。
+finalはその評価の最後の操作として一度だけ記述します。返すFinalStepRefは通常の結果refとは区別し、次の操作の引数やfield選択に使えません。stepsからそのまま返すか、先行操作のrefと同じ平坦なレコードの一フィールドとして返します。finalを呼んだのに返さない、二つ記述する、後続操作を置く記述はcompileで拒否します。コールバック内の順序をTypeScriptだけで証明する保証はしません。
+
+<!-- example: none — 公開APIの記述契約：最終操作finalの順序違反 -->
+```ts
+// 上のRegistry/localを使い、CLIに実行させるため登録する。
+registerTest(new Test().target(scenario({ register: method(Registry, 'register') }))
+  .effectful().use(local).from(c => ({ register: c.registry }))
+  .it('finalの後へ操作を置けない', t => t.steps(s => {
+    const last = s.register.final('a')
+    s.register.args('later')
+    return last
+  }).expect(e => [e.result.toEqual('a')])))
+```
+
+この定義は型だけでは順序違反と判定せず、実行時のcompileでexecution失敗になります。targetのregisterは一度も呼ばず、期待は未評価、phaseはcompile、原因はfinalの後の操作です。環境の後始末を行います。propertyなら縮小せず探索を止めます。
+
+finalにerror/outcomeを指定しない場合は、通常どおり正常終了を期待します。最終位置を明示して正常結果や状態だけを検証する書き方も許します。finalという名前だけでthrowを許可することはありません。
+
+明示的な最終操作のerror/outcomeは、その最後の操作だけを指します。前段がthrowした場合は予期しない失敗で停止し、最後は未実行です。同じ例外型だったとしても、前段の失敗で最後のerror条件を満たすことはありません。
+
+結果レコードを返した場合、e.result.field('registered')のような先行成功結果は最後のerror/outcomeと併用できます。最後の正常結果に依存するref（上のduplicateフィールドや、それを含むレコード全体）は、最後のerror/outcomeと混在できません。propertyのe.outcomeのvalueは最終操作自身の正常結果であり、返却レコード全体ではありません。
+
+最後の後観測は定数・sample・先行成功結果に依存するものを継続します。最終操作の正常結果が必要な観測はthrow期待/outcomeとは併用できません。最後の操作後は通常のafter-plan観測を使い、after(stepRef)は先行する通常操作だけに指定します。結果の保存・参照同一性・受け手・評価の独立性の規則は変わりません。
+
+## 値の取得時点と参照同一性
+
+期待値とvalueはcompile時、sampleは候補選択時、inputは対象呼出し直前、resultは各操作完了直後、stateは指定時点、actionは発生時点で必要な値を保持します。生の値を次の操作へ渡すことと、検証用の比較表現を保存することを区別します。
+
+propertyのonへ渡すのは、型を保って独立保存できるデータです。独自クラスのメソッドを偽のコピー上で呼ばせません。必要ならpropertyのe.project(ref, value => data)で公開のデータへ投影してからonへ渡します。具体例のtoEqualにはこのデータ限定を適用しません。[値の比較](../reference/value-comparison.md)を参照してください。
+
+## スナップショットの値領域
+
+toEqualの比較表現と、述語へ渡す型付きデータを区別します。Map/Set/TypedArrayやクラスを比較できることと、任意クラスをメソッドごと複製できることは同じではありません。細部は[値の比較と保存](../reference/value-comparison.md)に定めます。
+
+## 同じ操作を繰り返す具体例
+
+同じupsertを二回行い件数が1という具体的な回帰例は、`target(scenario({ upsert: method(Records, 'upsert') })).effectful()` のitで書きます。fromで同じstoreを供給し、steps内で宣言したupsertを二回実行してstateの件数をtoEqual(1)で確認します。入力範囲について冪等性を検査する場合は、上の単一targetのpropertyを使います。回数ではなく、具体的な期待か性質かで入口を選びます。

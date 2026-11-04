@@ -4,7 +4,7 @@ groupは完成した子と共通設定をまとめます。資源の共有とケ
 
 ## 関連するテストと共通設定
 
-子のtargetと検証は子に書き、groupには環境の寿命と共通設定を置きます。各effectfulケースのenvironmentが、観測器と許可済み境界を評価ごとに提供します。
+子のtargetと検証は子に書き、groupには環境の寿命と共通設定を置きます。各effectfulケースのenvironmentが、依存と観測器を評価ごとに提供します。
 
 ## group全体をmiddlewareで囲む
 
@@ -23,7 +23,7 @@ const files = new Test<{ root: string }>().target(save).effectful()
     try {
       const path = join(directory, 'message.txt')
       await writeFile(path, '')
-      const content = scope.state({ read: () => readFile(path, 'utf8') })
+      const content = scope.state({ evidence: 'real-effect', read: () => readFile(path, 'utf8') })
       return await next({ path, content })
     } finally {
       await rm(directory, { recursive: true })
@@ -53,7 +53,7 @@ registerTest(new Test().group('files', middleware(async (_, next) => {
 ```ts
 // 型エラー: rootを供給していない完成定義は登録できない。
 registerTest(files)
-// 型エラー: groupに任意関数を差し替えるmockはない。
+// 型エラー: Testに任意関数を差し替えるmockはない。
 new Test().mock(console, 'log', m => m.returns(undefined)).group([files])
 ```
 
@@ -63,7 +63,7 @@ groupの名前は表示用です。省略や同名を許し、実行箇所は位
 
 ## 入れ子にして設定の範囲を分ける
 
-groupを入れ子にしてmiddleware・timeout・retryの適用範囲を分けます。共通の環境値は内側で上書きできますが、子の用途をpureからeffectへ変えたり、禁止された境界を許可したりはできません。
+groupを入れ子にしてmiddleware・timeout・retryの適用範囲を分けます。共通の環境値は内側で上書きできますが、子の用途をpureからeffectfulへ変えたり、対象外の操作を許可したりはできません。
 
 ## 親で用意したコンテキストを子へ渡す
 

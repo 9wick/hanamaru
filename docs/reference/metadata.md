@@ -1,78 +1,77 @@
 # プラグイン向けblueprint
 
-blueprintは対象・特性・ケース種類を独立に保持します。取得しても環境・target・観測・生成器を実行しません。利用者がIDや内部構造を書き直す必要はありません。
+blueprintは対象の形・特性・ケース種類を独立に保持します。取得しても環境・target・観測・生成器を実行しません。
 
 ## blueprintの構造
 
-| 構造 | 内容 |
+| 構造 | 保持するもの |
 |---|---|
-| Definition / Group | 共通設定、group middleware、非空の子と宣言位置 |
-| Suite.target | shape: single / relation / scenario、対象の関数参照または名前付き集合 |
-| Suite.characteristic | pure / effectful。省略時pureと明示pureは同じ実行値 |
-| Suite.cases | kind: example / property / todoの判別可能なunion |
-| ExampleCase | 具体的な引数またはsteps、expect/expectCalls、境界代替、設定 |
-| PropertyCase | 生成記述、seed/runs/maxShrinks、検査計画、境界代替、設定 |
-| PropertyPlan | kind: single / scenario / lawと、そのkind固有の必須値 |
-| TodoCase | 名前・位置・未実行の指定。入力や検証なし |
+| Target | single / method / scenario。関数、固定receiver、またはクラスとmethodキー |
+| Receiver | class形式のfrom resolver。scenarioではmethodキーごとのinstance供給 |
+| Characteristic | pure / effectful。省略pureと明示pureの実行意味は同じ |
+| Case | example / property / todoと、名前・位置・設定 |
+| Input | args / args-from / generated / stepsと、その形に必要な値 |
+| CheckBuilder | expect。環境とrefから非空の条件を作る処理 |
+| Environment | 各評価の依存と観測器を用意する処理。証拠種別の宣言を含む |
 
-ビルダーの明示特性宣言済みフラグは、pure/effectfulを二度呼ぶことを防ぐ型の状態です。完成blueprintの実行意味には省略と明示の差を持たせません。sourceへ明示の有無を保持する場合も実行権限を変えません。
-
-ExampleCaseの入力はargs / args-from / stepsのunionです。singleのPropertyPlanは直接の生成引数またはargsFrom、scenarioはstepsビルダー、lawはブランド付き法則と対象キーを保持します。lawと独自のexpect/expectCallsは混在しません。
+法則専用の別計画や任意関数のcallsグラフはありません。propertyの複数実行もstepsです。scenarioのexampleでも任意述語の条件を含む構造を受付で拒否します。
 
 ## グループの階層
 
-groupは資源・共通設定のスコープです。完成した子を合成し、そのtargetの特性やケース種類を変更しません。environmentはeffectfulな子のuseで各評価に適用し、groupに直接登録できません。
-
-## 操作と法則の記述
-
-stepsは定義時にはビルダー関数です。環境準備後、propertyならsampleも揃ったcompileで初めて順序付き操作列へ変換します。全操作を実行し、未使用の戻り値を理由に省略しません。
-
-法則は定義時にkindと型に対応する対象参照を保持します。idempotentは同じ関数を二回、roundTripは指定した二関数を順に実行する計画になります。自由なcallsグラフや任意の関数を実行するコールバックはblueprintに受け付けません。
+groupは完成した子、共有資源を囲むmiddleware、実行設定を保持します。子の特性を変更せず、観測トークンを共有しません。各評価のenvironmentが状態と観測を初期化します。
 
 ## compile前後の入力
 
-定義にはresolverとビルダーを保持し、CompiledInputにはその評価の引数・操作列・法則計画を保持します。propertyの生成sampleは対象に渡す前に独立した値として保存し、argsFromやtargetの変更から再現情報を守ります。
+定義時にはfrom・argsFrom・steps・expectのビルダーを保持します。prepare後にReceiverを解決し、propertyならsampleを使ってCompiledInputの引数や操作列を作ります。stepsの操作列をblueprint取得時に読めるとは保証しません。
 
-sample・args・各操作のrefを、それぞれケース・試行・評価番号へ結び付けます。別候補や別試行の参照を持ち込むことを拒否します。blueprintから環境依存の操作列を事前に取得できるとは約束しません。
+各操作はtarget内のキー・引数・先行結果refを持ちます。宣言順・返された結果の形・操作完了refを保持し、voidの戻り値でもafterのチェックポイントとして使えます。対象外・別評価のref、前方参照・循環は拒否します。
+
+## 明示的な最終操作の構造
+
+各操作はmode: return-required / finalを持ちます。finalは最後に一つだけで、そのrefが返却の単独値またはレコードの一フィールドに存在することをcompileで検査します。最終操作のindexをterminationTargetとして保持し、error/outcomeの参照先をその操作に限定します。
+
+返却refの木には、どの操作の正常結果を必要とするかを保持します。最終error/outcomeと最終正常値の混在を禁止し、先行成功結果への参照は許します。前段が失敗した場合の最終操作はnot-runで、前段の例外をその結果へ流用しません。明示的な最終操作なしのstepsは全操作return-requiredです。
 
 ## 期待と観測の記述
 
-expect/expectCallsは各評価のprepare後・target前に一度構築します。itとpropertyは異なる型のexpectビルダーを持ち、条件にもcaseKindを保持します。propertyだけが性質・ref間の関係を作れます。
-
-| 条件kind | 必須情報 |
+| 条件 | 保持する内容 |
 |---|---|
-| exact / part | 対象ref、値か参照かの比較方法、キー経路、期待値 |
-| error | throw値・例外の種別・messageの条件 |
-| predicate / range | 対象refまたは非空のrefレコード、名前、同期述語または範囲 |
-| relation | 二つのrefと比較方法。参照同一性はlive同士だけ |
-| state-unchanged | Stateトークンと前後の取得 |
-| action | Actionトークン、区間、全件一致/個数/不発生 |
-| boundary-call | Boundaryトークン、引数・回数・開始順 |
-| law | 法則kind、対象、sample、比較する実行結果 |
+| exact / part / close | 対象ref、比較方式、期待値、キー経路、許容誤差 |
+| error | throw値、message、例外型による絞り込み、部分の条件 |
+| predicate | refまたは非空refレコード、名前、同期述語 |
+| state | トークン、引数の値/ref、before/after-plan/after-step、待機、照合方法 |
+| action | トークン、期間、全件一致/個数/不発生 |
 
-exact/part/action全件一致と境界引数の期待値はcompileで値領域を検査してコピーします。toBeと参照同一性だけは生の参照を保持します。条件のsourceはexpect / expectCalls / lawと配列内indexです。lawは法則が定めた比較順のindexを使います。
+predicateに含まれる例外refはthrow/rejectの期待と例外型の制約を保持します。同じ終了対象の正常resultを含むrefとの混在を拒否し、ofTypeの検査に成功してからfield/projectの値を取得します。これは独立したrelation条件ではなくpredicateの入力です。
+
+各観測はevidence（real-effect（対象自身または実資源） / substitute-effect（fakeの契約モデル） / call-record（引数等の記録））と所有する評価を持ちます。BoundaryやexpectCallsの別構造はありません。証拠の強さをstate/actionのkindから推測しません。
+
+状態の引数refには取得可能時点を保持します。結果依存のbefore、未完了の操作結果に依存するafter、他観測の結果を引数にする構造を拒否します。条件はsource: expectと配列内indexで対応させます。
+
+期待する終了はreturn / throw / return-or-throwとしてcompileで確定します。propertyのoutcome refはunionの枝と、withErrorの型・射影を保持します。withErrorはthrow枝でだけ適用し、同じ終了対象の正常result/error専用refとの混在は拒否します。先行操作の成功結果は併用できます。outcomeもpredicateの入力であり、別の条件kindではありません。
 
 ## 実行結果の値と参照
 
-valueはcompile、sampleは候補選択直後、inputは呼び出し直前、resultは各呼び出し完了直後に必要な値・部分を保存します。propertyの入力や中間結果を後続の変更へ追従させません。次の操作へ渡す生の戻り値と、検証用の保存値は別に保持します。
+比較用のValueImageと、述語へ渡す型付きデータ、生のIdentityRefを区別します。期待値はcompile、sampleは候補選択、inputは呼出し前、resultは操作完了、観測は指定時点で保持します。後から変更された値へ比較対象を追従させません。
 
-LiveRefはinput/result/value、SnapshotRefはsample/state/before/actionです。合成結果レコードのrootはSnapshotRef、fieldで選ぶ個々の結果は元の出自を保ちます。期待・実測は[値領域](../guides/writing-tests.md#スナップショットの値領域)に従います。
+ValueImageは独自クラスを実行可能なコピーとして偽装しません。nativeデータ・prototype・公開データ・参照を比較情報として保持し、opaqueな値は必要なvalueAdapterを記録します。[値の比較](value-comparison.md)に従います。
 
 ## 評価時点
 
-| 処理 | 評価時点 |
+| 処理 | 時点 |
 |---|---|
-| it / property / eachの定義コールバック | 定義時。設定とビルダーを保持 |
-| group middleware / resource | 要求された共有資源の寿命に従う |
-| 候補生成・縮小候補選択 | propertyの試行内。環境を始める前 |
-| attempt middleware / environment | itは試行ごと、propertyは生成例・縮小候補ごと |
-| argsFrom / steps / 境界resolver / expect | 各評価のprepare後・target前 |
-| 状態の前値取得 / action.open | compile検査後・target前 |
-| target / 法則 / scenario | 観測準備後。複数実行は順次await |
-| 状態の後値取得 / action.finish | target計画全体のsettle後、条件の待機に従う |
-| 条件の照合 | 必要な値・観測を取得後 |
-| action.dispose / 復元 / 環境の後処理 | 各評価の終わり。次の候補の前 |
+| it/property/eachの定義コールバック | 定義時 |
+| group middleware/resource | 共有資源の寿命 |
+| 生成・縮小候補選択 | propertyの各評価前 |
+| middleware/environment | 各評価のprepare |
+| from/argsFrom/steps/expect | prepare後のcompile |
+| beforeのstate/action.open | target前 |
+| 対象の各操作 | 宣言順にawait |
+| after-stepのstate | 指定操作完了後・次の操作前 |
+| after-planのstate/action.finish | 計画のsettleと指定待機の後 |
+| 条件の照合 | 必要な保存値を取得後 |
+| action.dispose/環境の後処理 | 成否に関係なく各評価の最後 |
 
 ## 参照を保持する意味
 
-定義には関数・実資源への参照を持てるため、JSON往復による復元は保証しません。結果の診断とpropertyの再現データは独立して保存します。任意関数を解析して純粋性や責任を推測しません。
+blueprintは関数・資源参照を持ち、JSON往復による復元を保証しません。再現用のsampleと診断値は独立して保存します。pure宣言や証拠種別の真偽を、任意関数の内部から自動証明することはありません。
