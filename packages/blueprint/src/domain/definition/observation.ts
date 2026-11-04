@@ -2,8 +2,9 @@ import * as v from 'valibot'
 import type { AnyFn } from './target-types.js'
 import type { Value } from './javascript.js'
 
-const evidenceSchema = v.picklist(['real-effect', 'substitute-effect', 'call-record'])
-export type Evidence = v.InferOutput<typeof evidenceSchema>
+const evidenceValues = ['real-effect', 'substitute-effect', 'call-record'] as const
+export type Evidence = (typeof evidenceValues)[number]
+const evidenceSchema = v.picklist(evidenceValues)
 declare const stateType: unique symbol
 declare const actionType: unique symbol
 export interface State<F extends AnyFn = AnyFn> {
