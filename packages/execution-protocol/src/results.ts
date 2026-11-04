@@ -3,12 +3,13 @@ type Value = unknown
 import type { DiagnosticValue } from './result-types.js'
 
 export const phaseSchema = v.picklist([
-  'middleware',
-  'instrumentation',
-  'args',
+  'prepare',
+  'compile',
+  'before',
   'target',
-  'expect',
-  'assertion',
+  'checkpoint',
+  'observe',
+  'assert',
   'cleanup',
 ])
 
@@ -25,7 +26,7 @@ const diagnosticKey = v.variant('kind', [
 
 export const diagnosticSchema: v.GenericSchema<Value, DiagnosticValue> = v.lazy(() =>
   v.variant('kind', [
-    v.object({ kind: v.picklist(['undefined', 'null', 'hole']) }),
+    v.object({ kind: v.picklist(['undefined', 'null', 'hole', 'missing']) }),
     v.object({ kind: v.literal('boolean'), value: v.boolean() }),
     v.object({ kind: v.literal('string'), value: v.string() }),
     v.object({
@@ -62,36 +63,54 @@ export const diagnosticSchema: v.GenericSchema<Value, DiagnosticValue> = v.lazy(
   ]),
 )
 
-export const assertionReferenceSchema = v.union([
+const observation = v.intersect([
   v.object({
-    index: v.number(),
-    source: v.literal('expect'),
-    subject: v.literal('result'),
-    negated: v.optional(v.literal(true)),
-    matcher: v.picklist(['toBe', 'toEqual', 'toMatchObject', 'toSatisfy']),
+    refId: v.number(),
+    tokenId: v.number(),
+    evidence: v.picklist(['real-effect', 'substitute-effect', 'call-record']),
   }),
-  v.object({
-    index: v.number(),
-    source: v.literal('expect'),
-    subject: v.literal('error'),
-    negated: v.optional(v.literal(true)),
-    matcher: v.picklist(['toBeInstanceOf', 'toThrow', 'toMatchObject', 'toSatisfy']),
-  }),
-  v.object({
-    index: v.number(),
-    source: v.literal('expectCalls'),
-    subject: v.literal('call'),
-    key: v.string(),
-    matcher: v.picklist(['calledTimes', 'notCalled', 'calledWith', 'calledOnceWith', 'calledNthWith']),
-  }),
+  v.variant('kind', [
+    v.object({
+      kind: v.literal('state'),
+      args: v.array(diagnosticSchema),
+      timing: v.variant('kind', [
+        v.object({ kind: v.literal('before') }),
+        v.object({
+          kind: v.literal('after-plan'),
+          wait: v.optional(v.object({ withinMs: v.number(), intervalMs: v.number() })),
+        }),
+        v.object({ kind: v.literal('after-step'), operationIndex: v.number() }),
+      ]),
+    }),
+    v.object({
+      kind: v.literal('action'),
+      window: v.variant('kind', [
+        v.object({ kind: v.literal('settled') }),
+        v.object({ kind: v.literal('after'), milliseconds: v.number() }),
+      ]),
+    }),
+  ]),
 ])
+
+export const assertionReferenceSchema = v.strictObject({
+  observations: v.optional(v.array(observation)),
+  adapterType: v.optional(diagnosticSchema),
+  errorTypes: v.optional(v.array(diagnosticSchema)),
+  operationIndex: v.optional(v.number()),
+  index: v.number(),
+  source: v.literal('expect'),
+  subject: v.picklist(['result', 'error', 'state', 'action', 'property', 'outcome']),
+  matcher: v.picklist(['toEqual', 'toBe', 'toBeCloseTo', 'satisfies', 'unchanged', 'count']),
+  path: v.optional(v.array(v.union([v.string(), v.number()]))),
+  evidence: v.optional(v.picklist(['real-effect', 'substitute-effect', 'call-record'])),
+})
 
 const outcome = v.object({ kind: v.picklist(['return', 'throw']), value: diagnosticSchema })
 
 export const failureSchema = v.variant('kind', [
   v.object({
     kind: v.literal('assertion'),
-    phase: v.literal('assertion'),
+    phase: v.literal('assert'),
     message: v.string(),
     assertion: assertionReferenceSchema,
     expected: diagnosticSchema,
@@ -99,10 +118,20 @@ export const failureSchema = v.variant('kind', [
   }),
   v.object({
     kind: v.literal('outcome'),
+    operationIndex: v.optional(v.number()),
     phase: v.literal('target'),
     message: v.string(),
     expected: v.picklist(['return', 'throw']),
     actual: outcome,
+  }),
+  v.object({
+    kind: v.literal('observation'),
+    phase: phaseSchema,
+    message: v.string(),
+    observation,
+    stage: v.picklist(['before', 'after', 'open', 'finish', 'dispose']),
+    cause: diagnosticSchema,
+    assertion: v.optional(assertionReferenceSchema),
   }),
   v.object({
     kind: v.literal('execution'),
@@ -123,15 +152,67 @@ export const failureSchema = v.variant('kind', [
 
 const assertionResult = v.variant('status', [
   v.object({
+    failureIndexes: v.array(v.number()),
     assertion: assertionReferenceSchema,
     status: v.picklist(['passed', 'failed']),
     expected: diagnosticSchema,
     actual: diagnosticSchema,
   }),
-  v.object({ assertion: assertionReferenceSchema, status: v.literal('not-evaluated'), reason: v.string() }),
+  v.object({
+    failureIndexes: v.array(v.number()),
+    assertion: assertionReferenceSchema,
+    status: v.literal('not-evaluated'),
+    pending: v.optional(v.literal(true)),
+    reason: v.string(),
+  }),
 ])
 
+export const operationResult = v.intersect([
+  v.object({
+    failureIndexes: v.array(v.number()),
+    index: v.number(),
+    key: v.string(),
+    mode: v.picklist(['return-required', 'final']),
+  }),
+  v.variant('status', [
+    v.object({ status: v.literal('returned'), args: v.array(diagnosticSchema), value: diagnosticSchema }),
+    v.object({ status: v.literal('threw'), args: v.array(diagnosticSchema), value: diagnosticSchema }),
+    v.object({ status: v.literal('not-run'), reason: v.string() }),
+    v.object({ status: v.literal('incomplete'), args: v.array(diagnosticSchema), reason: v.string() }),
+  ]),
+])
+const propertyEvaluation = v.object({
+  kind: v.picklist(['example', 'generated', 'shrink']),
+  sampleIndex: v.nullable(v.number()),
+  input: diagnosticSchema,
+  operations: v.array(operationResult),
+  expectedTermination: v.nullable(v.picklist(['return', 'throw', 'return-or-throw'])),
+  terminationTarget: v.nullable(v.number()),
+  status: v.picklist(['passed', 'failed', 'cancelled']),
+  outcome: v.nullable(outcome),
+  assertions: v.array(assertionResult),
+  failureIndexes: v.array(v.number()),
+  cleanup,
+})
+const propertyRun = v.object({
+  source: diagnosticSchema,
+  classification: v.picklist(['fixed', 'generated']),
+  seed: v.number(),
+  version: v.number(),
+  runs: v.number(),
+  maxShrinks: v.number(),
+  originalCounterexample: v.nullable(diagnosticSchema),
+  counterexample: v.nullable(diagnosticSchema),
+  shrinkPath: v.array(v.number()),
+  stopped: v.picklist(['completed', 'counterexample', 'max-shrinks', 'execution-failed', 'interrupted']),
+})
 export const attempt = v.object({
+  selectedEvaluationIndex: v.optional(v.number()),
+  operations: v.optional(v.array(operationResult)),
+  expectedTermination: v.optional(v.nullable(v.picklist(['return', 'throw', 'return-or-throw']))),
+  terminationTarget: v.optional(v.nullable(v.number())),
+  evaluations: v.optional(v.array(propertyEvaluation)),
+  property: v.optional(propertyRun),
   attempt: v.number(),
   status: v.picklist(['passed', 'failed', 'cancelled']),
   durationMs: v.number(),

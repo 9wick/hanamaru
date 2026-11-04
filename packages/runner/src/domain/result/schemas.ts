@@ -3,6 +3,8 @@ import type { Value } from '../execution/javascript.js'
 import { location, diagnosticSchema, attempt, groupMiddlewareSchema } from '@hanamaru/execution-protocol'
 export * from '@hanamaru/execution-protocol'
 export const caseResultSchema = v.object({
+  caseKind: v.picklist(['example', 'property', 'todo']),
+  characteristic: v.picklist(['pure', 'effectful']),
   name: v.string(),
   origin: location,
   path: v.array(v.number()),

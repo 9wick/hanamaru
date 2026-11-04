@@ -48,7 +48,7 @@ async function worker(source: string) {
   return { prepared, channel, failed }
 }
 
-const spec: ExecutionSpec = { roots: [], preparation: [{ id: 'target', keys: ['identity'] }], shape: '[]' }
+const spec: ExecutionSpec = { roots: [], shape: '[]' }
 
 function services(signal = new AbortController().signal): ExecutionServices {
   return { invoke: () => Promise.resolve([]), signal, onLoading: () => {} }

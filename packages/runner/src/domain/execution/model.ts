@@ -1,12 +1,5 @@
 import type { Resource } from '@hanamaru/blueprint/model'
-import type {
-  Fields,
-  RuntimeBlueprint,
-  RuntimeGroup,
-  RuntimeMiddleware,
-  RuntimeMock,
-  RuntimeSuite,
-} from '@hanamaru/blueprint/model'
+import type { Fields, RuntimeBlueprint, RuntimeGroup, RuntimeMiddleware, RuntimeSuite } from '@hanamaru/blueprint/model'
 import type { SourceLocation } from '@hanamaru/blueprint/model'
 import type { ResolvedExecutionConfig } from './config.js'
 
@@ -19,7 +12,6 @@ export interface NodeBase {
   resources?: readonly Resource[]
   rootIndex: number
   config: ResolvedExecutionConfig
-  mocks: RuntimeMock[]
   frames: Frame[]
   frameCount: number
   entryOrigin: SourceLocation | null

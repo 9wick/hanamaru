@@ -8,10 +8,6 @@ export interface RootReference {
   index: number
   origin: { file: string; line: number; column: number }
 }
-export interface ModulePreparation {
-  id: string
-  keys: string[]
-}
 export interface AttemptReply {
   result: MutableAttempt
   retryable: boolean
@@ -25,7 +21,6 @@ export interface GroupReply {
 export interface ExecutionWorkerData {
   readonly entryURL?: string
   roots: RootReference[]
-  preparation: ModulePreparation[]
   shape: string
 }
 
@@ -43,6 +38,14 @@ export type CommandInput = ExecutionCommand extends infer C
 export type ReplyValue = AttemptReply | GroupReply | { entered: true }
 
 export type ExecutionMessage =
+  | {
+      type: 'attempt-progress'
+      id: number
+      phase: ExecutionPhase
+      evaluationOffset: number
+      failureOffset: number
+      result: MutableAttempt
+    }
   | { type: 'compile'; id: number; name: string; args: Value[] }
   | { type: 'ready' }
   | { type: 'loading'; file: string }

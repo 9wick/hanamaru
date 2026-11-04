@@ -73,9 +73,9 @@ durationMsは最初の試行開始からケース終了・中断までの実時�
 attemptsは実行順で、attemptは1始まりです。各試行のdurationMsは候補生成開始（itでは前処理開始）から全後始末終了・中断までを測ります。各試行に状態・時間・評価列・失敗・後始末の状態を残します。
 失敗は各試行のfailuresに保持し、各failureは評価番号または試行全体の段階に対応します。最後に成功しても過去の試行を消しません。
 
-CaseResultはcaseKind（example/property）とcharacteristic（pure/effectful）を保持します。各attemptのevaluationsは入力・targetのoutcome・条件結果・cleanupを持ち、失敗はattempt.failuresのindexで参照して重複保存しません。itは一評価、propertyは生成/縮小の評価列です。生成前に失敗した場合はevaluationsを空とし、試行全体の失敗を残します。
+CaseResultはcaseKind（example/property）とcharacteristic（pure/effectful）を保持します。各attemptのevaluationsは入力・targetのoutcome・条件結果・cleanupを持ち、失敗はattempt.failuresのindexで参照して重複保存しません。itは一評価、propertyは生成/縮小の評価列です。評価ごとにstatus、operations、expectedTermination、terminationTargetを記録します。expectedTerminationはcompileで確定したreturn / throw / return-or-throwで、compile成立前はnullです。実際の終了であるoutcomeとは別に保持します。terminationTargetはfinalの操作indexで、finalがなければnullです。operationsと各条件のfailureIndexesは常に配列を持ち、その評価に属するattempt.failuresのindexだけを指します。失敗がなければ空配列です。生成前に失敗した場合はevaluationsを空とし、試行全体の失敗を残します。
 
-propertyのattemptは入力源の分類（fixed/generated）とseed・生成器の形式バージョン・設定、各評価のkind（generated/shrink）とsample番号、元の反例、縮小経路・採用した反例、打切り理由を保持します。縮小候補の成功は元の契約違反を取り消しません。再現には保存した生成タプルを使い、DB接続などの実資源を再現入力へ混ぜません。
+propertyのattemptは入力源の分類（fixed/generated）とseed・生成器の形式バージョン・設定、各評価のkind（generated/shrink）とsample番号、元の反例、縮小経路・採用した反例、打切り理由を保持します。縮小候補の成功は元の契約違反を取り消しません。試行直下のoutcome・assertions・operationsは採用した評価に揃え、selectedEvaluationIndexでその評価を指します。縮小中の中断・timeout・基盤障害でも採用済みの評価を保持し、中断した候補はevaluationsへ残します。採用前は現在の評価を指します。試行全体のcleanupと打切り理由は中断した候補の状況も反映します。再現には保存した生成タプルを使い、DB接続などの実資源を再現入力へ混ぜません。
 
 ### 試行の有無と未実行の理由
 
@@ -129,7 +129,7 @@ finalが期待どおりthrowした場合、評価記録のoutcome.kindは実際�
 観測にはトークンの参照・引数・before/after/checkpointの時点を残し、条件indexからその定義へ対応できます。
 各配列はtarget前のcompileで構築します。条件のindexは別条件の成功・失敗でずれません。compile自体が失敗した場合はまだ得ていない条件を捏造しません。
 
-各条件はpassed / failed / not-evaluatedとして記録し、未評価には理由を残します。
+各条件はpassed / failed / not-evaluatedとして記録し、未評価には理由を残します。まだ判定していない条件だけにpending: trueを付け、判定済みの未評価と区別します。後始末中にtimeoutとなっても、判定済みのnot-evaluatedの理由は書き換えません。
 middlewareの失敗でテスト対象を呼べない場合、既知の観測条件はnot-evaluatedです。prepare/compileで構築できなかった条件は捏造しません。
 観測区間の不発生の成功と、検証していない状態を区別します。
 複数条件の失敗・原因・後始末の失敗を全て残し、最後の例外で前の失敗を消しません。

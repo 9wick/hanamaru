@@ -9,7 +9,7 @@ export interface DiagnosticProperty {
 }
 
 export type DiagnosticValue =
-  | { readonly kind: 'undefined' | 'null' | 'hole' }
+  | { readonly kind: 'undefined' | 'null' | 'hole' | 'missing' }
   | { readonly kind: 'boolean'; readonly value: boolean }
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'number'; readonly value: number | 'NaN' | 'Infinity' | '-Infinity' | '-0' }
@@ -41,31 +41,50 @@ export type DiagnosticValue =
   | { readonly kind: 'accessor'; readonly get: boolean; readonly set: boolean }
   | { readonly kind: 'omitted'; readonly reason: string }
 
-export type ExecutionPhase = 'middleware' | 'instrumentation' | 'args' | 'target' | 'expect' | 'assertion' | 'cleanup'
+export type ExecutionPhase =
+  | 'prepare'
+  | 'compile'
+  | 'before'
+  | 'target'
+  | 'checkpoint'
+  | 'observe'
+  | 'assert'
+  | 'cleanup'
 
 /** middlewareの区間。前処理はnextを呼ぶまで、後処理はnextの完了後。 */
 export type MiddlewareStage = 'before' | 'after'
 
-export type AssertionReference = {
-  readonly index: number
+export type ObservationResult = {
+  readonly refId: number
+  readonly tokenId: number
+  readonly evidence: 'real-effect' | 'substitute-effect' | 'call-record'
 } & (
   | {
-      readonly source: 'expect'
-      readonly subject: 'result'
-      readonly matcher: 'toBe' | 'toEqual' | 'toMatchObject' | 'toSatisfy'
+      readonly kind: 'state'
+      readonly args: readonly DiagnosticValue[]
+      readonly timing:
+        | { readonly kind: 'before' }
+        | { readonly kind: 'after-plan'; readonly wait?: { readonly withinMs: number; readonly intervalMs: number } }
+        | { readonly kind: 'after-step'; readonly operationIndex: number }
     }
   | {
-      readonly source: 'expect'
-      readonly subject: 'error'
-      readonly matcher: 'toBeInstanceOf' | 'toThrow' | 'toMatchObject' | 'toSatisfy'
-    }
-  | {
-      readonly source: 'expectCalls'
-      readonly subject: 'call'
-      readonly key: string
-      readonly matcher: 'calledTimes' | 'notCalled' | 'calledWith' | 'calledOnceWith' | 'calledNthWith'
+      readonly kind: 'action'
+      readonly window: { readonly kind: 'settled' } | { readonly kind: 'after'; readonly milliseconds: number }
     }
 )
+
+export interface AssertionReference {
+  readonly observations?: readonly ObservationResult[]
+  readonly adapterType?: DiagnosticValue
+  readonly errorTypes?: readonly DiagnosticValue[]
+  readonly operationIndex?: number
+  readonly index: number
+  readonly source: 'expect'
+  readonly subject: 'result' | 'error' | 'state' | 'action' | 'property' | 'outcome'
+  readonly matcher: 'toEqual' | 'toBe' | 'toBeCloseTo' | 'satisfies' | 'unchanged' | 'count'
+  readonly path?: readonly (string | number)[]
+  readonly evidence?: 'real-effect' | 'substitute-effect' | 'call-record'
+}
 
 export interface TargetOutcome {
   readonly kind: 'return' | 'throw'
@@ -77,16 +96,25 @@ export type Failure = {
 } & (
   | {
       readonly kind: 'assertion'
-      readonly phase: 'assertion'
+      readonly phase: 'assert'
       readonly assertion: AssertionReference
       readonly expected: DiagnosticValue
       readonly actual: DiagnosticValue
     }
   | {
       readonly kind: 'outcome'
+      readonly operationIndex?: number
       readonly phase: 'target'
       readonly expected: 'return' | 'throw'
       readonly actual: TargetOutcome
+    }
+  | {
+      readonly kind: 'observation'
+      readonly phase: ExecutionPhase
+      readonly observation: ObservationResult
+      readonly stage: 'before' | 'after' | 'open' | 'finish' | 'dispose'
+      readonly cause: DiagnosticValue
+      readonly assertion?: AssertionReference
     }
   | {
       readonly kind: 'execution'
@@ -104,11 +132,12 @@ export type Failure = {
 )
 
 export type AssertionResult = {
+  readonly failureIndexes: readonly number[]
   readonly assertion: AssertionReference
 } & (
   | { readonly status: 'passed'; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
   | { readonly status: 'failed'; readonly expected: DiagnosticValue; readonly actual: DiagnosticValue }
-  | { readonly status: 'not-evaluated'; readonly reason: string }
+  | { readonly status: 'not-evaluated'; readonly reason: string; readonly pending?: true }
 )
 
 export type GroupMiddlewareFailure = {
@@ -121,7 +150,50 @@ export type GroupMiddlewareFailure = {
 
 export type Reason = 'timeout' | 'interrupted' | 'cleanup-failed'
 
+export type OperationResult = {
+  readonly failureIndexes: readonly number[]
+  readonly index: number
+  readonly key: string
+  readonly mode: 'return-required' | 'final'
+} & (
+  | { readonly status: 'returned'; readonly args: readonly DiagnosticValue[]; readonly value: DiagnosticValue }
+  | { readonly status: 'threw'; readonly args: readonly DiagnosticValue[]; readonly value: DiagnosticValue }
+  | { readonly status: 'not-run'; readonly reason: string }
+  | { readonly status: 'incomplete'; readonly args: readonly DiagnosticValue[]; readonly reason: string }
+)
+
+export interface EvaluationResult {
+  readonly kind: 'example' | 'generated' | 'shrink'
+  readonly sampleIndex: number | null
+  readonly input: DiagnosticValue
+  readonly operations: readonly OperationResult[]
+  readonly expectedTermination: 'return' | 'throw' | 'return-or-throw' | null
+  readonly terminationTarget: number | null
+  readonly status: 'passed' | 'failed' | 'cancelled'
+  readonly outcome: TargetOutcome | null
+  readonly assertions: readonly AssertionResult[]
+  readonly failureIndexes: readonly number[]
+  readonly cleanup: 'complete' | 'incomplete'
+}
+export interface PropertyRun {
+  readonly source: DiagnosticValue
+  readonly classification: 'fixed' | 'generated'
+  readonly seed: number
+  readonly version: number
+  readonly runs: number
+  readonly maxShrinks: number
+  readonly originalCounterexample: DiagnosticValue | null
+  readonly counterexample: DiagnosticValue | null
+  readonly shrinkPath: readonly number[]
+  readonly stopped: 'completed' | 'counterexample' | 'max-shrinks' | 'execution-failed' | 'interrupted'
+}
 export interface MutableAttempt {
+  selectedEvaluationIndex?: number
+  evaluations?: EvaluationResult[]
+  operations?: OperationResult[]
+  expectedTermination?: 'return' | 'throw' | 'return-or-throw' | null
+  terminationTarget?: number | null
+  property?: PropertyRun
   attempt: number
   status: 'passed' | 'failed' | 'cancelled'
   durationMs: number

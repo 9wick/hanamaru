@@ -34,3 +34,14 @@ export class CleanupFault extends Error {
     this.incomplete = incomplete
   }
 }
+
+/** 後始末へ移っても、元の障害が発生した評価フェーズを失わない。 */
+export class EvaluationFault extends Error {
+  override readonly cause: Value
+  readonly phase: import('../../domain/result/types.js').ExecutionPhase
+  constructor(cause: Value, phase: import('../../domain/result/types.js').ExecutionPhase) {
+    super('evaluation failed')
+    this.cause = cause
+    this.phase = phase
+  }
+}

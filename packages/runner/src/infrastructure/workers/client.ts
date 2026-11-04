@@ -112,8 +112,20 @@ export class RunningExecution implements ExecutionHandle, PreparedExecution {
     else if (message.type === 'loading') this.#services.onLoading(message.file)
     else if (message.type === 'reply') {
       if (!this.#requests.has(message.id)) return this.#fail(new Error('unexpected execution reply'))
-      if ('reason' in message.value && message.value.reason) this.#lifecycle.abort(message.value.reason)
+      if (
+        'reason' in message.value &&
+        message.value.reason &&
+        (this.#lifecycle.reason !== 'timeout' || message.value.reason === 'timeout')
+      )
+        this.#lifecycle.abort(message.value.reason)
       this.#requests.settle(message.id, message.value)
+    } else if (message.type === 'attempt-progress') {
+      if (!this.#requests.has(message.id)) return this.#fail(new Error('unexpected attempt progress'))
+      try {
+        this.#lifecycle.updateAttempt(message.result, message.phase, message.evaluationOffset, message.failureOffset)
+      } catch (error) {
+        this.#fail(new Error(errorStack(error)))
+      }
     } else if (message.type === 'timeout') {
       if (message.phase) this.#lifecycle.markPhase(message.phase)
       this.#lifecycle.timedOut()
@@ -139,17 +151,52 @@ export class RunningExecution implements ExecutionHandle, PreparedExecution {
 
   /** 節はworkerが自分で読み直した計画から引くため、どのcaseかはpathで指す。 */
   async attempt(node: SuiteNode, _item: RuntimeCase, path: number[], number: number): Promise<AttemptReply> {
-    const reply = await this.#request({
-      type: 'attempt',
-      path,
-      number,
-      resourceFields:
-        node.resourceFields === undefined
-          ? undefined
-          : v.parse(v.record(v.string(), transportValueSchema), node.resourceFields),
-    })
-    if (!('result' in reply)) throw new TypeError('unexpected attempt reply')
-    return reply
+    const active = this.#lifecycle.active
+    const deadline =
+      active?.kind === 'attempt'
+        ? Math.max(0, active.started + active.timeoutMs - performance.now())
+        : node.config.timeout
+    const timer = setTimeout(() => this.#lifecycle.timedOut(), deadline)
+    try {
+      const reply = await this.#request({
+        type: 'attempt',
+        path,
+        number,
+        resourceFields:
+          node.resourceFields === undefined
+            ? undefined
+            : v.parse(v.record(v.string(), transportValueSchema), node.resourceFields),
+      })
+      if (!('result' in reply)) throw new TypeError('unexpected attempt reply')
+      if (
+        this.#lifecycle.reason === 'timeout' &&
+        !reply.result.failures.some((failure) => failure.kind === 'timeout')
+      ) {
+        const timeoutMs = active?.kind === 'attempt' ? active.timeoutMs : node.config.timeout
+        return {
+          ...reply,
+          retryable: false,
+          result: {
+            ...reply.result,
+            status: 'failed',
+            failures: [
+              ...reply.result.failures,
+              {
+                kind: 'timeout',
+                phase:
+                  active?.kind === 'attempt' ? (active.timeoutPhase ?? this.#lifecycle.phase ?? 'prepare') : 'prepare',
+                message: `attempt exceeded ${timeoutMs}ms`,
+                timeoutMs,
+                cleanup: reply.result.cleanup,
+              },
+            ],
+          },
+        }
+      }
+      return reply
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /** 囲みの中のfieldsはworker側が持つため、子を辿る間の受け渡しは空で足りる。 */
@@ -226,7 +273,6 @@ export class WorkerExecutionLauncher {
       {
         roots,
         entryURL: this.#modules.entryURL,
-        preparation: this.#modules.prepare(plan.blueprints),
         shape: JSON.stringify(this.#modules.describe(plan.allNodes)),
       },
       {

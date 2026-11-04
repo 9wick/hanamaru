@@ -1,14 +1,13 @@
+export type { ContractConditions as Assertions } from './domain/assertion/compiled-checks.js'
+export { environment } from './interfaces/library/environment.js'
+export type { Environment, EnvironmentFn } from './interfaces/library/environment.js'
+export type { State, Action, Evidence, ObservationScope, ActionSession } from './domain/definition/observation.js'
+export { valueAdapter } from './domain/assertion/value-adapter.js'
+export type { ValueAdapter } from './domain/assertion/value-adapter.js'
+export { integers, strings, boolean, constant, arrays, tuples, record, oneOf } from './domain/definition/generation.js'
+export type { Arbitrary, Generated } from './domain/definition/generation.js'
 export { resource } from './interfaces/library/resource.js'
-export { relation } from './domain/definition/relation.js'
-export type { Relation } from './domain/definition/relation.js'
-export type {
-  CallRef,
-  CallArguments,
-  CallOutput,
-  CallsResult,
-  InvocationBuilder,
-  RelationCalls,
-} from './domain/definition/calls.js'
+export type { CallRef, FinalStepRef } from './domain/definition/steps.js'
 export type {
   Resource,
   ResourceScope,
@@ -19,18 +18,6 @@ export type {
   JsonObject,
 } from './domain/definition/resource.js'
 export type {
-  Assertion,
-  Assertions,
-  CallAssertion,
-  CallExpectations,
-  ErasedResultAssertion,
-  ErrorAssertion,
-  ResultAssertion,
-  ValueCheck,
-} from './domain/assertion/types.js'
-export type {
-  BehaviorAction,
-  BehaviorBlueprint,
   Ctx,
   DefinitionBlueprint,
   ErasedSuiteBlueprint,
@@ -44,7 +31,6 @@ export type {
   MiddlewareFn,
   MiddlewareOptions,
   MiddlewareResult,
-  MockBlueprint,
   Next,
   RowBlueprint,
   SourceLocation,
@@ -60,15 +46,9 @@ export type { ExecutionConfig } from './domain/definition/conditions.js'
 export type { AnyFn, FnKeys, MethodOf } from './domain/definition/target-types.js'
 export { middleware } from './interfaces/library/definition.js'
 export type {
-  Behavior,
-  BehaviorBuilder,
-  CallBuilder,
-  CallMatchers,
-  CallsBuilder,
   CaseMethods,
   ChildrenPhase,
   CompatibleChildren,
-  ErrorAssertions,
   ExecutionSettings,
   Expect,
   FirstPhase,
@@ -77,23 +57,13 @@ export type {
   GroupSuite,
   ItArgs,
   ItBuilder,
-  ItCalls,
   ItDone,
   ItExpected,
-  InvocationExpect,
-  ItInvocations,
-  ItInvocationChecks,
-  RelationItBuilder,
-  RelationSuite,
-  RelationTestBuilder,
-  RelationCaseMethods,
   Middleware,
-  MockDef,
   Suite,
   TargetStage,
   TestBuilder,
   TestConstructor,
-  ValueAssertions,
 } from './interfaces/library/types.js'
 import { createTest } from './interfaces/library/definition.js'
 import { createRegisterTest } from './interfaces/library/registration.js'
@@ -105,3 +75,8 @@ const location = createBlueprintLocation(import.meta.url)
 export type Test<R extends object = {}> = TestType<R>
 export const Test = createTest(location, recordDeclaration)
 export const registerTest = createRegisterTest(location, recordDeclaration)
+
+export { scenario, method } from './domain/definition/scenario.js'
+export type { Scenario, Method } from './domain/definition/scenario.js'
+
+export type { Ref } from './domain/assertion/references.js'

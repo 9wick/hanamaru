@@ -1,37 +1,25 @@
+import type { Scenario, ScenarioMember } from '../../domain/definition/scenario.js'
+import type { ScenarioTestBuilder } from './scenario-types.js'
+import type { PropertyBuilder } from './property-builder.js'
+import type { ContractConditions } from '../../domain/assertion/compiled-checks.js'
+import type { ExampleExpect, EffectExpect } from '../../domain/assertion/expectation.js'
+import type { Characteristic } from '../../domain/definition/runtime.js'
 import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
-import type {
-  CallOutput,
-  CallsResult,
-  InvocationBuilder,
-  NonemptyOutput,
-  RelationCalls,
-} from '../../domain/definition/calls.js'
-import type { Relation } from '../../domain/definition/relation.js'
-import type {
-  Assertions,
-  CallAssertion,
-  CallExpectations,
-  ErrorAssertion,
-  ResultAssertion,
-} from '../../domain/assertion/types.js'
 import { doneTag, middlewareTag } from '../../domain/definition/tags.js'
 import type {
-  BehaviorBlueprint,
   Ctx,
   DefinitionBlueprint,
   DefinitionHandle,
-  ErasedSuiteBlueprint,
   ExtendContext,
+  Environment,
   InputPhase,
   MiddlewareFn,
   SuiteBlueprint,
   TestDefinition,
 } from '../../domain/definition/types.js'
 import { definitionBrand } from '../../domain/definition/types.js'
-import type { AnyFn, FnKeys, MethodOf } from '../../domain/definition/target-types.js'
+import type { AnyFn, FnKeys, MethodOf, ObjectReceiver } from '../../domain/definition/target-types.js'
 import type { Value } from '../../domain/definition/javascript.js'
-
-declare const behaviorBrand: unique symbol
 
 export interface ItDone {
   readonly [doneTag]: true
@@ -45,171 +33,83 @@ export interface Middleware<C = Value, S extends object = object> {
   readonly timeout: number | undefined
 }
 
-export type Behavior<F extends AnyFn> = BehaviorBlueprint & {
-  readonly [behaviorBrand]: (fn: F) => F
-}
+export type Expect<F extends AnyFn, C, M extends Characteristic = 'pure'> = M extends 'effectful'
+  ? EffectExpect<F, C>
+  : ExampleExpect<F, C>
 
-export interface BehaviorBuilder<F extends AnyFn> {
-  returnsOnce(value: ReturnType<F>): BehaviorBuilder<F>
-  resolvesOnce(
-    value: ReturnType<F> extends PromiseLike<Value | void> ? Awaited<ReturnType<F>> : never,
-  ): BehaviorBuilder<F>
-  throwsOnce(error: Value): BehaviorBuilder<F>
-  rejectsOnce(error: ReturnType<F> extends PromiseLike<Value | void> ? Value : never): BehaviorBuilder<F>
-  callsFakeOnce(fn: F): BehaviorBuilder<F>
-  returns(value: ReturnType<F>): Behavior<F>
-  resolves(value: ReturnType<F> extends PromiseLike<Value | void> ? Awaited<ReturnType<F>> : never): Behavior<F>
-  throws(error: Value): Behavior<F>
-  rejects(error: ReturnType<F> extends PromiseLike<Value | void> ? Value : never): Behavior<F>
-  callsFake(fn: F): Behavior<F>
-}
-
-export type MockDef<F extends AnyFn> = (m: BehaviorBuilder<F>) => Behavior<F>
-
-export interface ValueAssertions<V> {
-  readonly not: Omit<ValueAssertions<V>, 'not'>
-  toBe(value: V): ResultAssertion<V>
-  toEqual(value: V): ResultAssertion<V>
-  toMatchObject(value: V extends object ? Partial<V> : never): ResultAssertion<V>
-  toSatisfy(predicate: (value: V) => boolean): ResultAssertion<V>
-}
-
-export interface ErrorAssertions {
-  readonly not: Omit<ErrorAssertions, 'not'>
-  toBeInstanceOf(ctor: new (...args: never[]) => object): ErrorAssertion
-  toThrow(message: string | RegExp): ErrorAssertion
-  toMatchObject(value: Record<string, Value>): ErrorAssertion
-  toSatisfy(predicate: (error: Value) => boolean): ErrorAssertion
-}
-
-export interface CallMatchers<F extends AnyFn, C = object> {
-  calledTimes(count: number): CallAssertion
-  notCalled(): CallAssertion
-  calledWith(...args: Parameters<F>): CallAssertion
-  calledOnceWith(...args: Parameters<F>): CallAssertion
-  calledNthWith(n: number, ...args: Parameters<F>): CallAssertion
-  calledWithFrom(build: (ctx: Ctx<C>) => Parameters<F>): CallAssertion
-  calledOnceWithFrom(build: (ctx: Ctx<C>) => Parameters<F>): CallAssertion
-  calledNthWithFrom(n: number, build: (ctx: Ctx<C>) => Parameters<F>): CallAssertion
-}
-
-/** 呼び出しは行わず、メソッドの呼び出し条件を記述する。 */
-export interface CallBuilder<C = object> {
-  <O extends object, K extends FnKeys<O>>(obj: O, key: K): CallMatchers<MethodOf<O, K>, C>
-  from<O extends object, K extends string>(
-    build: (ctx: Ctx<C>) => O,
-    key: K & FnKeys<NoInfer<O>>,
-  ): CallMatchers<MethodOf<O, Extract<K, keyof O>>, C>
-}
-
-export interface Expect<F extends AnyFn, C> {
-  readonly result: ValueAssertions<Awaited<ReturnType<F>>>
-  readonly error: ErrorAssertions
-  readonly ctx: Ctx<C>
-}
-
-export type CallsBuilder<C = object> = (call: CallBuilder<C>) => CallExpectations
-
-export interface ItBuilder<F extends AnyFn, C> extends ExecutionSettings<ItBuilder<F, C>> {
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItBuilder<F, C>
-  require<T extends Resource>(r: T): ItBuilder<F, ExtendContext<ResourceFields<T>, C>>
-  args(...args: Parameters<F>): ItArgs<F, C>
-  argsFrom(build: (ctx: Ctx<C>) => Parameters<F>): ItArgs<F, C>
-  calls<const O extends CallOutput>(
-    build: (c: InvocationBuilder<F>) => O & NonemptyOutput<O>,
-  ): ItInvocations<CallsResult<O>, C>
-}
-
-export interface InvocationExpect<V, C> {
-  readonly result: ValueAssertions<V>
-  readonly ctx: Ctx<C>
-}
-
-export interface ItInvocations<V, C> extends ExecutionSettings<ItInvocations<V, C>> {
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItInvocations<V, C>
-  expect(build: (e: InvocationExpect<V, C>) => Assertions): ItExpected<C>
-  expectCalls(build: CallsBuilder<C>): ItInvocationChecks<V, C>
-}
-
-export interface ItInvocationChecks<V, C> extends ItDone {
-  expect(build: (e: InvocationExpect<V, C>) => Assertions): ItDone
-}
-
-export interface RelationItBuilder<M extends Record<string, AnyFn>, C> extends ExecutionSettings<
-  RelationItBuilder<M, C>
+export interface ItBuilder<F extends AnyFn, C, M extends Characteristic = 'pure'> extends ExecutionSettings<
+  ItBuilder<F, C, M>
 > {
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): RelationItBuilder<M, C>
-  require<T extends Resource>(r: T): RelationItBuilder<M, ExtendContext<ResourceFields<T>, C>>
-  calls<const O extends CallOutput>(
-    build: (c: RelationCalls<M>) => O & NonemptyOutput<O>,
-  ): ItInvocations<CallsResult<O>, C>
+  require<T extends Resource>(r: T): ItBuilder<F, ExtendContext<ResourceFields<T>, C>, M>
+  args(...args: Parameters<F>): ItArgs<F, C, M>
+  argsFrom(build: (ctx: Ctx<C>) => Parameters<F>): ItArgs<F, C, M>
 }
+export interface ItArgs<F extends AnyFn, C, M extends Characteristic = 'pure'> {
+  expect(build: (e: Expect<F, C, M>) => ContractConditions): ItDone
+}
+export type ItExpected = ItDone
 
-export interface RelationCaseMethods<M extends Record<string, AnyFn>, C, R extends object = {}> {
+export interface CaseMethods<F extends AnyFn, C, R extends object = {}, M extends Characteristic = 'pure'> {
+  property(name: string, body: (p: PropertyBuilder<F, C, M>) => ItDone): Suite<F, C, R, M>
   each<const Row>(
     name: string | ((row: NoInfer<Row>) => string),
     rows: readonly Row[],
-    body: (t: RelationItBuilder<M, C>, row: NoInfer<Row>) => ItDone,
-  ): RelationSuite<M, C, R>
-  it(name: string, body: (t: RelationItBuilder<M, C>) => ItDone): RelationSuite<M, C, R>
-  only(name: string, body: (t: RelationItBuilder<M, C>) => ItDone): RelationSuite<M, C, R>
-  skip(name: string, body: (t: RelationItBuilder<M, C>) => ItDone): RelationSuite<M, C, R>
-  todo(name: string): RelationSuite<M, C, R>
+    body: (t: ItBuilder<F, C, M>, row: NoInfer<Row>) => ItDone,
+  ): Suite<F, C, R, M>
+  it(name: string, body: (t: ItBuilder<F, C, M>) => ItDone): Suite<F, C, R, M>
+  only(name: string, body: (t: ItBuilder<F, C, M>) => ItDone): Suite<F, C, R, M>
+  skip(name: string, body: (t: ItBuilder<F, C, M>) => ItDone): Suite<F, C, R, M>
+  todo(name: string): Suite<F, C, R, M>
 }
 
-export interface RelationSuite<M extends Record<string, AnyFn>, C, R extends object = {}>
-  extends RelationCaseMethods<M, C, R>, DefinitionHandle<R, 'attempt'> {
-  blueprint(): ErasedSuiteBlueprint<R> & { readonly target: Relation<M> }
+export interface Suite<F extends AnyFn, C, R extends object = {}, M extends Characteristic = 'pure'>
+  extends CaseMethods<F, C, R, M>, DefinitionHandle<R, 'attempt'> {
+  blueprint(): SuiteBlueprint<F, C, R> & { readonly characteristic: M }
 }
 
-export interface RelationTestBuilder<M extends Record<string, AnyFn>, C, R extends object = {}>
-  extends RelationCaseMethods<M, C, R>, ExecutionSettings<RelationTestBuilder<M, C, R>> {
-  require<T extends Resource>(r: T): RelationTestBuilder<M, ExtendContext<ResourceFields<T>, C>, R>
-  use<S extends object>(m: Middleware<C, S>): RelationTestBuilder<M, ExtendContext<C, S>, R>
-  mock<O extends object, K extends FnKeys<O>>(
-    obj: O,
-    key: K,
-    def: MockDef<MethodOf<O, K>>,
-  ): RelationTestBuilder<M, C, R>
+interface ConfigurableTest<F extends AnyFn, C, R extends object, M extends Characteristic, D extends boolean>
+  extends CaseMethods<F, C, R, M>, ExecutionSettings<TestBuilder<F, C, R, M, D>> {
+  require<T extends Resource>(r: T): TestBuilder<F, ExtendContext<ResourceFields<T>, C>, R, M, D>
+  use<S extends object>(
+    m: Middleware<C, S> | (M extends 'effectful' ? Environment<C, S> : never),
+  ): TestBuilder<F, ExtendContext<C, S>, R, M, D>
 }
 
-export interface ItArgs<F extends AnyFn, C> extends ExecutionSettings<ItArgs<F, C>> {
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): ItArgs<F, C>
-  expect(build: (e: Expect<F, C>) => Assertions): ItExpected<C>
-  expectCalls(build: CallsBuilder<C>): ItCalls<F, C>
-}
+export type InstanceTestBuilder<
+  I extends object,
+  K extends FnKeys<I>,
+  C,
+  R extends object = {},
+  M extends Characteristic = 'pure',
+  D extends boolean = false,
+> = {
+  from(build: (ctx: Ctx<C>) => I): TestBuilder<MethodOf<I, K>, C, R, M, D>
+  use<S extends object>(
+    m: Middleware<C, S> | (M extends 'effectful' ? Environment<C, S> : never),
+  ): InstanceTestBuilder<I, K, ExtendContext<C, S>, R, M, D>
+  require<T extends Resource>(r: T): InstanceTestBuilder<I, K, ExtendContext<ResourceFields<T>, C>, R, M, D>
+  timeout(ms: number): InstanceTestBuilder<I, K, C, R, M, D>
+  retry(count: number): InstanceTestBuilder<I, K, C, R, M, D>
+} & (D extends true
+  ? {}
+  : {
+      pure(): InstanceTestBuilder<I, K, C, R, 'pure', true>
+      effectful(): InstanceTestBuilder<I, K, C, R, 'effectful', true>
+    })
 
-export interface ItExpected<C = object> extends ItDone {
-  expectCalls(build: CallsBuilder<C>): ItDone
-}
-
-export interface ItCalls<F extends AnyFn, C> extends ItDone {
-  expect(build: (e: Expect<F, C>) => Assertions): ItDone
-}
-
-export interface CaseMethods<F extends AnyFn, C, R extends object = {}> {
-  each<const Row>(
-    name: string | ((row: NoInfer<Row>) => string),
-    rows: readonly Row[],
-    body: (t: ItBuilder<F, C>, row: NoInfer<Row>) => ItDone,
-  ): Suite<F, C, R>
-  it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
-  only(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
-  skip(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>
-  todo(name: string): Suite<F, C, R>
-}
-
-export interface Suite<F extends AnyFn, C, R extends object = {}>
-  extends CaseMethods<F, C, R>, DefinitionHandle<R, 'attempt'> {
-  blueprint(): SuiteBlueprint<F, C, R>
-}
-
-export interface TestBuilder<F extends AnyFn, C, R extends object = {}>
-  extends CaseMethods<F, C, R>, ExecutionSettings<TestBuilder<F, C, R>> {
-  require<T extends Resource>(r: T): TestBuilder<F, ExtendContext<ResourceFields<T>, C>, R>
-  use<S extends object>(m: Middleware<C, S>): TestBuilder<F, ExtendContext<C, S>, R>
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TestBuilder<F, C, R>
-}
+export type TestBuilder<
+  F extends AnyFn,
+  C,
+  R extends object = {},
+  M extends Characteristic = 'pure',
+  D extends boolean = false,
+> = ConfigurableTest<F, C, R, M, D> &
+  (D extends true
+    ? {}
+    : {
+        pure(): TestBuilder<F, C, R, 'pure', true>
+        effectful(): TestBuilder<F, C, R, 'effectful', true>
+      })
 
 export type GroupChildren<C extends object> = readonly [TestDefinition<C>, ...TestDefinition<C>[]]
 
@@ -260,13 +160,28 @@ export interface TargetStage<C extends object, R extends object = {}, G extends 
     r: T,
   ): TargetStage<ExtendContext<ResourceFields<T>, C>, R, ExtendContext<ResourceFields<T>, G>>
   use<S extends object>(m: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R, G>
-  mock<O extends object, K extends FnKeys<O>>(obj: O, key: K, def: MockDef<MethodOf<O, K>>): TargetStage<C, R, G>
   target<F extends AnyFn>(fn: F): TestBuilder<F, C, R>
   target<F extends AnyFn>(name: string, fn: F): TestBuilder<F, C, R>
-  target<M extends Record<string, AnyFn>>(subject: Relation<M>): RelationTestBuilder<M, C, R>
-  target<M extends Record<string, AnyFn>>(name: string, subject: Relation<M>): RelationTestBuilder<M, C, R>
-  target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
-  target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
+  target<A extends Readonly<Record<string, ScenarioMember>>>(subject: Scenario<A>): ScenarioTestBuilder<A, C, R>
+  target<A extends Readonly<Record<string, ScenarioMember>>>(
+    name: string,
+    subject: Scenario<A>,
+  ): ScenarioTestBuilder<A, C, R>
+  target<I extends object, K extends FnKeys<I>>(
+    ctor: abstract new (...args: never[]) => I,
+    key: K,
+  ): InstanceTestBuilder<I, K, C, R>
+  target<I extends object, K extends FnKeys<I>>(
+    name: string,
+    ctor: abstract new (...args: never[]) => I,
+    key: K,
+  ): InstanceTestBuilder<I, K, C, R>
+  target<O extends object, K extends FnKeys<O>>(obj: O & ObjectReceiver<O>, key: K): TestBuilder<MethodOf<O, K>, C, R>
+  target<O extends object, K extends FnKeys<O>>(
+    name: string,
+    obj: O & ObjectReceiver<O>,
+    key: K,
+  ): TestBuilder<MethodOf<O, K>, C, R>
 }
 
 export type Test<R extends object = {}> = TargetStage<R, R>

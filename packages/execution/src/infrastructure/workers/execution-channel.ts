@@ -1,3 +1,4 @@
+import type { MutableAttempt, ExecutionPhase } from '../../domain/result/types.js'
 import { Injectable, inject } from '@zeltjs/core'
 import type { MessagePort } from 'node:worker_threads'
 import * as v from 'valibot'
@@ -12,6 +13,7 @@ import { transportValueSchema, executionIncomingSchema } from './execution-schem
 @Injectable()
 export class ExecutionChannel {
   #connection: MessagePort | undefined
+  #previous: { id: number; result: MutableAttempt } | undefined
 
   constructor(lifecycle = inject(ExecutionLifecycle)) {
     lifecycle.observe((event) => {
@@ -44,6 +46,29 @@ export class ExecutionChannel {
   }
   reply(id: number, value: ReplyValue): void {
     this.#post({ type: 'reply', id, value })
+  }
+  progress(id: number, result: MutableAttempt, phase: ExecutionPhase): void {
+    const previous = this.#previous?.id === id ? this.#previous.result : undefined
+    const evaluations = result.evaluations ?? [],
+      failures = result.failures
+    let evaluationOffset = 0,
+      failureOffset = 0
+    while (
+      evaluationOffset < evaluations.length &&
+      evaluations[evaluationOffset] === previous?.evaluations?.[evaluationOffset]
+    )
+      evaluationOffset++
+    while (failureOffset < failures.length && failures[failureOffset] === previous?.failures[failureOffset])
+      failureOffset++
+    this.#post({
+      type: 'attempt-progress',
+      id,
+      phase,
+      evaluationOffset,
+      failureOffset,
+      result: { ...result, evaluations: evaluations.slice(evaluationOffset), failures: failures.slice(failureOffset) },
+    })
+    this.#previous = { id, result: { ...result, evaluations: [...evaluations], failures: [...failures] } }
   }
   groupStage(path: number[], stage: Stage, timeoutMs: number): void {
     this.#post({ type: 'group-stage', path, stage, timeoutMs })

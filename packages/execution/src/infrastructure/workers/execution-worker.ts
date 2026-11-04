@@ -50,17 +50,16 @@ export class ExecutionWorker {
   }
 
   #load(workerData: ExecutionWorkerData): void {
-    // 変換は収集workerのportへ頼む。差し替える宛先は収集が決めたもので、読み込む前に台ごと組み立てる。
+    // 変換は収集workerのportへ頼む。読み込みはこのworker固有の評価状態を使う。
     const runtime = this.#runtimes.start(
       this.#transport.invoke.bind(this.#transport),
-      workerData.preparation,
       workerData.entryURL === undefined ? undefined : { key: 'hanamaru', url: workerData.entryURL },
     )
     this.#loader
       .load(runtime, workerData)
       .then((nodes) => {
         this.#channel.ready()
-        this.#server.serve(nodes, runtime).catch((error: unknown) => this.#channel.fail(error))
+        this.#server.serve(nodes).catch((error: unknown) => this.#channel.fail(error))
       })
       .catch((error: unknown) => this.#channel.fail(error))
   }

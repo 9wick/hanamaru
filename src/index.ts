@@ -2,16 +2,17 @@ export * from '@hanamaru/blueprint'
 
 declare global {
   interface ImportMeta {
-    readonly hanamaru?: Pick<
-      typeof import('@hanamaru/blueprint'),
-      'Test' | 'registerTest' | 'middleware' | 'resource' | 'relation'
-    >
+    readonly hanamaru?: typeof import('@hanamaru/blueprint')
   }
 }
 export type { Config } from '@hanamaru/cli/application/collection/config'
 export type { ResolvedExecutionConfig } from '@hanamaru/runner/domain/execution/config'
 export type { TargetCatalogue, DefinitionTarget, CaseTarget } from '@hanamaru/runner/domain/execution/targets'
 export type {
+  EvaluationResult,
+  OperationResult,
+  ObservationResult,
+  PropertyRun,
   AssertionReference,
   AssertionResult,
   AttemptResult,

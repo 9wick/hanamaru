@@ -1,29 +1,20 @@
 import { onTest } from '@zeltjs/testing/vitest'
 import { createApp } from '@zeltjs/core'
 import { override } from '@zeltjs/core/internal-bridge/testing'
-import { WorkerExecutionLauncher } from '../workers/client.js'
-import { InlineRunHarness } from '../../testing/inline-execution.test.js'
-import { LocalExecutor } from '../../testing/inline-execution.test.js'
-import { expect, test } from 'vite-plus/test'
+import { expect, expectTypeOf, test } from 'vite-plus/test'
 import * as v from 'valibot'
+import { Test, constant, environment, tuples } from '../../../../../src/index.js'
+import type { Expect, RunResult } from '../../../../../src/index.js'
+import { WorkerExecutionLauncher } from '../workers/client.js'
+import { InlineRunHarness, LocalExecutor } from '../../testing/inline-execution.test.js'
 import { runResultSchema } from '../../domain/result/schemas.js'
 import type { Value } from '../../domain/execution/javascript.js'
-import type {
-  CallAssertion,
-  CallMatchers,
-  ErrorAssertion,
-  ErrorAssertions,
-  ResultAssertion,
-  RunResult,
-  ValueAssertions,
-} from '../../../../../src/index.js'
-import { Test } from '../../../../../src/index.js'
-import { formatNode } from '@hanamaru/cli/infrastructure/cli/reporters/pretty'
 
-type ResultValue = Awaited<Value>
-
-type ReadMethod = (value: number) => number
-
+async function harness() {
+  const scope = await onTest(createApp([]))
+  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
+  return scope.get(InlineRunHarness)
+}
 function firstAttempt(result: RunResult) {
   const node = result.tests[0]
   expect.assert(node.kind === 'test')
@@ -31,304 +22,120 @@ function firstAttempt(result: RunResult) {
   expect.assert(attempt !== undefined)
   return attempt
 }
-
-// 期待するstatusは真偽表にハードコードしたmatchesから引く。Vitest側で再計算しない。
-function expectOutcome(result: RunResult, matches: boolean) {
-  const attempt = firstAttempt(result)
+const shared = { value: 1 }
+class First {
+  value = 1
+}
+class Second {
+  value = 1
+}
+const rows: { name: string; actual: Value; expected: Value; matcher: 'toEqual' | 'toBe'; matches: boolean }[] = [
+  { name: 'same number', actual: 3, expected: 3, matcher: 'toEqual', matches: true },
+  { name: 'different number', actual: 3, expected: 4, matcher: 'toEqual', matches: false },
+  { name: 'NaN identity', actual: NaN, expected: NaN, matcher: 'toBe', matches: true },
+  { name: 'signed zero identity', actual: -0, expected: 0, matcher: 'toBe', matches: false },
+  { name: 'shared identity', actual: shared, expected: shared, matcher: 'toBe', matches: true },
+  { name: 'different identity', actual: { value: 1 }, expected: { value: 1 }, matcher: 'toBe', matches: false },
+  { name: 'structural equality', actual: { value: 1 }, expected: { value: 1 }, matcher: 'toEqual', matches: true },
+  { name: 'prototype equality', actual: new First(), expected: new First(), matcher: 'toEqual', matches: true },
+  { name: 'different prototype', actual: new First(), expected: new Second(), matcher: 'toEqual', matches: false },
+  {
+    name: 'typed bytes',
+    actual: new Uint8Array([1, 2]),
+    expected: new Uint8Array([1, 2]),
+    matcher: 'toEqual',
+    matches: true,
+  },
+  { name: 'unordered set', actual: new Set([1, 2]), expected: new Set([2, 1]), matcher: 'toEqual', matches: true },
+]
+test.each(rows)('$name follows its documented comparison', async ({ actual, expected, matcher, matches }) => {
+  const library = await harness()
+  const definition = new Test()
+    .target((value: Value) => value)
+    .it('comparison', (t) => t.args(actual).expect((e) => [e.result[matcher](expected)]))
+  const result = await library.run(definition)
   expect(result.status).toBe(matches ? 'passed' : 'failed')
-  expect(attempt.assertions[0]?.status).toBe(matches ? 'passed' : 'failed')
-  if (!matches) expect(attempt.failures[0]?.kind).toBe('assertion')
-}
-
-interface ResultRow {
-  readonly actual: Value
-  readonly assert: (r: Omit<ValueAssertions<ResultValue>, 'not'>) => ResultAssertion<ResultValue>
-  readonly matches: boolean
-}
-
-// matcher名ごとのアサーション生成をここ一箇所に閉じ込め、matcher名での動的アクセスをなくす。
-function resultGroup<E>(
-  matcher: string,
-  apply: (r: Omit<ValueAssertions<ResultValue>, 'not'>, expected: E) => ResultAssertion<ResultValue>,
-  cases: readonly (readonly [actual: Value, expected: E, matches: boolean])[],
-) {
-  const rows: readonly ResultRow[] = cases.map(([actual, expected, matches]) => ({
-    actual,
-    assert: (r) => apply(r, expected),
-    matches,
-  }))
-  return { matcher, rows }
-}
-
-const resultGroups = [
-  resultGroup('toBe', (r, expected: Value) => r.toBe(expected), [
-    [1, 1, true],
-    [1, 2, false],
-    [NaN, NaN, true],
-    [0, -0, false],
-  ]),
-  resultGroup('toEqual', (r, expected: Value) => r.toEqual(expected), [
-    [{ value: 1 }, { value: 1 }, true],
-    [{ value: 1 }, { value: 2 }, false],
-  ]),
-  resultGroup('toMatchObject', (r, expected: object) => r.toMatchObject(expected), [
-    [{ value: 1, extra: 2 }, { value: 1 }, true],
-    [{ value: 1 }, { value: 2 }, false],
-    [{ value: 1 }, { missing: undefined }, false],
-    [{ value: undefined }, { value: undefined }, true],
-  ]),
-  resultGroup('toSatisfy', (r, expected: (value: ResultValue) => boolean) => r.toSatisfy(expected), [
-    [2, (value) => value === 2, true],
-    [2, (value) => value === 3, false],
-  ]),
-]
-
-test.for(resultGroups)('result.$matcher distinguishes matches from mismatches', async ({ rows }) => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
-  for (const row of rows) {
-    for (const negated of [false, true]) {
-      const suite = new Test()
-        .target((): Value => row.actual)
-        .it('matcher', (t) => t.args().expect((e) => [row.assert(negated ? e.result.not : e.result)]))
-      const result = await run(suite)
-      expectOutcome(result, negated ? !row.matches : row.matches)
-      expect(firstAttempt(result).assertions[0]?.assertion).toMatchObject(
-        negated ? { subject: 'result', negated: true } : { subject: 'result' },
-      )
-    }
-  }
+  expect(firstAttempt(result).assertions[0]?.status).toBe(matches ? 'passed' : 'failed')
+  v.parse(runResultSchema, result)
 })
 
-interface ErrorRow {
-  readonly assert: (a: Omit<ErrorAssertions, 'not'>) => ErrorAssertion
-  readonly matches: boolean
-}
-
-function errorGroup<E>(
-  matcher: string,
-  apply: (a: Omit<ErrorAssertions, 'not'>, expected: E) => ErrorAssertion,
-  actual: Value,
-  matching: E,
-  mismatching: E,
-) {
-  const rows: readonly ErrorRow[] = [
-    { assert: (a) => apply(a, matching), matches: true },
-    { assert: (a) => apply(a, mismatching), matches: false },
-  ]
-  return { matcher, actual, rows }
-}
-
-const errorGroups = [
-  errorGroup(
-    'toBeInstanceOf',
-    (a, ctor: new (...args: never[]) => object) => a.toBeInstanceOf(ctor),
-    new TypeError('boom'),
-    Error,
-    RangeError,
-  ),
-  errorGroup('toThrow', (a, message: string | RegExp) => a.toThrow(message), new Error('boom'), 'oo', 'different'),
-  errorGroup(
-    'toMatchObject',
-    (a, expected: Record<string, Value>) => a.toMatchObject(expected),
-    { code: 'ENOENT', detail: 1 },
-    { code: 'ENOENT' },
-    { code: 'EIO' },
-  ),
-  errorGroup(
-    'toSatisfy',
-    (a, predicate: (error: Value) => boolean) => a.toSatisfy(predicate),
-    undefined,
-    (value) => value === undefined,
-    (value) => value !== undefined,
-  ),
-]
-
-test.for(errorGroups)('error.$matcher distinguishes matches from mismatches', async ({ actual, rows }) => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
-  for (const row of rows) {
-    for (const negated of [false, true]) {
-      const suite = new Test()
-        .target(() => Promise.reject(actual))
-        .it('matcher', (t) => t.args().expect((e) => [row.assert(negated ? e.error.not : e.error)]))
-      const result = await run(suite)
-      expectOutcome(result, negated ? !row.matches : row.matches)
-      expect(firstAttempt(result).assertions[0]?.assertion).toMatchObject(
-        negated ? { subject: 'error', negated: true } : { subject: 'error' },
-      )
-    }
-  }
+test('concrete examples have partial and tolerance checks, without arbitrary predicates or not', async () => {
+  const library = await harness()
+  const selected = new Test().target(() => ({ total: 0.1 + 0.2, label: 'ready' }))
+  expectTypeOf<'mock'>().not.toExtend<keyof typeof selected>()
+  type Result = Expect<() => number, {}>['result']
+  expectTypeOf<'not'>().not.toExtend<keyof Result>()
+  expectTypeOf<'toSatisfy'>().not.toExtend<keyof Result>()
+  const definition = selected.it('partial', (t) => {
+    expect('mock' in t).toBe(false)
+    expect('calls' in t).toBe(false)
+    const args = t.args()
+    expect('expectCalls' in args).toBe(false)
+    return args.expect((e) => [
+      e.result.part('label').toEqual('ready'),
+      e.result.part('total').toBeCloseTo(0.3, { absoluteTolerance: 1e-12 }),
+    ])
+  })
+  expect((await library.run(definition)).status).toBe('passed')
 })
 
-test('not leaves positive assertions independent and identifies failures in the report', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
+test.each([
+  { actual: new TypeError('bad'), status: 'passed' },
+  { actual: new TypeError('other'), status: 'failed' },
+  { actual: new Error('bad'), status: 'failed' },
+  { actual: 'bad', status: 'failed' },
+])('error type and message must both match: $status', async ({ actual, status }) => {
+  const library = await harness()
+  const definition = new Test()
+    .target(() => {
+      throw actual
+    })
+    .it('throw contract', (t) => t.args().expect((e) => [e.error.ofType(TypeError).part('message').toEqual('bad')]))
+  expect((await library.run(definition)).status).toBe(status)
+})
 
-  const result = await run(
-    new Test()
-      .target(() => 1)
-      .it('negation', (t) =>
-        t.args().expect((e) => {
-          const negative = e.result.not.toBe(1)
-          return [negative, e.result.toBe(1), e.result.not.toBe(2)]
+test('property false and predicate exceptions remain distinct failures', async () => {
+  const library = await harness()
+  const definition = new Test()
+    .target((n: number) => n)
+    .property('false', (p) =>
+      p.forAll(tuples(constant(1))).expect((e) => [e.on(e.result).satisfies('negative', (n) => n < 0)]),
+    )
+    .property('throws', (p) =>
+      p.forAll(tuples(constant(1))).expect((e) => [
+        e.on(e.result).satisfies('broken predicate', () => {
+          throw new Error('predicate error')
         }),
-      ),
-  )
-  const attempt = firstAttempt(result)
-  expect(attempt.assertions.map((a) => a.status)).toEqual(['failed', 'passed', 'passed'])
-  expect(attempt.assertions[1]?.assertion).not.toHaveProperty('negated')
-  expect(attempt.failures).toMatchObject([
-    { kind: 'assertion', assertion: { matcher: 'toBe', negated: true }, expected: { value: 1 }, actual: { value: 1 } },
-  ])
-  expect(formatNode(v.parse(runResultSchema, result).tests[0]).join('\n')).toContain('result.not.toBe')
+      ]),
+    )
+  const result = await library.run(definition)
+  const node = result.tests[0]
+  expect.assert(node.kind === 'test')
+  expect(node.cases[0].attempts[0]?.failures[0]?.kind).toBe('assertion')
+  expect(node.cases[1].attempts[0]?.failures[0]).toMatchObject({ kind: 'execution', phase: 'assert' })
 })
 
-test('not does not turn predicate or comparison exceptions into passing assertions', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
-  const value = {
-    get value(): number {
-      throw new Error('getter failed')
-    },
-  }
-  const result = await run(
-    new Test()
-      .target(() => value)
-      .it('exceptions', (t) =>
-        t.args().expect((e) => [
-          e.result.not.toSatisfy(() => {
-            throw new Error('predicate failed')
-          }),
-          e.result.not.toEqual({ value: 1 }),
-        ]),
-      ),
-  )
-  const attempt = firstAttempt(result)
-  expect(result.status).toBe('failed')
-  expect(attempt.assertions.map((a) => a.status)).toEqual(['failed', 'failed'])
-  expect(attempt.failures).toMatchObject([
-    { kind: 'execution', phase: 'assertion', assertion: { negated: true } },
-    { kind: 'execution', phase: 'assertion', assertion: { negated: true } },
-  ])
-})
-
-test('not keeps the required target outcome and does not evaluate mismatched predicates', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
-  let evaluated = 0
-  const returned = await run(
-    new Test()
-      .target(() => 1)
-      .it('return', (t) =>
-        t.args().expect((e) => [
-          e.error.not.toSatisfy(() => {
-            evaluated++
-            return false
-          }),
-        ]),
-      ),
-  )
-  const thrown = await run(
-    new Test()
-      .target((): number => {
-        throw new Error('boom')
-      })
-      .it('throw', (t) =>
-        t.args().expect((e) => [
-          e.result.not.toSatisfy(() => {
-            evaluated++
-            return false
-          }),
-        ]),
-      ),
-  )
-  for (const result of [returned, thrown]) {
-    expect(result.status).toBe('failed')
-    expect(firstAttempt(result).failures[0]?.kind).toBe('outcome')
-    expect(firstAttempt(result).assertions[0]).toMatchObject({ status: 'not-evaluated', assertion: { negated: true } })
-  }
-  expect(evaluated).toBe(0)
-})
-
-interface CallRow {
-  readonly calls: readonly (readonly [number])[]
-  readonly assert: (m: CallMatchers<ReadMethod>) => CallAssertion
-  readonly matches: boolean
-}
-
-function callGroup<A>(
-  matcher: string,
-  apply: (m: CallMatchers<ReadMethod>, args: A) => CallAssertion,
-  cases: readonly (readonly [calls: readonly (readonly [number])[], args: A, matches: boolean])[],
-) {
-  const rows: readonly CallRow[] = cases.map(([calls, args, matches]) => ({
-    calls,
-    assert: (m) => apply(m, args),
-    matches,
-  }))
-  return { matcher, rows }
-}
-
-const callGroups = [
-  callGroup('calledTimes', (m, [count]: readonly [number]) => m.calledTimes(count), [
-    [[], [0], true],
-    [[[1], [2]], [2], true],
-    [[[1], [2]], [1], false],
-  ]),
-  callGroup<readonly []>('notCalled', (m) => m.notCalled(), [
-    [[], [], true],
-    [[[1]], [], false],
-  ]),
-  callGroup('calledWith', (m, args: readonly [number]) => m.calledWith(...args), [
-    [[[1], [2]], [2], true],
-    [[[1], [2]], [3], false],
-  ]),
-  callGroup('calledOnceWith', (m, args: readonly [number]) => m.calledOnceWith(...args), [
-    [[[1]], [1], true],
-    [[[1]], [2], false],
-    [[[1], [1]], [1], false],
-  ]),
-  callGroup('calledNthWith', (m, [n, value]: readonly [number, number]) => m.calledNthWith(n, value), [
-    [[[1], [2]], [2, 2], true],
-    [[[1], [2]], [1, 2], false],
-    [[[1], [2]], [3, 2], false],
-  ]),
-]
-
-test.for(callGroups)('$matcher checks call counts and arguments', async ({ rows }) => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
-  for (const row of rows) {
-    const service = {
-      read(value: number) {
-        return value
-      },
-    }
-    const original = service.read
-    const suite = new Test()
-      .target(() => {
-        for (const values of row.calls) service.read(...values)
-      })
-      .it('calls', (t) => t.args().expectCalls((call) => [row.assert(call(service, 'read'))]))
-    expectOutcome(await run(suite), row.matches)
-    expect(service.read).toBe(original)
-  }
+test.each([
+  { count: 0, expected: 0, status: 'passed' },
+  { count: 2, expected: 1, status: 'failed' },
+])('action count is observed: $status', async ({ count, expected, status }) => {
+  const library = await harness()
+  const local = environment(async (_, scope, next) => {
+    const events: number[] = []
+    const action = scope.action({
+      evidence: 'real-effect',
+      open: () => ({ finish: () => [...events], dispose: () => {} }),
+    })
+    return next({ events, action })
+  })
+  const definition = new Test()
+    .target((events: number[]) => {
+      for (let i = 0; i < count; i++) events.push(i)
+    })
+    .effectful()
+    .use(local)
+    .it('events', (t) =>
+      t.argsFrom((ctx) => [ctx.events]).expect((e) => [e.action(e.ctx.action).untilTargetSettles().count(expected)]),
+    )
+  expect((await library.run(definition)).status).toBe(status)
 })

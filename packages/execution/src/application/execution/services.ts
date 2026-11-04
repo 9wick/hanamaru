@@ -22,6 +22,7 @@ export class StageTimer<S> {
 
   #schedule(): void {
     this.#handle = setTimeout(() => {
+      if (this.#expired !== null) return
       this.#expired = this.#stage
       this.#onExpire(this.#stage)
     }, this.#timeoutMs)
@@ -33,6 +34,11 @@ export class StageTimer<S> {
 
   /** 期限は据え置いたまま区間だけを進める。 */
   enter(stage: S): void {
+    const overdue = this.overdue()
+    if (this.#expired === null && overdue) {
+      this.#expired = overdue.stage
+      this.#onExpire(overdue.stage)
+    }
     this.#stage = stage
   }
 

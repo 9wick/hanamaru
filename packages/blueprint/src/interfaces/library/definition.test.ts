@@ -61,15 +61,7 @@ test('deriving a builder leaves the source blueprint unchanged', () => {
 import { collectWithin } from '../../../../runner/src/application/collection/current-scope.js'
 import { CollectionLog } from '../../../../runner/src/application/collection/scope.js'
 import { middleware, registerTest } from '../../../../../src/index.js'
-import type {
-  Assertions,
-  CallsBuilder,
-  Expect,
-  ItBuilder,
-  ItDone,
-  Middleware,
-  MockDef,
-} from '../../../../../src/index.js'
+import type { Assertions, Expect, ItBuilder, ItDone, Middleware } from '../../../../../src/index.js'
 import { definitionTag, doneTag, middlewareTag } from '../../domain/definition/tags.js'
 import type { Value } from '../../domain/definition/javascript.js'
 import { invoke, objectValue, property } from '../../domain/definition/javascript.js'
@@ -100,8 +92,6 @@ const host = {
 }
 
 const pass: Middleware<{}, {}> = middleware((_ctx, next) => next())
-const returnsOne: MockDef<typeof host.method> = (m) => m.returns(1)
-const noCalls: CallsBuilder<{}> = (call) => [call(host, 'method').notCalled()]
 const fourAssertions = (e: Expect<typeof double, {}>): Assertions => [e.result.toBe(4)]
 const okBody = (t: ItBuilder<typeof double, {}>): ItDone => t.args(2).expect(fourAssertions)
 const targeted = () => new Test().target(double)
@@ -111,10 +101,15 @@ const fixedSettings = 'common settings are fixed after the first group or case'
 const incompleteCase = 'case must return args and an expectation'
 
 const stageViolations: [string, () => unknown, string][] = [
+  ['target missing method', () => callMethod(new Test(), 'target', host, 'missing'), 'method target does not exist'],
+  [
+    'target nonfunction property',
+    () => callMethod(new Test(), 'target', host, 'notAFunction'),
+    'method target must be a data property containing a function',
+  ],
   ['timeout after a case', () => callMethod(suiteOf(), 'timeout', 1), fixedSettings],
   ['retry after a case', () => callMethod(suiteOf(), 'retry', 1), fixedSettings],
   ['use after a case', () => callMethod(suiteOf(), 'use', pass), fixedSettings],
-  ['mock after a case', () => callMethod(suiteOf(), 'mock', host, 'method', returnsOne), fixedSettings],
   ['timeout after a group', () => callMethod(groupOf(), 'timeout', 1), fixedSettings],
   ['use with a bare function', () => callMethod(new Test(), 'use', () => undefined), 'use requires middleware()'],
   ['use with a plain object', () => callMethod(new Test(), 'use', {}), 'use requires middleware()'],
@@ -158,37 +153,6 @@ const stageViolations: [string, () => unknown, string][] = [
   ],
   ['blueprint before target', () => callMethod(new Test(), 'blueprint'), 'test definition is incomplete'],
   ['blueprint before any case', () => callMethod(targeted(), 'blueprint'), 'test definition is incomplete'],
-  [
-    'mock with a symbol key',
-    () => callMethod(new Test(), 'mock', host, Symbol('key'), returnsOne),
-    'mock target must be a method',
-  ],
-  [
-    'mock with an unknown key',
-    () => callMethod(new Test(), 'mock', host, 'missing', returnsOne),
-    'method target does not exist',
-  ],
-  [
-    'mock on a non-function property',
-    () => callMethod(new Test(), 'mock', host, 'notAFunction', returnsOne),
-    'method target must be a data property containing a function',
-  ],
-  ['mock on null', () => callMethod(new Test(), 'mock', null, 'method', returnsOne), 'method target must be an object'],
-  [
-    'mock with a definition that is not a function',
-    () => callMethod(new Test(), 'mock', host, 'method', 1),
-    'callback must be a function',
-  ],
-  [
-    'mock with a definition returning a plain object',
-    () => callMethod(new Test(), 'mock', host, 'method', () => ({})),
-    'mock builder must return a completed behavior',
-  ],
-  [
-    'mock with a definition returning a number',
-    () => callMethod(new Test(), 'mock', host, 'method', () => 1),
-    'value must be an object',
-  ],
   ['timeout of zero', () => new Test().timeout(0), 'timeout must be a positive finite number'],
   ['timeout of NaN', () => new Test().timeout(Number.NaN), 'timeout must be a positive finite number'],
   ['retry below zero', () => new Test().retry(-1), 'retry must be a nonnegative safe integer'],
@@ -210,25 +174,12 @@ const stageViolations: [string, () => unknown, string][] = [
     'retry must be a nonnegative safe integer',
   ],
   [
-    'case mock with an unknown key',
-    () => callMethod(targeted(), 'it', 'a', (t: Value) => callMethod(t, 'mock', host, 'missing', returnsOne)),
-    'method target does not exist',
-  ],
-  [
     'expect twice',
     () =>
       callMethod(targeted(), 'it', 'a', (t: Value) =>
         callMethod(callMethod(callMethod(t, 'args', 2), 'expect', fourAssertions), 'expect', fourAssertions),
       ),
     'expect already set',
-  ],
-  [
-    'expectCalls twice',
-    () =>
-      callMethod(targeted(), 'it', 'a', (t: Value) =>
-        callMethod(callMethod(callMethod(t, 'args', 2), 'expectCalls', noCalls), 'expectCalls', noCalls),
-      ),
-    'expectCalls already set',
   ],
   ['a case body that returns the builder', () => callMethod(targeted(), 'it', 'a', (t: Value) => t), incompleteCase],
   [
@@ -445,31 +396,6 @@ test('a case name that is not a string is rejected before the body runs', () => 
   expect(counts).toEqual({ bodies: 0 })
 })
 
-test('a mock definition runs once and a failing one leaves the builder usable', () => {
-  const counts = { definitions: 0 }
-  const builder = targeted()
-  const failing: MockDef<typeof host.method> = () => {
-    counts.definitions++
-    throw new TypeError('mock failed')
-  }
-  expect(thrown(() => callMethod(builder, 'mock', host, 'method', failing))).toBe('TypeError: mock failed')
-  expect(counts).toEqual({ definitions: 1 })
-  expect(builder.it('still usable', okBody).blueprint().kind).toBe('test')
-})
-
-test('a mock definition is not reached when the stage or the target is wrong', () => {
-  const counts = { definitions: 0 }
-  const counting: MockDef<typeof host.method> = (m) => {
-    counts.definitions++
-    return m.returns(1)
-  }
-  expect(thrown(() => callMethod(suiteOf(), 'mock', host, 'method', counting))).toBe(`TypeError: ${fixedSettings}`)
-  expect(thrown(() => callMethod(new Test(), 'mock', host, 'notAFunction', counting))).toBe(
-    'TypeError: method target must be a data property containing a function',
-  )
-  expect(counts).toEqual({ definitions: 0 })
-})
-
 // ---------------------------------------------------------------------------
 // 収集スコープとDSLの結合: 親にも登録にも取られなかった定義だけが残ること。
 // ---------------------------------------------------------------------------
@@ -488,4 +414,15 @@ test('a collection scope reports the orphan definition and keeps every registrat
   expect(log.unregisteredDefinitions(new Set([selfFile]))).toEqual([blueprint.cases[0]?.origin])
   expect(log.registrationsIn(selfFile).map((entry) => entry.origin.file)).toEqual([selfFile, selfFile])
   expect(log.unregisteredDefinitions(new Set(['other.ts']))).toEqual([])
+})
+
+test('test and case builders do not expose method replacement or free call plans', () => {
+  for (const builder of [new Test(), targeted(), suiteOf()]) expect('mock' in builder).toBe(false)
+  targeted().it('closed surface', (t) => {
+    expect('mock' in t).toBe(false)
+    expect('calls' in t).toBe(false)
+    const args = t.args(2)
+    expect('expectCalls' in args).toBe(false)
+    return args.expect(fourAssertions)
+  })
 })

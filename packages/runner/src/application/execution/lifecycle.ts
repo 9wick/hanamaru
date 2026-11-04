@@ -1,6 +1,6 @@
 import { withSources, type TestSource } from '../../domain/result/source.js'
 import { Injectable, inject } from '@zeltjs/core'
-import type { MutableRunResult, Reason } from '../../domain/result/mutable.js'
+import type { MutableRunResult, Reason, MutableAttempt } from '../../domain/result/mutable.js'
 import type { ExecutionPhase } from '../../domain/result/types.js'
 import { required } from '../../domain/execution/javascript.js'
 import { ProgressStore } from './progress.js'
@@ -74,13 +74,38 @@ export class RunLifecycle {
   /** 中断はタイムアウトを上書きしない。 */
   interrupt(): void {
     if (this.reason !== 'timeout') this.#context.data.reason = 'interrupted'
+    if (this.active?.kind === 'attempt' && this.active.partial)
+      this.announce(this.activeProgress(this.reason ?? 'interrupted'))
   }
   /** 対象を開始し、attemptの中断時の姿と期限を同じ状態から知らせる。 */
   begin(active: ActiveExecution): void {
     this.#context.data.active = active
-    this.#context.data.phase = active.kind === 'attempt' ? 'middleware' : null
+    this.#context.data.phase = active.kind === 'attempt' ? 'prepare' : null
     if (active.kind === 'attempt') this.announce(this.activeProgress('interrupted'))
     this.deadline({ kind: 'start', timeoutMs: active.timeoutMs, progress: this.activeProgress('timeout') })
+  }
+  updateAttempt(result: MutableAttempt, phase: ExecutionPhase, evaluationOffset: number, failureOffset: number): void {
+    const active = this.active
+    if (active?.kind !== 'attempt' || active.number !== result.attempt)
+      throw new TypeError('progress does not match the active attempt')
+    const previous = active.partial
+    if (
+      !Number.isSafeInteger(evaluationOffset) ||
+      evaluationOffset < 0 ||
+      evaluationOffset > (previous?.evaluations?.length ?? 0) ||
+      !Number.isSafeInteger(failureOffset) ||
+      failureOffset < 0 ||
+      failureOffset > (previous?.failures.length ?? 0)
+    )
+      throw new TypeError('invalid attempt progress offsets')
+    active.partial = {
+      ...result,
+      evaluations: [...(previous?.evaluations ?? []).slice(0, evaluationOffset), ...(result.evaluations ?? [])],
+      failures: [...(previous?.failures ?? []).slice(0, failureOffset), ...result.failures],
+    }
+    this.markPhase(phase)
+    if (this.reason === 'timeout') this.announce(this.activeProgress('timeout'))
+    else if (this.reason === 'interrupted') this.announce(this.activeProgress('interrupted'))
   }
   markPhase(phase: ExecutionPhase): void {
     this.#context.data.phase = phase
@@ -108,8 +133,15 @@ export class RunLifecycle {
     this.#emit({ kind: 'deadline', deadline })
   }
   timedOut(): void {
+    const first = this.reason !== 'timeout'
+    if (this.active?.kind === 'attempt') this.active.timeoutPhase ??= this.phase ?? 'prepare'
     this.abort('timeout')
-    this.#emit({ kind: 'timeout', phase: this.phase })
+    if (first)
+      this.#emit({
+        kind: 'timeout',
+        phase: this.active?.kind === 'attempt' ? (this.active.timeoutPhase ?? this.phase) : this.phase,
+      })
+    else if (this.active) this.announce(this.activeProgress('timeout'))
   }
 
   /** 打ち切り時の姿は複製。以後の実行や購読側の変更が互いの結果へ漏れない。 */

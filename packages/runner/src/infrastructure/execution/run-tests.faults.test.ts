@@ -182,7 +182,7 @@ test('a group middleware that never calls next fails the contract and cancels ch
   expect(diagnosticMessage(failure.cause)).toBe('before failed')
 })
 
-test('a synchronous target that outlasts the attempt times out at the phase it ended in', async () => {
+test('a synchronous target that outlasts the attempt retains the phase that exceeded its deadline', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -205,6 +205,6 @@ test('a synchronous target that outlasts the attempt times out at the phase it e
   expect(attempts[0].cleanup).toBe('complete')
   const failure = failuresOf(attempts[0])[0]
   expect.assert(failure?.kind === 'timeout')
-  expect(failure.phase).toBe('cleanup')
+  expect(failure.phase).toBe('target')
   expect(failure.timeoutMs).toBe(10)
 })

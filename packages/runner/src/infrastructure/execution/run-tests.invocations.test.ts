@@ -1,30 +1,38 @@
 import { onTest } from '@zeltjs/testing/vitest'
 import { createApp } from '@zeltjs/core'
 import { override } from '@zeltjs/core/internal-bridge/testing'
-import { WorkerExecutionLauncher } from '../workers/client.js'
-import { InlineRunHarness } from '../../testing/inline-execution.test.js'
-import { LocalExecutor } from '../../testing/inline-execution.test.js'
 import { expect, test } from 'vite-plus/test'
-import { Test, middleware, relation, resource } from '../../../../../src/index.js'
-import type { CallRef, ItDone, TestDefinition } from '../../../../../src/index.js'
-import { buildCallPlan } from '../../../../blueprint/src/domain/definition/calls.js'
+import {
+  Test,
+  middleware,
+  environment,
+  scenario,
+  method,
+  resource,
+  tuples,
+  constant,
+} from '../../../../../src/index.js'
+import type { ItDone, TestDefinition } from '../../../../../src/index.js'
+import { WorkerExecutionLauncher } from '../workers/client.js'
+import { InlineRunHarness, LocalExecutor } from '../../testing/inline-execution.test.js'
+import { compileSteps, ObservationOwner } from '@hanamaru/blueprint/model'
 import { invoke, objectValue, property } from '../../domain/execution/javascript.js'
 import type { Value } from '../../domain/execution/javascript.js'
 
+async function harness() {
+  const scope = await onTest(createApp([]))
+  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
+  return scope.get(InlineRunHarness)
+}
 const double = (value: number) => value * 2
-
-function method(receiver: Value, key: string, ...args: Value[]): Value {
+function call(receiver: Value, key: string, ...args: Value[]): Value {
   return invoke(objectValue(property(receiver, key)), receiver, args)
 }
 
-test('relation awaits dependencies, leaves unused calls unexecuted and exposes the chosen result', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test('scenario awaits dependencies and executes even operations omitted from its result', async () => {
+  const library = await harness()
   const log: string[] = []
-  let definitions = 0
+  let compiled = 0
   const encode = async (value: string) => {
     log.push('encode')
     await Promise.resolve()
@@ -34,30 +42,25 @@ test('relation awaits dependencies, leaves unused calls unexecuted and exposes t
     log.push('decode')
     return new TextDecoder().decode(bytes)
   }
-  const suite = new Test().target('codec', relation({ encode, decode })).it('round trip', (t) =>
+  const suite = new Test().target('codec', scenario({ encode, decode })).it('round trip', (t) =>
     t
-      .calls((c) => {
-        definitions++
-        c.encode.args('unused')
-        return c.decode.args(c.encode.args('こんにちは'))
+      .steps((s) => {
+        compiled++
+        s.encode.args('discarded result')
+        return s.decode.args(s.encode.args('こんにちは'))
       })
-      .expect((e) => [e.result.toBe('こんにちは')]),
+      .expect((e) => [e.result.toEqual('こんにちは')]),
   )
   expect(log).toEqual([])
-  expect(suite.blueprint().target.kind).toBe('relation')
-  expect((await run(suite)).status).toBe('passed')
-  expect(log).toEqual(['encode', 'decode'])
-  expect((await run(suite)).status).toBe('passed')
-  expect(definitions).toBe(1)
-  expect(log).toEqual(['encode', 'decode', 'encode', 'decode'])
+  expect(compiled).toBe(0)
+  expect((await library.run(suite)).status).toBe('passed')
+  expect((await library.run(suite)).status).toBe('passed')
+  expect(compiled).toBe(2)
+  expect(log).toEqual(['encode', 'encode', 'decode', 'encode', 'encode', 'decode'])
 })
 
-test('named results share descriptor identity and keep separately described calls separate', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test('named aliases do not repeat an operation while separately declared operations do', async () => {
+  const library = await harness()
   let count = 0
   const key = (a: string, b: string) => {
     count++
@@ -65,110 +68,110 @@ test('named results share descriptor identity and keep separately described call
   }
   const suite = new Test()
     .target(key)
-    .it('keys', (t) =>
-      t
-        .calls((c) => {
-          const first = c.args('ab', 'c')
-          return { first, alias: first, sameArgs: c.args('ab', 'c'), second: c.args('a', 'bc') }
+    .property('key relation', (p) =>
+      p
+        .forAll(tuples(constant('ab'), constant('c')))
+        .steps((s) => {
+          const first = s.target.args(s.input[0], s.input[1])
+          return { first, alias: first, sameArgs: s.target.args('ab', 'c'), second: s.target.args('a', 'bc') }
         })
         .expect((e) => [
-          e.result.toSatisfy(
-            ({ first, alias, sameArgs, second }) => first === alias && first === sameArgs && first !== second,
-          ),
+          e
+            .on(e.result)
+            .satisfies(
+              'same pair same key',
+              ({ first, alias, sameArgs, second }) => first === alias && first === sameArgs && first !== second,
+            ),
         ]),
     )
-    .it('ordinary args', (t) => t.args('a', 'b').expect((e) => [e.result.toBe('["a","b"]')]))
-  expect((await run(suite)).status).toBe('passed')
+    .it('ordinary args', (t) => t.args('a', 'b').expect((e) => [e.result.toEqual('["a","b"]')]))
+  expect((await library.run(suite)).status).toBe('passed')
   expect(count).toBe(4)
 })
 
-test('a single function can depend on its earlier call, including an undefined result', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test('an undefined normal result can be the next operation argument', async () => {
+  const library = await harness()
   const seen: (number | undefined)[] = []
   const identity = (value: number | undefined) => {
     seen.push(value)
     return value
   }
   const suite = new Test()
-    .target(identity)
-    .it('undefined', (t) => t.calls((c) => c.args(c.args(undefined))).expect((e) => [e.result.toBe(undefined)]))
-  expect((await run(suite)).status).toBe('passed')
+    .target(scenario({ identity }))
+    .it('undefined', (t) =>
+      t.steps((s) => s.identity.args(s.identity.args(undefined))).expect((e) => [e.result.toEqual(undefined)]),
+    )
+  expect((await library.run(suite)).status).toBe('passed')
   expect(seen).toEqual([undefined, undefined])
 })
 
-test('retry rebuilds all results inside the existing middleware, mock and call-observation scope', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test('retry prepares and cleans the environment around the complete operation plan', async () => {
+  const library = await harness()
   const log: string[] = []
-  const service = { read: () => 10 }
   let attempt = 0
-  const compute = (n: number) => {
+  const local = environment(async (_, scope, next) => {
+    const offset = attempt++
+    const outputs: number[] = []
+    log.push('open')
+    try {
+      return await next({ offset, outputs, stored: scope.state({ evidence: 'real-effect', read: () => outputs }) })
+    } finally {
+      log.push('close')
+    }
+  })
+  const compute = (n: number, offset: number, outputs: number[]) => {
     log.push('target')
-    return n + service.read()
+    outputs.push(n + offset)
+    return n + offset
   }
   const suite = new Test()
-    .use(
-      middleware(async (_, next) => {
-        attempt++
-        log.push('open')
-        try {
-          return await next()
-        } finally {
-          log.push('close')
-        }
-      }),
-    )
-    .target(compute)
+    .target(scenario({ compute }))
+    .effectful()
+    .use(local)
     .it('retry', (t) =>
       t
         .retry(1)
-        .mock(service, 'read', (m) => m.returns(1))
-        .calls((c) => ({ first: c.args(1), second: c.args(2) }))
-        .expect((e) => [e.result.toSatisfy(({ first, second }) => attempt === 2 && first === 2 && second === 3)])
-        .expectCalls((call) => [call(service, 'read').calledTimes(2)]),
+        .steps((s) => ({
+          first: s.compute.args(1, s.ctx.offset, s.ctx.outputs),
+          second: s.compute.args(2, s.ctx.offset, s.ctx.outputs),
+        }))
+        .expect((e) => [e.result.toEqual({ first: 2, second: 3 }), e.state(e.ctx.stored).toEqual([2, 3])]),
     )
-  const result = await run(suite)
-  expect(result.status).toBe('passed')
+  expect((await library.run(suite)).status).toBe('passed')
   expect(log).toEqual(['open', 'target', 'target', 'close', 'open', 'target', 'target', 'close'])
-  expect(service.read()).toBe(10)
 })
 
-test('skip and todo never invoke targets, each provides data, and groups accept relation suites', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
-  let count = 0
+test('skip and todo do not compile or invoke operations and groups accept scenarios', async () => {
+  const library = await harness()
+  let count = 0,
+    skipped = 0
   const subject = (n: number) => {
     count++
     return n
   }
   const suite = new Test()
-    .target(relation({ subject }))
-    .skip('skip', (t) => t.calls((c) => c.subject.args(0)).expect((e) => [e.result.toBe(0)]))
+    .target(scenario({ subject }))
+    .skip('skip', (t) =>
+      t
+        .steps((s) => {
+          skipped++
+          return s.subject.args(0)
+        })
+        .expect((e) => [e.result.toEqual(0)]),
+    )
     .todo('todo')
-    .each('rows', [1, 2], (t, n) => t.calls((c) => c.subject.args(n)).expect((e) => [e.result.toBe(n)]))
+    .it('one', (t) => t.steps((s) => s.subject.args(1)).expect((e) => [e.result.toEqual(1)]))
+    .it('two', (t) => t.steps((s) => s.subject.args(2)).expect((e) => [e.result.toEqual(2)]))
   const definition: TestDefinition = new Test().group([suite])
-  expect((await run(definition)).status).toBe('passed')
+  expect((await library.run(definition)).status).toBe('passed')
   expect(count).toBe(2)
+  expect(skipped).toBe(0)
 })
 
-test.each(['throw', 'reject'])('an unexpected %s fails, identifies pending calls and skips expect', async (kind) => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test.each(['throw', 'reject'])('unexpected %s stops later operations and preserves cleanup', async (kind) => {
+  const library = await harness()
   let decoded = 0,
-    evaluated = 0,
+    compiled = 0,
     cleaned = 0
   const encode = (value: string): Uint8Array | Promise<Uint8Array> => {
     if (kind === 'reject') return Promise.reject(new Error(value))
@@ -188,33 +191,29 @@ test.each(['throw', 'reject'])('an unexpected %s fails, identifies pending calls
         }
       }),
     )
-    .target(relation({ encode, decode }))
+    .target(scenario({ encode, decode }))
     .it('failure', (t) =>
       t
-        .calls((c) => c.decode.args(c.encode.args('broken')))
+        .steps((s) => s.decode.args(s.encode.args('broken')))
         .expect((e) => {
-          evaluated++
-          return [e.result.toBe(1)]
+          compiled++
+          return [e.result.toEqual(1)]
         }),
     )
-  const result = await run(suite)
+  const result = await library.run(suite)
   expect(result.status).toBe('failed')
   expect(decoded).toBe(0)
-  expect(evaluated).toBe(0)
+  expect(compiled).toBe(1)
   expect(cleaned).toBe(1)
   const node = result.tests[0]
   expect.assert(node.kind === 'test')
-  expect(node.cases[0].attempts[0]?.failures[0]?.message).toMatch(/call encode #1 failed; not run: decode #2/)
-  expect(node.cases[0].attempts[0]?.failures[0]?.phase).toBe('target')
+  expect(node.cases[0].attempts[0]?.failures[0]).toMatchObject({ kind: 'outcome', phase: 'target', operationIndex: 0 })
+  expect(node.cases[0].attempts[0]?.assertions[0]?.status).toBe('not-evaluated')
   expect(JSON.stringify(result)).toContain('broken')
 })
 
-test('timeout stops dependent calls and retry after the running target settles', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test('timeout stops dependent operations and retry after the running target settles', async () => {
+  const library = await harness()
   let calls = 0,
     dependent = 0
   const first = async (n: number) => {
@@ -226,95 +225,80 @@ test('timeout stops dependent calls and retry after the running target settles',
     dependent++
     return double(n)
   }
-  const suite = new Test().target(relation({ first, second })).it('timeout', (t) =>
+  const suite = new Test().target(scenario({ first, second })).it('timeout', (t) =>
     t
       .timeout(5)
       .retry(2)
-      .calls((c) => c.second.args(c.first.args(2)))
-      .expect((e) => [e.result.toBe(4)]),
+      .steps((s) => s.second.args(s.first.args(2)))
+      .expect((e) => [e.result.toEqual(4)]),
   )
-  expect((await run(suite)).status).toBe('failed')
+  expect((await library.run(suite)).status).toBe('failed')
   expect(calls).toBe(1)
   expect(dependent).toBe(0)
 })
 
-test('method calls preserve this, share ordinary values and observe calls across the plan', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
-  const object = {
-    base: 3,
+test('scenario methods preserve this and dependency arguments preserve live identity', async () => {
+  const library = await harness()
+  class Service {
+    base = 3
     read(n: number) {
       return this.base + n
-    },
+    }
   }
-  const suite = new Test().target(object, 'read').it('method', (t) =>
-    t
-      .calls((c) => ({ first: c.args(1), second: c.args(2) }))
-      .expectCalls((call) => [call(object, 'read').calledTimes(2)])
-      .expect((e) => [e.result.toEqual({ first: 4, second: 5 })]),
-  )
-  expect((await run(suite)).status).toBe('passed')
+  const suite = new Test()
+    .target(scenario({ read: method(Service, 'read') }))
+    .from(() => ({ read: new Service() }))
+    .it('method', (t) =>
+      t
+        .steps((s) => ({ first: s.read.args(1), second: s.read.args(2) }))
+        .expect((e) => [e.result.toEqual({ first: 4, second: 5 })]),
+    )
+  expect((await library.run(suite)).status).toBe('passed')
   const shared = { value: 0 }
   const increment = (data: typeof shared) => {
     data.value++
     return data
   }
   const values = new Test()
-    .target(increment)
+    .target(scenario({ increment }))
+    .effectful()
     .it('shared', (t) =>
-      t.calls((c) => c.args(c.args(shared))).expect((e) => [e.result.toBe(shared), e.result.toEqual({ value: 2 })]),
+      t
+        .steps((s) => s.increment.args(s.increment.args(shared)))
+        .expect((e) => [e.result.toBe(shared), e.result.toEqual({ value: 2 })]),
     )
-  expect((await run(values)).status).toBe('passed')
+  expect((await library.run(values)).status).toBe('passed')
   expect(shared.value).toBe(2)
 })
 
-test('relation snapshots participants, preserves arbitrary names and can be reused from a blueprint', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test('scenario snapshots participants and preserves nonreserved member names', async () => {
+  const library = await harness()
   const members = { ['__proto__']: double, constructor: double }
-  const subject = relation(members)
+  const subject = scenario(members)
   members.constructor = (n: number) => n + 100
   const suite = new Test()
     .target(subject)
     .it('names', (t) =>
       t
-        .calls((c) => ({ constructor: c.constructor.args(1), ['__proto__']: c.__proto__.args(2) }))
+        .steps((s) => ({ constructor: s.constructor.args(1), ['__proto__']: s.__proto__.args(2) }))
         .expect((e) => [e.result.toEqual({ constructor: 2, ['__proto__']: 4 })]),
     )
-  expect((await run(suite)).status).toBe('passed')
-  const repeated = new Test()
-    .target(suite.blueprint().target)
-    .it('reuse', (t) => t.calls((c) => c.constructor.args(2)).expect((e) => [e.result.toBe(4)]))
-  expect((await run(repeated)).status).toBe('passed')
+  expect((await library.run(suite)).status).toBe('passed')
 })
 
-test.each(['then', 'constructor', '__proto__'])('named result %s remains an ordinary result record', async (name) => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test.each(['then', 'constructor', '__proto__'])('named result %s is not assimilated as a promise', async (name) => {
+  const library = await harness()
   const fn = () => 1
   const suite = new Test()
-    .target(() => fn)
-    .it('then key', (t) =>
-      t.calls((c) => ({ [name]: c.args() })).expect((e) => [e.result.toSatisfy((result) => result[name] === fn)]),
+    .target(scenario({ produce: () => fn }))
+    .it('named function', (t) =>
+      t.steps((s) => ({ [name]: s.produce.args() })).expect((e) => [e.result.part(name).toBe(fn)]),
     )
-  expect((await run(suite)).status).toBe('passed')
+  expect((await library.run(suite)).status).toBe('passed')
 })
 
-test('case resource and middleware fields retain their types and cleanup around calls', async () => {
-  const scope = await onTest(createApp([]))
-  override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
-  const library = await scope.get(InlineRunHarness)
-  const run = library.run.bind(library)
-
+test('resource and middleware fields are available during steps and cleanup surrounds the case', async () => {
+  const library = await harness()
   const log: string[] = []
   const fixture = resource({
     scope: 'perWorker',
@@ -328,74 +312,84 @@ test('case resource and middleware fields retain their types and cleanup around 
     },
   })
   const suite = new Test()
-    .target(relation({ double }))
+    .require(fixture)
+    .target(scenario({ double }))
     .use(middleware(async (_, next) => next({ input: 2 })))
-    .it('context', (t) =>
-      t
-        .require(fixture)
-        .calls((c) => c.double.args(2))
-        .expect((e) => [e.result.toBe(e.ctx.expected), e.result.toBe(e.ctx.input * 2)]),
-    )
-  expect((await run(suite)).status).toBe('passed')
+    .it('context', (t) => t.steps((s) => s.double.args(s.ctx.input)).expect((e) => [e.result.toEqual(e.ctx.expected)]))
+  expect((await library.run(suite)).status).toBe('passed')
   expect(log).toEqual(['setup', 'cleanup'])
 })
 
-test('call definitions reject foreign references, invalid outputs and builders used after definition', () => {
-  let foreign: CallRef<number> | undefined
-  new Test().target(double).it('first', (t) =>
-    t
-      .calls((c) => {
-        foreign = c.args(1)
-        return foreign
-      })
-      .expect((e) => [e.result.toBe(2)]),
-  )
-  expect.assert(foreign !== undefined)
-  const ref = foreign
-  expect(() =>
-    new Test().target(double).it('other', (t) => t.calls((c) => c.args(ref)).expect((e) => [e.result.toBe(4)])),
-  ).toThrow(/another calls definition/)
-  for (const output of [{}, [], { result: 1 }, Promise.resolve(1), 1]) {
-    expect(() => buildCallPlan({ kind: 'function', fn: double }, () => output)).toThrow()
-  }
+test('step compilation rejects invalid outputs and builders used after compilation', () => {
+  for (const output of [{}, [], { result: 1 }, Promise.resolve(1), 1])
+    expect(() => compileSteps(new ObservationOwner(), ['target'], () => output, {}, null)).toThrow()
   let saved: object | undefined
-  buildCallPlan({ kind: 'function', fn: double }, (c: object) => {
-    saved = c
-    return method(c, 'args', 1)
-  })
-  expect(() => method(saved, 'args', 2)).toThrow(/only available inside/)
+  compileSteps(
+    new ObservationOwner(),
+    ['target'],
+    (s: object) => {
+      saved = objectValue(property(s, 'target'))
+      return call(saved, 'args', 1)
+    },
+    {},
+    null,
+  )
+  expect(() => call(saved, 'args', 2)).toThrow('only available during compile')
 })
 
-test('args and calls exclude each other even if callers bypass the type system', () => {
-  expect(() =>
-    new Test().target(double).it('mixed', (t) => {
-      const args = t.args(1)
-      method(args, 'calls', () => undefined)
-      return args.expect((e) => [e.result.toBe(2)])
-    }),
-  ).toThrow(/mutually exclusive/)
-  expect(() =>
-    new Test().target(double).it('mixed', (t) => {
-      const calls = t.calls((c) => c.args(1))
-      method(calls, 'args', 1)
-      return calls.expect((e) => [e.result.toBe(2)])
-    }),
-  ).toThrow(/mutually exclusive/)
-  expect(() =>
-    new Test().target(relation({ double })).it('args', (t) => {
-      method(t, 'args', 1)
-      return t.calls((c) => c.double.args(1)).expect((e) => [e.result.toBe(2)])
-    }),
-  ).toThrow(/relation cases require calls/)
-})
-
-test('a completed calls definition cannot be moved to a different target', () => {
+test('a completed case cannot be moved to a different target', () => {
   let completed: ItDone | undefined
   new Test().target(double).it('original', (t) => {
-    completed = t.calls((c) => c.args(1)).expect((e) => [e.result.toBe(2)])
+    completed = t.args(1).expect((e) => [e.result.toEqual(2)])
     return completed
   })
   expect.assert(completed !== undefined)
   const foreign = completed
-  expect(() => new Test().target((n: number) => n + 100).it('foreign', () => foreign)).toThrow(/another target/)
+  expect(() => new Test().target((n: number) => n + 100).it('foreign', () => foreign)).toThrow('another target')
+})
+
+test('operation diagnostics retain prefix outcomes and the unexecuted final target', async () => {
+  const library = await harness()
+  const first = (): number => {
+    throw new Error('prefix failed')
+  }
+  const last = () => 1
+  const definition = new Test().target(scenario({ first, last })).it('stops before final', (t) =>
+    t
+      .steps((s) => {
+        s.first.args()
+        return s.last.final()
+      })
+      .expect((e) => [e.error.message.toEqual('prefix failed')]),
+  )
+  const result = await library.run(definition)
+  const node = result.tests[0]
+  expect.assert(node.kind === 'test')
+  const attempt = node.cases[0].attempts[0]
+  expect(attempt?.terminationTarget).toBe(1)
+  expect(attempt?.operations).toMatchObject([
+    { index: 0, key: 'first', mode: 'return-required', status: 'threw' },
+    { index: 1, key: 'last', mode: 'final', status: 'not-run' },
+  ])
+  expect(attempt?.evaluations?.[0]).toMatchObject({
+    kind: 'example',
+    sampleIndex: null,
+    terminationTarget: 1,
+    failureIndexes: [0],
+  })
+})
+
+test('named operation result expectations retain their field path and operation index', async () => {
+  const library = await harness()
+  const definition = new Test()
+    .target(scenario({ double }))
+    .it('named mismatch', (t) =>
+      t
+        .steps((s) => ({ first: s.double.args(2), second: s.double.args(3) }))
+        .expect((e) => [e.result.part('first').toEqual(99)]),
+    )
+  const result = await library.run(definition)
+  const node = result.tests[0]
+  expect.assert(node.kind === 'test')
+  expect(node.cases[0].attempts[0]?.assertions[0]?.assertion).toMatchObject({ path: ['first'], operationIndex: 0 })
 })

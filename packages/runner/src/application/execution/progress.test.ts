@@ -13,6 +13,8 @@ import { ProgressStore } from './progress.js'
 function caseResult(path: number[], name = 'case'): MutableCaseResult {
   return {
     name,
+    caseKind: 'example',
+    characteristic: 'pure',
     origin: { file: 'test.ts', line: 1, column: 1 },
     path,
     row: null,

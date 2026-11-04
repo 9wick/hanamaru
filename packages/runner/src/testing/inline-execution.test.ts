@@ -99,7 +99,7 @@ export class LocalExecutor implements Pick<
   }
   async group(node: GroupNode, path: number[], body: (fields: Fields) => Promise<void>): Promise<GroupReply> {
     this.#reset()
-    this.#worker.markPhase('middleware')
+    this.#worker.markPhase('prepare')
     const started = performance.now()
     try {
       return await this.#groups.execute(

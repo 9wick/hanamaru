@@ -1,5 +1,7 @@
+import type { Scenario, ScenarioMember } from '../../domain/definition/scenario.js'
+import type { ScenarioTestBuilder } from './scenario-types.js'
+import { PropertyCaseBuilder } from './property-builder.js'
 import type { Resource, ResourceFields } from '../../domain/definition/resource.js'
-import type { Relation } from '../../domain/definition/relation.js'
 import * as v from 'valibot'
 import type { DeclarationEvent } from '../../application/declarations.js'
 import {
@@ -15,7 +17,8 @@ import {
   settingAllowed,
   toBlueprint,
   todoCase,
-  withMock,
+  withCharacteristic,
+  withReceiver,
   withRetry,
   withResource,
   withStep,
@@ -23,12 +26,18 @@ import {
 } from '../../domain/definition/construction.js'
 import type { CaseBlueprint, DefinitionData, RuntimeBlueprint } from '../../domain/definition/runtime.js'
 import { definitionTag, middlewareTag } from '../../domain/definition/tags.js'
-import type { ExtendContext, MiddlewareFn, MiddlewareOptions, SourceLocation } from '../../domain/definition/types.js'
+import type {
+  Environment,
+  ExtendContext,
+  MiddlewareFn,
+  MiddlewareOptions,
+  SourceLocation,
+} from '../../domain/definition/types.js'
 import { positive } from '../../domain/definition/conditions.js'
-import type { AnyFn, FnKeys, MethodOf } from '../../domain/definition/target-types.js'
+import type { AnyFn, FnKeys, MethodOf, ObjectReceiver } from '../../domain/definition/target-types.js'
 import type { Value } from '../../domain/definition/javascript.js'
 import { arrayValue, invoke, required } from '../../domain/definition/javascript.js'
-import { CaseBuilder, createMock } from './case-builder.js'
+import { CaseBuilder } from './case-builder.js'
 import type {
   ChildrenPhase,
   CompatibleChildren,
@@ -36,10 +45,9 @@ import type {
   GroupChildren,
   GroupStage,
   ItBuilder,
+  InstanceTestBuilder,
   ItDone,
   Middleware,
-  MockDef,
-  RelationTestBuilder,
   Suite,
   TargetStage,
   TestBuilder,
@@ -75,6 +83,14 @@ export function createTest(location: () => SourceLocation, record: (event: Decla
       if (this[definitionTag] === true) record({ kind: 'consumed', definition: this })
       return next
     }
+    pure(): TestBuilder<F, C, R, 'pure', true>
+    pure(): object {
+      return this.#next(withCharacteristic(this.#data, 'pure'), location)
+    }
+    effectful(): TestBuilder<F, C, R, 'effectful', true>
+    effectful(): object {
+      return this.#next(withCharacteristic(this.#data, 'effectful'), location)
+    }
     timeout(ms: number) {
       settingAllowed(this.#data)
       return this.#next(withTimeout(this.#data, ms), location)
@@ -91,23 +107,38 @@ export function createTest(location: () => SourceLocation, record: (event: Decla
       return this.#next(withResource(this.#data, r), location)
     }
     use<S extends object>(step: Middleware<C, S>): TargetStage<ExtendContext<C, S>, R>
-    use(step: Middleware<C, object>): object {
+    use(step: Middleware<C, object> | Environment<C, object>): object {
       settingAllowed(this.#data)
       if (step?.[middlewareTag] !== true) throw new TypeError('use requires middleware()')
       return this.#next(withStep(this.#data, step), location)
     }
-    mock<O extends object, K extends FnKeys<O>>(object: O, key: K, def: MockDef<MethodOf<O, K>>): Chain<R, C, F> {
-      settingAllowed(this.#data)
-      return this.#next(withMock(this.#data, createMock(object, key, def)), location)
-    }
     target<T extends AnyFn>(fn: T): TestBuilder<T, C, R>
     target<T extends AnyFn>(name: string, fn: T): TestBuilder<T, C, R>
-    target<M extends Record<string, AnyFn>>(subject: Relation<M>): RelationTestBuilder<M, C, R>
-    target<M extends Record<string, AnyFn>>(name: string, subject: Relation<M>): RelationTestBuilder<M, C, R>
-    target<O extends object, K extends FnKeys<O>>(obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
-    target<O extends object, K extends FnKeys<O>>(name: string, obj: O, key: K): TestBuilder<MethodOf<O, K>, C, R>
+    target<A extends Readonly<Record<string, ScenarioMember>>>(subject: Scenario<A>): ScenarioTestBuilder<A, C, R>
+    target<A extends Readonly<Record<string, ScenarioMember>>>(
+      name: string,
+      subject: Scenario<A>,
+    ): ScenarioTestBuilder<A, C, R>
+    target<I extends object, K extends FnKeys<I>>(
+      ctor: abstract new (...args: never[]) => I,
+      key: K,
+    ): InstanceTestBuilder<I, K, C, R>
+    target<I extends object, K extends FnKeys<I>>(
+      name: string,
+      ctor: abstract new (...args: never[]) => I,
+      key: K,
+    ): InstanceTestBuilder<I, K, C, R>
+    target<O extends object, K extends FnKeys<O>>(obj: O & ObjectReceiver<O>, key: K): TestBuilder<MethodOf<O, K>, C, R>
+    target<O extends object, K extends FnKeys<O>>(
+      name: string,
+      obj: O & ObjectReceiver<O>,
+      key: K,
+    ): TestBuilder<MethodOf<O, K>, C, R>
     target(...input: Value[]): object {
       return this.#next(selectTarget(this.#data, input), location)
+    }
+    from(build: object): object {
+      return this.#next(withReceiver(this.#data, build), location)
     }
     #addCase(
       mode: CaseBlueprint['mode'],
@@ -128,6 +159,22 @@ export function createTest(location: () => SourceLocation, record: (event: Decla
         )
         item = built.completed({ name: label, mode, origin, row }, required(this.#data.target))
       }
+      return this.#next(addCase(this.#data, item), () => origin)
+    }
+    property(name: string, body: object): object {
+      caseAllowed(this.#data)
+      const label = caseName(name)
+      const origin = location()
+      const built = v.parse(
+        v.instance(PropertyCaseBuilder),
+        invoke(body, undefined, [new PropertyCaseBuilder(required(this.#data.target))]),
+      )
+      const item = built.completed(label, origin, required(this.#data.target))
+      if (
+        this.#data.target?.kind === 'scenario' &&
+        !(item.args.kind === 'generated' && item.args.binding.kind === 'steps')
+      )
+        throw new TypeError('scenario properties require steps')
       return this.#next(addCase(this.#data, item), () => origin)
     }
     it(name: string, body: (t: ItBuilder<F, C>) => ItDone): Suite<F, C, R>

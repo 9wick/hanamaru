@@ -9,7 +9,6 @@ async function createSchema(databaseUrl: string) {
 }
 const query = (schemaUrl: string) => schemaUrl.endsWith('/schema') ? 1 : 0
 
-// #region lifecycle
 const database = resource({
   name: 'database',
   scope: 'perRun',
@@ -39,7 +38,6 @@ const schema = resource({
 
 const queries = new Test().require(schema).target(query)
   .it('query', t => t.argsFrom(ctx => [ctx.schemaUrl]).expect(e => [e.result.toBe(1)]))
-// #endregion lifecycle
 registerTest(queries)
 
 const direct = new Test().target(query)

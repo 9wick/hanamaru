@@ -1,7 +1,7 @@
 import { Test, middleware, registerTest } from 'hanamaru'
 import type { Ctx, GroupEntry, GroupMiddlewareResult, MiddlewareResult, TestBlueprint, TestDefinition } from 'hanamaru'
 import { add } from '../examples/math.ts'
-import { mailService } from '../examples/user.ts'
+const mailService = { async send(_user: { id: string }) {} }
 import { registrations } from '../examples/groups.test.ts'
 
 declare function expectType<T>(value: T): void
@@ -46,9 +46,8 @@ registerTest(new Test().use(middleware(async (_, next) => next({ seed: 3 }))).gr
 new Test().group([independent])
 new Test().use(middleware(async (_, next) => next({ seed: 1 }))).group([independent])
 new Test()
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .group([independent])
-new Test().mock(mailService, 'send', m => m.resolves(undefined))
+new Test().timeout(1000)
   .target(add).todo('対象の前にも共通設定を書ける')
 const annotated: TestDefinition<{ seed: number }> = child
 new Test().use(middleware(async (_, next) => next({ seed: 1 }))).group([annotated])
@@ -82,7 +81,7 @@ registerTest(new Test<{ seed: number }>().use(middleware(async (_, next) => next
 
 // @ts-expect-error middleware is fixed after the first group.
 parent.use(middleware(async (_, next) => next({ seed: 4 })))
-// @ts-expect-error mock scope is fixed after the first group.
+// @ts-expect-error method replacement is not part of the group API.
 parent.mock(mailService, 'send', m => m.resolves(undefined))
 // @ts-expect-error describe is no longer part of the API.
 parent.describe('変更')
@@ -302,7 +301,6 @@ type SplitBlueprint = TestBlueprint<{}, Seed>
 
 const reusedMiddleware = new Test<Seed>()
   .timeout(1_000).retry(1)
-  .mock(mailService, 'send', m => m.resolves(undefined))
   .group(readsSeed, [expectedChild])
 registerTest(new Test().group(seedProvider, [reusedMiddleware]))
 // @ts-expect-error settings must not erase the inferred input timing.

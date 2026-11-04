@@ -10,15 +10,12 @@ import {
   todoCase,
   toBlueprint,
   withArgs,
-  withCalls,
   withExpectation,
-  withMock,
   withRetry,
   withStep,
   withTimeout,
 } from './construction.js'
-import type { RuntimeMock } from './runtime.js'
-import { assertionTag, doneTag, middlewareTag } from './tags.js'
+import { doneTag, middlewareTag } from './tags.js'
 import type { SourceLocation } from './types.js'
 
 const origin: SourceLocation = { file: '/declaring.test.ts', line: 7, column: 3 }
@@ -31,11 +28,6 @@ const host = {
   },
 }
 const step = { [middlewareTag]: true, kind: 'middleware', run: () => undefined, timeout: undefined } as const
-const mockOf = (key: 'first' | 'second', value: number): RuntimeMock => ({
-  object: host,
-  key,
-  behavior: { kind: 'returns', value },
-})
 const double = (value: number): number => value * 2
 
 test('settings produce a new object and leave the source data untouched', () => {
@@ -47,16 +39,12 @@ test('settings produce a new object and leave the source data untouched', () => 
   expect(base.steps).toEqual([])
 })
 
-test('a mock replaces the entry with the same target and appends any other', () => {
-  const one = withMock(emptyCase(), mockOf('first', 1))
-  const replaced = withMock(one, mockOf('first', 11))
-  const appended = withMock(replaced, mockOf('second', 2))
-  expect(one.mocks.map((mock) => mock.behavior)).toEqual([{ kind: 'returns', value: 1 }])
-  expect(replaced.mocks.map((mock) => mock.behavior)).toEqual([{ kind: 'returns', value: 11 }])
-  expect(appended.mocks.map((mock) => [mock.key, mock.behavior])).toEqual([
-    ['first', { kind: 'returns', value: 11 }],
-    ['second', { kind: 'returns', value: 2 }],
-  ])
+test('input selection is immutable and cannot be replaced after selection', () => {
+  const empty = emptyCase()
+  const selected = withArgs(empty, { kind: 'value', value: [1] })
+  expect(empty.args).toBeNull()
+  expect(selected.args).toEqual({ kind: 'value', value: [1] })
+  expect(() => withArgs(selected, { kind: 'value', value: [2] })).toThrow('only be selected once')
 })
 
 test('selecting a target derives the display name from the input shape', () => {
@@ -83,7 +71,7 @@ test('a case moves the definition to the suite stage and keeps the earlier cases
   expect(targeted.cases).toEqual([])
 })
 
-test('a case is complete once it carries args and either an expectation or calls', () => {
+test('a case requires arguments and a contract expectation', () => {
   const withArguments = withArgs(emptyCase(), { kind: 'value', value: [2] })
   const build = () => []
   const expected = withExpectation(withArguments, build)
@@ -91,17 +79,12 @@ test('a case is complete once it carries args and either an expectation or calls
   expect(expected[doneTag]).toBe(true)
   expect(completedCase(expected, base)).toEqual({
     ...base,
+    caseKind: 'example',
     config: {},
-    mocks: [],
     args: { kind: 'value', value: [2] },
-    expect: { kind: 'deferred', build },
-    calls: [],
+    expect: { kind: 'contract', build },
   })
-  const called = withCalls(withArguments, [
-    { [assertionTag]: true, subject: 'call', check: { matcher: 'notCalled' }, object: host, key: 'first' },
-  ])
-  expect(completedCase(called, base).expect).toBe(null)
-  expect(completedCase(called, base).calls).toHaveLength(1)
+  expect(() => completedCase(withArguments, base)).toThrow('case must return args and an expectation')
 })
 
 test('group arguments accept the name and the middleware in any allowed combination', () => {
@@ -126,7 +109,6 @@ test('a group becomes a child of the definition with the common settings left em
       middleware: null,
       config: {},
       steps: [],
-      mocks: [],
       children: [child],
     },
   ])

@@ -1,16 +1,13 @@
+import type { ScenarioDefinition } from './scenario.js'
+import type { PropertyInput } from './property-input.js'
 import type { Resource } from './resource.js'
-import type { CallPlan } from './calls.js'
-import type { Relation } from './relation.js'
 import type { AnyFn } from './target-types.js'
 import type { Value } from './javascript.js'
-import type { RuntimeCallAssertion } from '../assertion/runtime.js'
 import type { ExecutionConfig } from './conditions.js'
-import { behaviorTag, definitionTag, doneTag, middlewareTag, resultTag } from './tags.js'
-import type { BehaviorBlueprint, SourceLocation } from './types.js'
+import { definitionTag, doneTag, middlewareTag, resultTag } from './tags.js'
+import type { SourceLocation } from './types.js'
 
 export type Fields = Record<PropertyKey, Value>
-
-export type RuntimeBehavior = BehaviorBlueprint & { readonly [behaviorTag]?: true }
 
 export interface RuntimeMiddlewareResult {
   readonly [resultTag]: true
@@ -19,27 +16,51 @@ export interface RuntimeMiddlewareResult {
 
 export interface RuntimeMiddleware {
   readonly [middlewareTag]: true
-  readonly kind: 'middleware'
+  readonly kind: 'middleware' | 'environment'
   readonly run: object
   readonly timeout: number | undefined
 }
 
-export interface RuntimeMock {
-  object: object
-  key: string
-  behavior: RuntimeBehavior
-  sourceObject?: object
+export interface InstanceTarget {
+  readonly kind: 'instance'
+  readonly ctor: object
+  readonly key: string
+  readonly from: object | null
+}
+
+export interface ScenarioTarget {
+  readonly kind: 'scenario'
+  readonly members: ScenarioDefinition['members']
+  readonly from: object | null
+}
+export interface RuntimeStepsArgs {
+  readonly kind: 'steps'
+  readonly build: object
 }
 
 export type RuntimeTarget =
+  | ScenarioTarget
+  | InstanceTarget
   | { kind: 'function'; fn: AnyFn }
   | { kind: 'method'; object: object; key: string; fn: AnyFn }
-  | Relation
 
-export type RuntimeArgs = { kind: 'value'; value: Value[] } | { kind: 'from-context'; build: object } | CallPlan
+export interface RuntimeGeneratedArgs {
+  readonly kind: 'generated'
+  readonly input: PropertyInput
+  readonly binding:
+    | { readonly kind: 'sample' }
+    | { readonly kind: 'args'; readonly build: object }
+    | { readonly kind: 'steps'; readonly build: object }
+}
+
+export type RuntimeArgs =
+  | RuntimeStepsArgs
+  | RuntimeGeneratedArgs
+  | { kind: 'value'; value: Value[] }
+  | { kind: 'from-context'; build: object }
 
 export interface RuntimeExpectation {
-  kind: 'deferred'
+  kind: 'contract'
   build: object
 }
 
@@ -47,10 +68,8 @@ export interface CaseData {
   resources?: readonly Resource[]
   readonly [doneTag]?: true
   config: ExecutionConfig
-  mocks: RuntimeMock[]
   args: RuntimeArgs | null
   expect: RuntimeExpectation | null
-  calls: readonly RuntimeCallAssertion[]
 }
 
 export interface CaseBase {
@@ -62,15 +81,15 @@ export interface CaseBase {
   originalIndex?: number
 }
 
-export interface RuntimeCase extends CaseBase {
+export type RuntimeCase = CaseBase & {
   mode: 'run' | 'only' | 'skip'
-  mocks: RuntimeMock[]
-  args: RuntimeArgs
-  expect: RuntimeExpectation | null
-  calls: readonly RuntimeCallAssertion[]
-}
-
+  expect: RuntimeExpectation
+} & (
+    | { caseKind: 'example'; args: Exclude<RuntimeArgs, RuntimeGeneratedArgs> }
+    | { caseKind: 'property'; args: RuntimeGeneratedArgs }
+  )
 export interface RuntimeTodo extends CaseBase {
+  caseKind: 'todo'
   mode: 'todo'
 }
 
@@ -81,10 +100,10 @@ export interface BlueprintBase {
   version: 1
   config: ExecutionConfig
   steps: RuntimeMiddleware[]
-  mocks: RuntimeMock[]
 }
 
 export interface RuntimeSuite extends BlueprintBase {
+  characteristic: Characteristic
   kind: 'test'
   name: string
   target: RuntimeTarget
@@ -112,12 +131,14 @@ export interface RuntimeDefinitionHandle {
   blueprint(): RuntimeBlueprint
 }
 
+export type Characteristic = 'pure' | 'effectful'
+
 export interface DefinitionData {
+  characteristic?: Characteristic
   resources?: readonly Resource[]
   stage: 'base' | 'target' | 'suite' | 'group'
   config: ExecutionConfig
   steps: RuntimeMiddleware[]
-  mocks: RuntimeMock[]
   groups: RuntimeGroup[]
   cases: CaseBlueprint[]
   target: RuntimeTarget | null

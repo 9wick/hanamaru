@@ -210,7 +210,7 @@ test('an attempt timeout reports the phase it reached', async () => {
   const started = startedDeadline(deadlines[0])
   expect(started.timeoutMs).toBe(10)
   // 期限の通知時点ではまだmiddlewareしか進んでいない。
-  expect(caseProgress(started.progress).attempts[0]?.failures[0]?.phase).toBe('middleware')
+  expect(caseProgress(started.progress).attempts[0]?.failures[0]?.phase).toBe('prepare')
   expect(snapshots.length).toBe(1)
   expect(snapshots[0]?.status).toBe('failed')
   expect(snapshots[0]?.reason).toBe('timeout')

@@ -38,7 +38,7 @@ export const root = new Test().target(outer).it('unexpected error', t => t.args(
 test('CLI reports comparison paths and changed values without dumping unrelated properties', () => {
   const data = fixture(`
 export const root = new Test().target(() => ({ unrelated: 'DO_NOT_DUMP', evidence: [{ targets: ['user', 'repo'] }] }))
-  .it('different order', t => t.args().expect(e => [e.result.toMatchObject({ evidence: [{ targets: ['repo', 'user'] }] })]))
+  .it('different order', t => t.args().expect(e => [e.result.part('evidence').part(0).part('targets').toEqual(['repo', 'user'])]))
 `)
   const output = invoke(workspace, data.file)
   expect(output.status, output.stderr).toBe(1)
@@ -48,7 +48,7 @@ export const root = new Test().target(() => ({ unrelated: 'DO_NOT_DUMP', evidenc
   expect(output.stdout).not.toContain('DO_NOT_DUMP')
 })
 
-test('in-source declarations expose private targets, list without execution and select one case with mocks', () => {
+test('in-source declarations expose private targets, list without execution and select one case with shared resources', () => {
   const data = fixture('')
   const dependency = join(data.dir, 'dependency.mjs')
   writeFileSync(dependency, 'export function read() { return 2 }')
@@ -61,9 +61,9 @@ if (import.meta.hanamaru) {
     console.error('fixture opened')
     try { return await next({ left: 2, right: 3 }) } finally { console.error('fixture closed') }
   } })
-  const child = new Test().require(fixture).mock(dependency, 'read', m => m.returns(7)).target(double)
-    .it('same', t => t.argsFrom(ctx => [ctx.left]).expect(e => [e.result.toBe(14)]))
-    .it('same', t => t.argsFrom(ctx => [ctx.right]).expect(e => [e.result.toBe(21)]))
+  const child = new Test().require(fixture).target(double)
+    .it('same', t => t.argsFrom(ctx => [ctx.left]).expect(e => [e.result.toBe(4)]))
+    .it('same', t => t.argsFrom(ctx => [ctx.right]).expect(e => [e.result.toBe(6)]))
   registerTest(new Test().group('parent', middleware(async (_, next) => {
     try { return await next({}) } finally { console.error('parent closed') }
   }), [child]))
@@ -225,38 +225,32 @@ export const b = new Test().target(() => 2).it('later', t => t.args().expect(e =
   }
 })
 
-test('CLI prepares every registered module mock and spy before loading any execution test file', () => {
+test('CLI keeps imported dependencies real and supplies alternate dependencies through environments', () => {
   const data = fixture(`
-import * as source from './data.mjs'
+import { environment } from ${JSON.stringify(workspaceRuntime)}
 import { getData } from './data.mjs'
-import { calc, observe } from './targets.mjs'
-const slot = source
+import { calc, Calculator } from './targets.mjs'
 export const a = new Test().target(calc)
-  .it('real-first', t => t.args(3).expect(e => [e.result.toBe(8)]))
-  .it('fake', t => t.mock(slot, 'getData', m => m.callsFake(n => n + 10)).args(3)
-    .expect(e => [e.result.toBe(26)]).expectCalls(call => [call(slot, 'getData').calledOnceWith(3)]))
-  .it('failure', t => t.mock(slot, 'getData', m => m.returns(4)).args(3).expect(e => [e.result.toBe(999)]))
-  .it('restored', t => t.args(3).expect(e => [e.result.toBe(8)]))
-export const b = new Test().group([new Test().target(observe)
-  .it('spy-one', t => t.args(3).expect(e => [e.result.toBe(8)])
-    .expectCalls(call => [call(slot, 'observed').calledOnceWith(3)]))
-  .it('spy-two', t => t.args(3).expect(e => [e.result.toBe(8)])
-    .expectCalls(call => [call(slot, 'observed').calledOnceWith(3)]))])
+  .it('real-first', t => t.args(3).expect(e => [e.result.toEqual(8)]))
+  .it('failure', t => t.args(3).expect(e => [e.result.toEqual(999)]))
+  .it('real-again', t => t.args(3).expect(e => [e.result.toEqual(8)]))
+const local = environment(async (_, scope, next) => next({ calculator: new Calculator(n => n + 10) }))
+export const b = new Test().target(Calculator, 'calc').effectful().use(local).from(ctx => ctx.calculator)
+  .it('explicit fake', t => t.args(3).expect(e => [e.result.toEqual(26)]))
 function inlineCalc(n) { return getData(n) * 2 }
 export const c = new Test().target(inlineCalc)
-  .it('in-source', t => t.mock(slot, 'getData', m => m.returns(9)).args(3)
-    .expect(e => [e.result.toBe(18)]).expectCalls(call => [call(slot, 'getData').calledOnceWith(3)]))
+  .it('in-source', t => t.args(3).expect(e => [e.result.toEqual(8)]))
 `)
-  writeFileSync(join(data.dir, 'data.mjs'), 'export const getData = n => n + 1\nexport const observed = n => n + 5\n')
+  writeFileSync(join(data.dir, 'data.mjs'), 'export const getData = n => n + 1\n')
   writeFileSync(join(data.dir, 'extra.mjs'), 'export const extra = n => n + 5\n')
   writeFileSync(
     join(data.dir, 'targets.mjs'),
     `
-import { getData, observed } from './data.mjs'
+import { getData } from './data.mjs'
 import { extra } from './extra.mjs'
 export const calc = n => getData(n) * 2
-export const observe = n => observed(n)
 export const later = n => extra(n)
+export class Calculator { constructor(read) { this.read = read } calc(n) { return this.read(n) * 2 } }
 `,
   )
   const later = join(data.dir, 'z-later.test.mjs')
@@ -264,26 +258,14 @@ export const later = n => extra(n)
     later,
     `
 import { Test, registerTest } from ${JSON.stringify(workspaceRuntime)}
-import * as source from './extra.mjs'
 import { later } from './targets.mjs'
-const slot = source
-export const root = new Test().mock(slot, 'extra', m => m.returns(42))
-  .group([new Test().target(later).it('late-mock', t => t.args(3).expect(e => [e.result.toBe(42)]))])
-registerTest(root)
+registerTest(new Test().group([new Test().target(later).it('later', t => t.args(3).expect(e => [e.result.toEqual(8)]))]))
 `,
   )
   const output = jsonResult(invoke(workspace, data.file, later, '-r', 'json'), 1)
   expect(output.reason).toBe('completed')
-  expect(testNode(output).cases.map((item) => item.attempts[0].status)).toStrictEqual([
-    'passed',
-    'passed',
-    'failed',
-    'passed',
-  ])
-  expect(childTest(groupNode(output, 1)).cases.map((item) => item.attempts[0].status)).toStrictEqual([
-    'passed',
-    'passed',
-  ])
+  expect(testNode(output).cases.map((item) => item.attempts[0].status)).toEqual(['passed', 'failed', 'passed'])
+  expect(testNode(output, 1).cases[0].attempts[0].status).toBe('passed')
   expect(testNode(output, 2).cases[0].attempts[0].status).toBe('passed')
   expect(childTest(groupNode(output, 3)).cases[0].attempts[0].status).toBe('passed')
 })
@@ -315,10 +297,12 @@ test('CLI preserves live exports, captured imports, dynamic imports and function
   const data = fixture(`
 import * as source from './data.mjs'
 import { read, captured, late } from './targets.mjs'
-export const cases = new Test().target(async () => [read(), captured(), await late(), source.value, source.get.name, source.get.length])
-  .it('fake', t => t.mock(source, 'get', m => m.returns(10)).args()
-    .expect(e => [e.result.toEqual([10, 10, 10, 1, 'get', 0])]))
-  .it('restored', t => t.args().expect(e => [e.result.toEqual([1, 1, 1, 1, 'get', 0])]))
+export const cases = new Test().target(async advance => {
+  if (advance) source.bump()
+  return [read(), captured(), await late(), source.value, source.get.name, source.get.length]
+}).effectful()
+  .it('initial', t => t.args(false).expect(e => [e.result.toEqual([1, 1, 1, 1, 'get', 0])]))
+  .it('live updates', t => t.args(true).expect(e => [e.result.toEqual([2, 2, 2, 2, 'get', 0])]))
 `)
   writeFileSync(
     join(data.dir, 'data.mjs'),
@@ -357,14 +341,12 @@ test('CLI rejects malformed Vite config and propagates plugin errors', () => {
   }
 })
 
-test('CLI imports CommonJS packages and mocks their exports while keeping ESM packages transformable', () => {
+test('CLI imports CommonJS dependencies while keeping ESM packages transformable', () => {
   const data = fixture(`
 import * as source from 'cjs-data'
 import { read } from 'esm-reader'
 export const cases = new Test().target(read)
-  .it('fake', t => t.mock(source, 'getData', m => m.returns(9)).args()
-    .expect(e => [e.result.toBe(9)]).expectCalls(call => [call(source, 'getData').calledOnceWith()]))
-  .it('restored', t => t.args().expect(e => [e.result.toBe(2)]))
+  .it('real dependency', t => t.args().expect(e => [e.result.toEqual(2)]))
 `)
   for (const name of ['cjs-data', 'esm-reader']) mkdirSync(join(data.dir, 'node_modules', name), { recursive: true })
   writeFileSync(
@@ -381,4 +363,39 @@ export const cases = new Test().target(read)
     "import { getData } from 'cjs-data'; export function read() { return getData() }",
   )
   expect(jsonResult(invoke(workspace, data.file, '-r', 'json'), 0).status).toBe('passed')
+})
+
+test('worker progress does not commit a counterexample before cleanup succeeds', () => {
+  const data = fixture(`
+import { environment, tuples, constant } from ${JSON.stringify(workspaceRuntime)}
+const local = environment(async (_, scope, next) => next({
+  events: scope.action({ evidence: 'real-effect', open: () => ({ finish: () => [], dispose: () => { throw new Error('dispose failed') } }) })
+}))
+export const root = new Test().target(x => x).effectful().use(local)
+  .property('cleanup failure', p => p.forAll(tuples(constant(1))).expect(e => [e.result.toEqual(2), e.action(e.ctx.events).untilTargetSettles().none()]))
+`)
+  const output = jsonResult(invoke(workspace, data.file, '-r', 'json'), 1)
+  const attempt = testNode(output).cases[0].attempts[0]
+  expect(attempt.failures.map((failure) => failure.kind)).toEqual(['assertion', 'observation'])
+  expect(attempt.property).toMatchObject({
+    originalCounterexample: null,
+    counterexample: null,
+    stopped: 'execution-failed',
+  })
+})
+
+test('worker property summary preserves the accepted counterexample after a passing shrink candidate', () => {
+  const data = fixture(`
+import { tuples, integers } from ${JSON.stringify(workspaceRuntime)}
+export const root = new Test().target(x => x)
+  .property('small', p => p.forAll(tuples(integers({min: 0, max: 100})), { seed: 42 }).steps(s => s.target.args(s.input[0])).expect(e => [e.on(e.result).satisfies('small', x => x < 5)]))
+`)
+  const output = jsonResult(invoke(workspace, data.file, '-r', 'json'), 1)
+  const attempt = testNode(output).cases[0].attempts[0]
+  expect(attempt.evaluations?.at(-1)?.status).toBe('passed')
+  expect(attempt.assertions.map((assertion) => assertion.status)).toEqual(['failed'])
+  expect(attempt.outcome).toMatchObject({ kind: 'return', value: { kind: 'number', value: 5 } })
+  expect(attempt.operations?.[0]).toMatchObject({ status: 'returned', value: { kind: 'number', value: 5 } })
+  const selected = attempt.assertions[0].failureIndexes[0]
+  expect(attempt.failures[selected]).toMatchObject({ kind: 'assertion', actual: { kind: 'number', value: 5 } })
 })

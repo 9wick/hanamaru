@@ -35,7 +35,7 @@ test('the worker waits for a plan, preserves an early interrupt, and rejects rep
   expect(loaded).not.toHaveBeenCalled()
   port.postMessage({ type: 'interrupt' })
   const ready = receive()
-  const spec = { roots: [], preparation: [], shape: '[]' }
+  const spec = { roots: [], shape: '[]' }
   port.postMessage({ type: 'initialize', spec })
   expect(await ready).toStrictEqual({ type: 'ready' })
   expect(loaded).toHaveBeenCalledTimes(1)

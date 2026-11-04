@@ -3,7 +3,24 @@ import * as blueprint from './index.js'
 import { Test } from '../../../src/index.js'
 
 test('the blueprint entry exposes test authoring and shares its constructor with hanamaru', () => {
-  expect(Object.keys(blueprint).sort()).toEqual(['Test', 'middleware', 'registerTest', 'relation', 'resource'])
+  expect(Object.keys(blueprint).sort()).toEqual([
+    'Test',
+    'arrays',
+    'boolean',
+    'constant',
+    'environment',
+    'integers',
+    'method',
+    'middleware',
+    'oneOf',
+    'record',
+    'registerTest',
+    'resource',
+    'scenario',
+    'strings',
+    'tuples',
+    'valueAdapter',
+  ])
   expect(blueprint.Test).toBe(Test)
   let calls = 0
   const specification = new blueprint.Test()

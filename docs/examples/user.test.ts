@@ -1,29 +1,19 @@
 import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
+import { UserService } from './user.ts'
+import { userEnvironment } from './user-environment.ts'
 
-export const users = new Test()
-  .target(createUser)
-  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.result.toEqual({ id: 'u1' }),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ])
-  )
-  .it('保存に失敗したら通知しない', t => t
-    // このケースだけ、共通設定を上書きする。
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.error.toBeInstanceOf(Error),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').notCalled(),
-    ])
-  )
-
+const successful = new Test().target(UserService, 'create').effectful()
+  .use(userEnvironment()).from(ctx => ctx.users)
+  .it('保存して通知する', t => t.args({ name: 'Alice' }).expect(e => [
+    e.result.toEqual({ id: 'u1' }),
+    e.state(e.ctx.saved, e.result.field('id')).toEqual({ name: 'Alice' }),
+    e.state(e.ctx.delivered).toEqual([{ recipient: 'u1' }]),
+  ]))
+const failing = new Test().target(UserService, 'create').effectful()
+  .use(userEnvironment({ saveFails: true })).from(ctx => ctx.users)
+  .it('保存失敗を返し、通知しない', t => t.args({ name: 'Alice' }).expect(e => [
+    e.error.message.toEqual('save failed'),
+    e.state(e.ctx.delivered).toEqual([]),
+  ]))
+export const users = new Test().group('ユーザー登録', [successful, failing])
 registerTest(users)

@@ -3,7 +3,7 @@ import { createApp } from '@zeltjs/core'
 import { override } from '@zeltjs/core/internal-bridge/testing'
 import { WorkerExecutionLauncher } from '../workers/client.js'
 import { expect, test } from 'vite-plus/test'
-import { Test, middleware } from '../../../../../src/index.js'
+import { Test, middleware, environment, tuples, constant } from '../../../../../src/index.js'
 import type { ItBuilder, ItDone, RunResult, TestResult } from '../../../../../src/index.js'
 import type { RunInput } from '../../testing/inline-execution.test.js'
 import { InlineRunHarness } from '../../testing/inline-execution.test.js'
@@ -18,40 +18,35 @@ function testResult(result: RunResult): TestResult {
 }
 
 const lifecycle: string[] = []
-const service = {
-  read(value: number) {
-    return value * 2
-  },
-}
-const originalRead = service.read
-
 const operations = new Test<{ label: string }>()
+  .target((input: number, read: (n: number) => number, label: string) => ({
+    values: [read(input), read(input + 1)],
+    label,
+  }))
+  .effectful()
   .use(
-    middleware(async (_, next) => {
+    environment(async (_, _scope, next) => {
       lifecycle.push('attempt open')
       try {
-        return await next({ input: 3 })
+        return await next({ input: 3, read: (n: number) => n + 4 })
       } finally {
         lifecycle.push('attempt close')
       }
     }),
   )
-  .mock(service, 'read', (m) => m.returnsOnce(7).returns(8))
-  .target((input: number) => [service.read(input), service.read(input + 1)])
-  .it('mock sequence', (t) =>
+  .it('environment fake', (t) =>
     t
-      .argsFrom((ctx) => [ctx.input])
-      .expect((e) => [e.result.toEqual([7, 8]), e.result.toSatisfy(() => e.ctx.label === 'shared')])
-      .expectCalls((call) => [call(service, 'read').calledTimes(2), call(service, 'read').calledNthWith(2, 4)]),
+      .argsFrom((ctx) => [ctx.input, ctx.read, ctx.label])
+      .expect((e) => [e.result.toEqual({ values: [7, 8], label: 'shared' })]),
   )
-  .it('case override', (t) =>
+  .it('explicit dependency', (t) =>
     t
-      .mock(service, 'read', (m) => m.returns(9))
-      .argsFrom((ctx) => [ctx.input])
-      .expect((e) => [e.result.toEqual([9, 9])])
-      .expectCalls((call) => [call(service, 'read').calledNthWith(1, 3)]),
+      .argsFrom((ctx) => [ctx.input, () => 9, ctx.label])
+      .expect((e) => [e.result.toEqual({ values: [9, 9], label: 'shared' })]),
   )
-  .skip('skipped', (t) => t.args(1).expect((e) => [e.result.toEqual([])]))
+  .skip('skipped', (t) =>
+    t.args(1, (n) => n, 'shared').expect((e) => [e.result.toEqual({ values: [], label: 'shared' })]),
+  )
   .todo('todo')
 
 const rows = new Test()
@@ -76,7 +71,7 @@ const provider = middleware(async (_, next) => {
 
 const contracts = new Test().group('contracts', [new Test().group(provider, [operations, rows])])
 
-test('library execution preserves lifecycle, mocks, rows, skipped cases and declaration origins', async () => {
+test('library execution preserves lifecycle, environments, rows, skipped cases and declaration origins', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -118,8 +113,6 @@ test('library execution preserves lifecycle, mocks, rows, skipped cases and decl
     'attempt close',
     'group close',
   ])
-  expect(service.read).toBe(originalRead)
-  expect(service.read(3)).toBe(6)
 })
 
 test('library contexts reject container writes while retaining shared object identity', async () => {
@@ -155,7 +148,7 @@ test('library contexts reject container writes while retaining shared object ide
   }
 })
 
-test('library error expectations retain regex state and distinguish non-Error outcomes', async () => {
+test('property projections retain saved regex data and distinguish non-Error outcomes', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -163,8 +156,22 @@ test('library error expectations retain regex state and distinguish non-Error ou
   pattern.lastIndex = 2
   const specification = new Test()
     .target((value: Error | { message: string }) => Promise.reject(value))
-    .it('Error', (t) => t.args(new Error('boom')).expect((e) => [e.error.toThrow(pattern)]))
-    .it('non-Error', (t) => t.args({ message: 'boom' }).expect((e) => [e.error.toThrow('boom')]))
+    .property('Error', (p) =>
+      p
+        .forAll(tuples(constant('boom')))
+        .argsFrom((_, sample) => [new Error(sample[0])])
+        .expect((e) => [
+          e
+            .on({
+              message: e.error.ofType(Error).field('message'),
+              pattern: e.project(e.value(pattern), (value) => ({ source: value.source, flags: value.flags })),
+            })
+            .satisfies('matches saved pattern', ({ message, pattern }) => {
+              return new RegExp(pattern.source, pattern.flags).test(message)
+            }),
+        ]),
+    )
+    .it('non-Error', (t) => t.args({ message: 'boom' }).expect((e) => [e.error.message.toEqual('boom')]))
   const result = await library.run(specification)
   expect(result.status).toBe('failed')
   expect(testResult(result).cases.map((item) => item.attempts[0]?.status)).toEqual(['passed', 'failed'])
@@ -178,12 +185,12 @@ test('library mismatches identify the assertion matcher', async () => {
   const library = await scope.get(InlineRunHarness)
   const specification = new Test()
     .target(() => ({ value: 1 }))
-    .it('mismatch', (t) => t.args().expect((e) => [e.result.toMatchObject({ value: 2 })]))
+    .it('mismatch', (t) => t.args().expect((e) => [e.result.part('value').toEqual(2)]))
   const result = await library.run(specification)
   expect(result.status).toBe('failed')
   const failure = testResult(result).cases[0].attempts[0]?.failures[0]
   expect.assert(failure?.kind === 'assertion')
-  expect(failure.assertion.matcher).toBe('toMatchObject')
+  expect(failure.assertion.matcher).toBe('toEqual')
 })
 
 test('library results encode dates, regexps and maps', async () => {
@@ -192,7 +199,9 @@ test('library results encode dates, regexps and maps', async () => {
   const library = await scope.get(InlineRunHarness)
   const specification = new Test()
     .target(() => [new Date('2020-01-01'), /a/g, new Map([[1, 2]])])
-    .it('diagnostic', (t) => t.args().expect((e) => [e.result.toSatisfy(() => true)]))
+    .it('diagnostic', (t) =>
+      t.args().expect((e) => [e.result.toEqual([new Date('2020-01-01'), /a/g, new Map([[1, 2]])])]),
+    )
   const result = await library.run(specification)
   const outcome = testResult(result).cases[0].attempts[0]?.outcome
   expect.assert(outcome?.value.kind === 'array')

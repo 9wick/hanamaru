@@ -8,7 +8,7 @@ for (const group of blueprint.children) {
     if (child.kind === 'definition') {
       // 子チェーンの共通設定と、その中のgroup呼び出しを取得できる。
     } else if (child.kind === 'group') {
-      // 子グループのsteps・mocks・childrenを取得できる。
+      // 子グループのsteps・childrenを取得できる。
     } else {
       // 対象ケース群のtarget・casesを取得できる。
     }
