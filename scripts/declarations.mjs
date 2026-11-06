@@ -55,3 +55,34 @@ for (const file of files(dist).filter((path) => path.endsWith('.d.ts'))) {
     source = source.slice(0, start) + replacement + source.slice(end)
   writeFileSync(file, source)
 }
+
+// Follow the consumer's declaration graph without resolving packages from this checkout.
+const packageManifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
+const publishedDependencies = new Set(Object.keys(packageManifest.dependencies ?? {}))
+const visited = new Set()
+function checkPublicDeclarations(file) {
+  if (visited.has(file)) return
+  visited.add(file)
+  const tree = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
+  function visit(node) {
+    const specifier =
+      ts.isImportDeclaration(node) || ts.isExportDeclaration(node)
+        ? node.moduleSpecifier
+        : ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+          ? node.argument.literal
+          : undefined
+    if (specifier && ts.isStringLiteral(specifier)) {
+      const name = specifier.text
+      if (name.startsWith('.')) {
+        checkPublicDeclarations(resolve(dirname(file), name.replace(/\.js$/, '.d.ts')))
+      } else if (!name.startsWith('node:')) {
+        const packageName = name.startsWith('@') ? name.split('/').slice(0, 2).join('/') : name.split('/')[0]
+        if (!publishedDependencies.has(packageName))
+          throw new Error(`public declaration depends on undeclared package ${name}: ${relative(root, file)}`)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+}
+checkPublicDeclarations(resolve(dist, 'index.d.ts'))

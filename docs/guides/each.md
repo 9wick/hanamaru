@@ -22,7 +22,7 @@ registerTest(addition)
 
 rowは行データから、argsとresultはテスト対象から型推論します。
 行はオブジェクトでもタプルでも渡せます。IDや行名の追加登録は不要です。
-tはitと同じビルダーで、mock・timeout・retry・args / argsFrom・expect / expectCallsを使えます。
+tは対象の種類に対応するitと同じビルダーです。itなので具体値・部分・例外が基本で、effectfulは状態/actionも扱えます。性質は別のpropertyケースに書きます。各行のforAllやscenarioのstepsは提供しません。
 各行で、引数と一つ以上の期待を設定した完成済みのケースを返します。
 
 名前に関数を渡すこともできます。
@@ -65,5 +65,5 @@ middleware・モックの状態・呼び出し記録は各行・各試行で作�
 空の行配列は定義エラー、名前や本体のthrowも定義エラーです。
 
 呼び出し後は対象ケース群を表す `Suite` へ戻り、別のitやeachを追加できます。最初のeach以降は共通設定も固定します。
-非同期の行取得、each専用のonly/skip/todo表記は初版には含めません。
+行は定義時に同期的に渡します。each専用のonly/skip/todo記法は提供しません。
 全体のonlyとCLIのfilterは、展開された通常のケースとしてeachにも適用します。

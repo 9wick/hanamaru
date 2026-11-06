@@ -15,7 +15,7 @@ import type {
   RunResult,
   TestResult,
 } from '../../../../../src/index.js'
-import { Test, middleware } from '../../../../../src/index.js'
+import { Test, middleware, environment, tuples } from '../../../../../src/index.js'
 import type { RunInput } from '../../testing/inline-execution.test.js'
 
 import type { Value } from '../../domain/execution/javascript.js'
@@ -169,7 +169,7 @@ test('expected thrown target error passes; unexpected error fails', async () => 
     .target(() => {
       throw new Error('boom')
     })
-    .it('expected', (t) => t.args().expect((e) => [e.error.toThrow('boom')]))
+    .it('expected', (t) => t.args().expect((e) => [e.error.message.toEqual('boom')]))
   expect((await run(suite)).status).toBe('passed')
   const unexpected = new Test()
     .target((): number => {
@@ -181,7 +181,7 @@ test('expected thrown target error passes; unexpected error fails', async () => 
   expect(attemptOf(testNode(result).cases[0]).failures[0]?.kind).toBe('outcome')
 })
 
-test('toThrow rejects non-Error values even when their messages match', async () => {
+test('error.message rejects non-Error values even when their messages match', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -190,14 +190,14 @@ test('toThrow rejects non-Error values even when their messages match', async ()
   for (const actual of ['boom', undefined, null, 42, { message: 'boom' }]) {
     const suite = new Test()
       .target(() => Promise.reject(actual))
-      .it('non-Error', (t) => t.args().expect((e) => [e.error.toThrow('boom')]))
+      .it('non-Error', (t) => t.args().expect((e) => [e.error.message.toEqual('boom')]))
     const result = await run(suite)
     expect(result.status, String(actual)).toBe('failed')
     expect(attemptOf(testNode(result).cases[0]).failures[0]?.kind, String(actual)).toBe('assertion')
   }
 })
 
-test('toThrow ignores and preserves RegExp lastIndex for matching and nonmatching errors', async () => {
+test('property regex projections preserve the original pattern', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -214,7 +214,18 @@ test('toThrow ignores and preserves RegExp lastIndex for matching and nonmatchin
     for (const [message, matches] of messages) {
       const suite = new Test()
         .target(() => Promise.reject(new Error(message)))
-        .it('RegExp', (t) => t.args().expect((e) => [e.error.toThrow(pattern)]))
+        .property('RegExp', (p) =>
+          p.forAll(tuples()).expect((e) => [
+            e
+              .on({
+                message: e.error.ofType(Error).field('message'),
+                pattern: e.project(e.value(pattern), (value) => ({ source: value.source, flags: value.flags })),
+              })
+              .satisfies('matches pattern', ({ message, pattern }) =>
+                new RegExp(pattern.source, pattern.flags).test(message),
+              ),
+          ]),
+        )
       expect((await run(suite)).status, `${flags}: ${message}`).toBe(matches ? 'passed' : 'failed')
       expect(pattern.lastIndex).toBe(2)
     }
@@ -399,7 +410,7 @@ test('middleware timeout stops following cases', async () => {
   expect(node.cases[1].notRun).toBe('cancelled')
 })
 
-test('deep equality follows Vitest for cycles, undefined fields and array holes', async () => {
+test('deep equality preserves cycles and distinguishes missing values from undefined', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -415,7 +426,7 @@ test('deep equality follows Vitest for cycles, undefined fields and array holes'
   sparse.length = 1
   const dense = [undefined]
   const holes = new Test().target(() => sparse).it('hole', (t) => t.args().expect((e) => [e.result.toEqual(dense)]))
-  expect((await run(holes)).status).toBe('passed')
+  expect((await run(holes)).status).toBe('failed')
   const fields: readonly (readonly [Record<string, Value>, Record<string, Value>])[] = [
     [{}, { missing: undefined }],
     [{ missing: undefined }, {}],
@@ -424,11 +435,11 @@ test('deep equality follows Vitest for cycles, undefined fields and array holes'
     const missing = new Test()
       .target(() => actual)
       .it('missing field', (t) => t.args().expect((e) => [e.result.toEqual(expected)]))
-    expect((await run(missing)).status).toBe('passed')
+    expect((await run(missing)).status).toBe('failed')
   }
 })
 
-test('value and call comparisons follow Vitest 5.0.2 equality criteria', async () => {
+test('result and state observations use the same structural comparison contract', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -442,7 +453,7 @@ test('value and call comparisons follow Vitest 5.0.2 equality criteria', async (
     ['same symbol', { [symbol]: 1 }, { [symbol]: 1 }, 'passed'],
     ['different symbols', { [Symbol('id')]: 1 }, { [Symbol('id')]: 1 }, 'failed'],
     ['symbol values', { [symbol]: 1 }, { [symbol]: 2 }, 'failed'],
-    ['prototype', new RecordValue(), { value: 1 }, 'passed'],
+    ['prototype', new RecordValue(), { value: 1 }, 'failed'],
     ['date', new Date(0), new Date(0), 'passed'],
     ['different date', new Date(0), new Date(1), 'failed'],
     ['regexp', /x/g, /x/g, 'passed'],
@@ -460,18 +471,17 @@ test('value and call comparisons follow Vitest 5.0.2 equality criteria', async (
       'passed',
     ],
     ['set order', new Set([1, 2]), new Set([2, 1]), 'passed'],
-    ['undefined field', { value: undefined }, {}, 'passed'],
+    ['undefined field', { value: undefined }, {}, 'failed'],
   ]
   for (const [name, actual, expected, status] of pairs) {
-    const service: { read: (value: Value) => Value } = { read: (value) => value }
+    const local = environment(async (_, scope, next) =>
+      next({ observed: scope.state({ evidence: 'real-effect', read: () => actual }) }),
+    )
     const suite = new Test()
-      .target(() => service.read(actual))
-      .it(name, (t) =>
-        t
-          .args()
-          .expect((e) => [e.result.toEqual(expected)])
-          .expectCalls((call) => [call(service, 'read').calledOnceWith(expected)]),
-      )
+      .target(() => actual)
+      .effectful()
+      .use(local)
+      .it(name, (t) => t.args().expect((e) => [e.result.toEqual(expected), e.state(e.ctx.observed).toEqual(expected)]))
     const result = await run(suite)
     expect(result.status, name).toBe(status)
     expect(
@@ -481,7 +491,7 @@ test('value and call comparisons follow Vitest 5.0.2 equality criteria', async (
   }
 })
 
-test('partial comparisons follow Vitest 5.0.2 special-value criteria', async () => {
+test('selected properties and thrown data retain native value meaning', async () => {
   const scope = await onTest(createApp([]))
   override(scope, [{ provide: WorkerExecutionLauncher, useValue: await scope.get(LocalExecutor) }])
   const library = await scope.get(InlineRunHarness)
@@ -505,27 +515,29 @@ test('partial comparisons follow Vitest 5.0.2 special-value criteria', async () 
       { m: new Map([[1, 2]]) },
       'failed',
     ],
-    ['map subset', { m: new Map([[1, { a: 1, b: 2 }]]) }, { m: new Map([[1, { a: 1 }]]) }, 'passed'],
+    ['map subset', { m: new Map([[1, { a: 1, b: 2 }]]) }, { m: new Map([[1, { a: 1 }]]) }, 'failed'],
     ['set values', { s: new Set([1]) }, { s: new Set([2]) }, 'failed'],
     ['set size', { s: new Set([1, 2]) }, { s: new Set([1]) }, 'failed'],
-    ['set subset', { s: new Set([{ a: 1, b: 2 }]) }, { s: new Set([{ a: 1 }]) }, 'passed'],
+    ['set subset', { s: new Set([{ a: 1, b: 2 }]) }, { s: new Set([{ a: 1 }]) }, 'failed'],
     ['array length', { a: [1, 2] }, { a: [1] }, 'failed'],
     ['missing undefined', {}, { missing: undefined }, 'failed'],
-    ['regexp shape', { r: /x/g }, { r: /y/i }, 'passed'],
-    ['weak map shape', { w: new WeakMap() }, { w: new WeakMap() }, 'passed'],
-    ['promise shape', { p: Promise.resolve(1) }, { p: Promise.resolve(2) }, 'passed'],
-    ['symbol-only shape', { [symbol]: 1 }, { [symbol]: 2 }, 'passed'],
+    ['regexp shape', { r: /x/g }, { r: /y/i }, 'failed'],
+    ['weak map shape', { w: new WeakMap() }, { w: new WeakMap() }, 'failed'],
+    ['promise shape', { p: Promise.resolve(1) }, { p: Promise.resolve(2) }, 'failed'],
+    ['symbol-only shape', { [symbol]: 1 }, { [symbol]: 2 }, 'failed'],
   ]
   for (const [name, actual, expected, status] of pairs) {
+    const key = Reflect.ownKeys(expected)[0]
+    expect.assert(key !== undefined)
     const returned = new Test()
       .target(() => actual)
-      .it(name, (t) => t.args().expect((e) => [e.result.toMatchObject(expected)]))
+      .it(name, (t) => t.args().expect((e) => [e.result.part(key).toEqual(expected[key])]))
     expect((await run(returned)).status, `result: ${name}`).toBe(status)
     const thrown = new Test()
       .target((): Fields => {
         throw actual
       })
-      .it(name, (t) => t.args().expect((e) => [e.error.toMatchObject(expected)]))
+      .it(name, (t) => t.args().expect((e) => [e.error.toEqual(expected)]))
     expect((await run(thrown)).status, `error: ${name}`).toBe(status)
   }
 })
@@ -774,6 +786,7 @@ test('contexts are readonly containers and null-prototype fields are accepted', 
       reference.value++
       return value
     })
+    .effectful()
     .it('answer', (t) =>
       t
         .argsFrom((ctx) => {
@@ -784,7 +797,7 @@ test('contexts are readonly containers and null-prototype fields are accepted', 
         .expect((e) => {
           contexts.push(e.ctx)
           expect(e.ctx.shared).toBe(shared)
-          expect(e.ctx.shared.value).toBe(2)
+          expect(e.ctx.shared.value).toBe(1)
           return [e.result.toBe(42)]
         }),
     )
@@ -815,9 +828,9 @@ test('predicate exceptions are failed assertions with execution causes', async (
 
   const suite = new Test()
     .target(() => 1)
-    .it('throws', (t) =>
-      t.args().expect((e) => [
-        e.result.toSatisfy(() => {
+    .property('throws', (p) =>
+      p.forAll(tuples()).expect((e) => [
+        e.on(e.result).satisfies('throws predicate', () => {
           throw new Error('predicate')
         }),
       ]),
@@ -847,7 +860,7 @@ test('Error diagnostics include message and never call accessors', async () => {
     .target(() => {
       throw error
     })
-    .it('error', (t) => t.args().expect((e) => [e.error.toThrow('details')]))
+    .it('error', (t) => t.args().expect((e) => [e.error.message.toEqual('details')]))
   const result = await run(suite)
   const outcome = attemptOf(testNode(result).cases[0]).outcome
   expect.assert(outcome !== null && outcome.value.kind === 'object')

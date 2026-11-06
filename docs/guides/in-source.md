@@ -3,23 +3,19 @@
 実装と同じファイルにテスト定義を書けます。非公開の関数やmodule内の値もそのファイルのスコープから参照できます。
 テストを実行する公開run系APIは呼ばず、registerTestで定義を登録します。
 
-<!-- example: docs/examples/in-source.ts -->
+<!-- example: none — 公開APIの記述契約：非公開関数の契約を直接検証 -->
 ```ts
 import type {} from 'hanamaru'
-import * as data from './data.ts'
 
-const multiplier = 2
-function privateCalc() { return data.getData() * multiplier }
-
+const double = (value: number) => value * 2
 if (import.meta.hanamaru) {
   const { Test, registerTest } = import.meta.hanamaru
-  registerTest(new Test().mock(data, 'getData', m => m.returns(10)).target(privateCalc)
-    .it('非公開の実装と依存を検証する', t => t.args().expect(e => [e.result.toBe(20)])))
+  registerTest(new Test().target(double)
+    .it('2倍する', t => t.args(10).expect(e => [e.result.toEqual(20)])))
 }
 ```
-出典: [docs/examples/in-source.ts](../examples/in-source.ts)
 
-runnerが管理する読込環境ではimport.meta.hanamaruにTest・registerTest・middleware・resource・relationが提供されます。
+runnerが管理する読込環境ではimport.meta.hanamaruにTest・registerTest・middleware・environment・resource・scenario・method・valueAdapter・integers・strings・arrays・tuples・constant・boolean・record・oneOfが提供されます。
 通常のNode.jsでこのファイルをimportするとimport.meta.hanamaruは未定義で、登録ブロックは評価しません。
 TypeScriptではhanamaruの型だけをimportするとImportMetaの型が使えます。
 

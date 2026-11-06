@@ -13,7 +13,6 @@ const missingPage = new Test<{ server: Server }>()
     .argsFrom(ctx => [ctx.server, '/missing'])
     .expect(e => [e.result.toBe(404)]))
 
-// #region group-middleware
 export const serverTests = new Test()
   .group(middleware(async (_, next) => {
     const server = await startServer()
@@ -23,6 +22,5 @@ export const serverTests = new Test()
       await server.stop()
     }
   }), [listUsers, missingPage])
-// #endregion group-middleware
 
 registerTest(serverTests)

@@ -1,20 +1,21 @@
-import type { EvaluatedModuleNode, ResolvedResult, SSRImportMetadata } from '@hanamaru/vite/module-runner'
+import type { ResolvedResult, SSRImportMetadata } from '@hanamaru/vite/module-runner'
 import { ModuleRunner } from '@hanamaru/vite/module-runner'
 import * as v from 'valibot'
 import type { ModuleInvoke } from '../../application/ports/module-loader.js'
-import { functionValue, invoke as invokeFunction, objectValue, property, valueOf } from '../../foundation/value.js'
-import type { FacadeEvaluator } from './evaluator.js'
-import type { ModuleFacades, Namespace } from './facades.js'
+import { functionValue, invoke as invokeFunction, objectValue, property } from '../../foundation/value.js'
+import type { TestModuleEvaluator } from './evaluator.js'
+import type { Value } from '../../foundation/value.js'
+type Namespace = Record<string, Value>
 
 /**
- * Viteのmodule runnerを内側に持ち、読み込んだmoduleをnamespaceへ被せ替える。
- * Vite 8.3は読み込み結果を包む公開の口を持たないため、内部への接続はこのadapterの中だけに閉じる。
+ * Viteのmodule runnerを内側に持ち、importとtransportの契約を提供する。
+ * 名前付きexportの存在検査に必要な内部への接続は、このadapterの中に閉じる。
  */
-export class FacadeRunner {
+export class EvaluatedModuleRunner {
   readonly #inner: ModuleRunner
   #closing: Promise<void> | undefined
 
-  constructor(facades: ModuleFacades, evaluator: FacadeEvaluator, transport: ModuleInvoke) {
+  constructor(evaluator: TestModuleEvaluator, transport: ModuleInvoke) {
     const inner = new ModuleRunner(
       {
         hmr: false,
@@ -33,15 +34,6 @@ export class FacadeRunner {
       evaluator,
     )
     this.#inner = inner
-    const directRequest = functionValue(property(ModuleRunner.prototype, 'directRequest'))
-    Reflect.defineProperty(inner, 'directRequest', {
-      async value(url: string, module: EvaluatedModuleNode, callstack: string[]): Promise<Namespace> {
-        const original = valueOf(await Promise.resolve(invokeFunction(directRequest, inner, [url, module, callstack])))
-        const facade = facades.view(module.id, original)
-        module.exports = facade
-        return facade
-      },
-    })
     const processImport = functionValue(property(ModuleRunner.prototype, 'processImport'))
     Reflect.defineProperty(inner, 'processImport', {
       value(exports: Namespace, result: ResolvedResult, metadata?: SSRImportMetadata) {

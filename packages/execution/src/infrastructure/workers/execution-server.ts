@@ -6,16 +6,13 @@ import { ExecutionLifecycle } from '../../application/execution/lifecycle.js'
 import type { Fields } from '@hanamaru/blueprint/model'
 import type { ExecutionNode, Frame } from '../../domain/execution/model.js'
 import { required } from '../../domain/execution/javascript.js'
-import { bindCase, bindNode } from '../execution/bindings.js'
-import type { RunningRuntime } from '@hanamaru/module-runtime/infrastructure/modules/runtime'
 import { CommandQueue } from './execution-session.js'
 import { ExecutionChannel } from './execution-channel.js'
 import type { ExecutionCommand } from '@hanamaru/execution-protocol/data'
 
-/** 1回ぶんの持ち場。読み直した計画と、その計画が指すmoduleを差し替えるruntimeは同じ1回に属する。 */
+/** 1回ぶんの持ち場。読み直した計画は同じruntimeで評価した対象を保持する。 */
 interface Serving {
   nodes: Map<string, ExecutionNode>
-  runtime: RunningRuntime
 }
 
 /** 囲んでいる最中のgroup。開いた順に積み、閉じるまで子のframeとfieldsに効く。 */
@@ -63,9 +60,9 @@ export class ExecutionServer {
     this.#channel = channel
   }
 
-  /** 親が口を閉じるまで戻らない。差し替える相手はこのworkerが開いたruntimeに属する。 */
-  async serve(nodes: Map<string, ExecutionNode>, runtime: RunningRuntime): Promise<void> {
-    await this.#serve({ nodes, runtime }, [])
+  /** 親が口を閉じるまで戻らない。対象はこのworkerが読み込んだ計画から選ぶ。 */
+  async serve(nodes: Map<string, ExecutionNode>): Promise<void> {
+    await this.#serve({ nodes }, [])
   }
 
   async #serve(serving: Serving, groups: ActiveGroup[]): Promise<Extract<ExecutionCommand, { type: 'group-close' }>> {
@@ -79,7 +76,7 @@ export class ExecutionServer {
       const key = JSON.stringify(command.type === 'attempt' ? command.path.slice(0, -1) : command.path)
       const original = serving.nodes.get(key)
       if (!original) throw new TypeError('execution job references an unknown path')
-      const node = bindNode(serving.runtime, withGroups(original, groups, jsonFields(command.resourceFields)))
+      const node = withGroups(original, groups, jsonFields(command.resourceFields))
       if (command.type === 'attempt') {
         if (node.kind !== 'test') throw new TypeError('attempt requires a test node')
         const item = node.bp.cases[required(command.path.at(-1))]
@@ -91,8 +88,10 @@ export class ExecutionServer {
           command.number < 1
         )
           throw new TypeError('invalid attempt job')
-        this.#lifecycle.markPhase('middleware')
-        const result = await this.#attempts.execute(node, bindCase(serving.runtime, item), command.number)
+        this.#lifecycle.markPhase('prepare')
+        const result = await this.#attempts.execute(node, item, command.number, (result, phase) =>
+          this.#channel.progress(command.id, result, phase),
+        )
         this.#lifecycle.end()
         this.#channel.reply(command.id, { ...result, reason: this.#lifecycle.reason })
       } else if (command.type === 'group-open') {

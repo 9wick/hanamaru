@@ -45,7 +45,7 @@ export class CaseExecutor {
     path: number[],
   ): Promise<MutableCaseResult> {
     const lifecycle = this.#lifecycle
-    const base = caseBase(node.config, item, index, path)
+    const base = caseBase(node.config, item, index, path, node.bp.characteristic)
     const mode = executableMode(item, only)
     // todoを先に外すことで、以降のitemが実行に必要な定義を備えたcaseだと型でも決まる。
     if (item.mode === 'todo' || mode || lifecycle.reason) return notRunCase(base, mode ?? 'cancelled')

@@ -1,4 +1,4 @@
-import type { CaseBlueprint, RuntimeMock } from '@hanamaru/blueprint/model'
+import type { CaseBlueprint } from '@hanamaru/blueprint/model'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 
 export function indexExecutionNodes(nodes: ExecutionNode[]) {
@@ -12,16 +12,6 @@ export function indexExecutionNodes(nodes: ExecutionNode[]) {
   }
   visit(nodes, [])
   return entries
-}
-
-export function overlayMocks(base: RuntimeMock[], own: RuntimeMock[]) {
-  const merged = [...base]
-  for (const mock of own) {
-    const index = merged.findIndex((x) => x.object === mock.object && x.key === mock.key)
-    if (index < 0) merged.push(mock)
-    else merged[index] = mock
-  }
-  return merged
 }
 
 export function allCases(nodes: ExecutionNode[]): CaseBlueprint[] {

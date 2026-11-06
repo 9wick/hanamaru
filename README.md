@@ -1,12 +1,14 @@
 # hanamaru
 
-hanamaruは、TypeScriptの関数やメソッドをテストするフレームワークです。
+hanamaruは、TypeScriptの関数やメソッドの契約をテストするフレームワークです。
 
-テスト対象を選び、引数と期待を分けて書くことで、「何を渡すとどうなるはずか」がそのまま読み取れます。テスト対象の型から引数や期待値の型が決まるため、テスト側で型を書き直すことなく、書き間違いや実装変更のズレに気づけます。
+実装の手順ではなく、対象が約束する結果・状態・外部への効果を確かめます。正しいテストを書きやすくすると同時に、不適切な検証や実装への介入を、型とAPIの構造で書きにくく・書けなくすることを目指します。
 
-テスト定義は[`.blueprint()`](docs/reference/metadata.md)で構造化データとして取り出せます。階層構成、モック、呼び出し条件、関数参照などが含まれており、テスト対象を実行せずにケース一覧を書き出したり、独自ツールやプラグインから利用したりできます。
+テスト対象を固定し、入力と期待を分けて書きます。対象の型から引数と期待値を推論するため、型を書き直す必要はありません。純粋関数と副作用を持つ処理を区別し、副作用は実際に生じた効果を観測することを基本とします。mockと呼び出し確認は、直接観測できない場合の妥協として扱います。
 
-単体関数から依存を持つ処理まで使えます。テスト定義用のライブラリと、実行用のCLIを提供します。
+この方針を具体化した[契約をテストするためのUX/DX](docs/guides/testing-contracts.md)を、APIと実行の契約にします。用途ごとに使える操作を絞り、不適切な組合せを型と実行時検証で拒否します。
+
+テスト定義用のライブラリと実行用のCLIを提供します。定義は[`.blueprint()`](docs/reference/metadata.md)から構造化データとして取得でき、ケース一覧や独自ツールにも利用できます。
 
 ## テスト対象の型を、そのまま使う
 
@@ -30,48 +32,29 @@ registerTest(addition)
 
 `registerTest` はCLIで実行するテストを登録する関数です。`add` の実装を含む例は[入門ガイド](docs/guides/getting-started.md#最初のテスト)を参照してください。
 
-## 戻り値と、依存の呼ばれ方を確かめる
+## 契約に合わせて検証を選ぶ
 
-戻り値に加えて、依存先のメソッドがどう呼ばれたかも確かめられます。
+[具体的な書き方と禁止例](docs/guides/writing-tests.md)では、対象・pure/effectful・it/propertyの選択から、環境・観測・期待・登録までを示します。
 
-<!-- example: docs/examples/user.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
+targetは対象を、pure()/effectful()は特性を、it/propertyはケースの種類を選びます。省略時はpureで、pure()の明示と同じ意味です。特性はケース追加前に一度だけ宣言でき、途中で切り替えられません。
 
-export const users = new Test()
-  .target(createUser)
-  // 振る舞いを変えたい依存だけ、共通のモックを設定する。
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.result.toEqual({ id: 'u1' }),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-    ])
-  )
-  .it('保存に失敗したら通知しない', t => t
-    // このケースだけ、共通設定を上書きする。
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [
-      e.error.toBeInstanceOf(Error),
-    ])
-    .expectCalls(call => [
-      call(mailService, 'send').notCalled(),
-    ])
-  )
+具体例はit、入力範囲に対する性質は並列のpropertyに書きます。expectはそのケース内の期待です。冪等性など複数実行の関係も性質に含み、通常のitにcallsを提供しません。
 
-registerTest(users)
-```
+| 確かめたい契約 | 書く内容 |
+|---|---|
+| この入力なら、この結果になる | 入力と具体的な期待結果 |
+| 入力の範囲に対して性質が成立する | 入力の範囲と、結果や観測値について成立する条件 |
+| 往復すると元に戻る、二つの実行結果が関係を満たす | 宣言した対象への呼び出しと、入力・結果間の関係 |
+| 保存される、メールが届く | targetを実行し、保存状態や今回のメールを観測して照合する |
+| 操作を順に行うと期待した状態になる | 一つの独立したケース内の操作列と、各段階の観測 |
 
-`.expect()` は戻り値や例外を、`.expectCalls()` は依存メソッドの呼び出し回数や引数を確かめます。個別にspyを登録する必要はありません。振る舞いを変えたい依存には `.mock()` を使い、ケースごとに上書きもできます。
+例えばユーザー登録なら、保存したユーザーを取得し、届いたメールの宛先と本文を確かめます。送信関数の呼び出し記録だけでは、メールが届いたことを確かめたことにはなりません。失敗時の状態や通知の有無も、targetの契約に従って検証します。
 
-この例では保存処理をモックに置き換え、通知処理は本物を呼んで記録しています。
-**呼び出しの記録だけでは、本物の処理は止まりません。** DB更新や外部への通知を避けたい場合は、その依存もモックに置き換えてください。
-対象と依存の実装例は[モックの例](docs/guides/getting-started.md#モックを使う)を参照してください。
+純粋関数では入力と結果の関係を確かめ、副作用用のmockや呼び出し記録を通常の選択肢にしません。一つのケースで契約の全側面を検証する必要はありません。
+
+[複数呼び出しの関係](docs/guides/multiple-calls.md)、[期待と観測](docs/reference/api-expect.md)、[操作列](docs/guides/flow.md)で、それぞれの書き方と制約を説明します。
+
+直接観測が困難な場合や外部障害を再現する場合には、環境が提供する[型付きの代替](docs/reference/api-mock.md)を使います。内部の任意関数は差し替え対象にできません。
 
 ## テストの準備と共通設定をまとめる
 
@@ -81,11 +64,11 @@ registerTest(users)
 |---|---|
 | 入力と期待値の組み合わせを並べる | [each](docs/guides/each.md)：行データからケースを作る |
 | 準備と後始末をまとめる | [middleware](docs/guides/middleware.md)：前処理と後始末を一緒に書く。用意した値の型は引数や期待値に伝わる |
-| 複数のテストに同じモックや設定を使う | [group](docs/guides/grouping.md)：配下のテストへ共通設定を適用する |
+| 複数のテストに環境や設定を共有する | [group](docs/guides/grouping.md)：配下のテストへ共通設定を適用する |
 | 共有リソースの依存関係と寿命を管理する | [resource](docs/concepts/resources.md)：必要なテストだけに共有環境を用意する |
 | 制限時間や再試行を指定する | [timeout・retry](docs/guides/execution-options.md)：共通設定またはケースごとに指定する |
 
-各試行では、hanamaruが管理するモック、コンテキスト、呼び出し記録を作り直します。外部DBやモジュール内の状態は自動では復元しないため、必要な初期化や後始末はmiddlewareなどに書きます。
+各評価では、hanamaruが管理する環境の依存、コンテキスト、観測記録を作り直します。propertyでは生成例・縮小候補の間でも初期化します。外部DBやモジュール内の状態は自動では復元しないため、必要な初期化や後始末はmiddlewareなどに書きます。
 
 ## 実行して、失敗の理由を確認する
 
@@ -112,13 +95,16 @@ CLIはTypeScriptコードを変換して実行します。CLI自体は型チェ�
 
 Node.js 22.18以上、Bun 1.3以上、Deno 2.9.2以上に対応しています。型チェックにはTypeScript 5.8以上を使います。BunやDenoでの起動方法は[CLI](docs/reference/cli.md)を参照してください。
 
-v0.1.0ではテストを直列に実行します。並列実行・watchモード・カバレッジ計測・snapshot・fake timersは提供していません。VitestやJestと一部共通するマッチャ名はありますが、API全体の互換性はありません。モックの対象にできる参照など、詳しい範囲は[制約と実装状況](docs/reference/limitations.md)を参照してください。
+ケースは互いの実行順へ依存しません。VitestやJestとのAPI全体の互換性より、用途に合った記述と制約を優先します。詳しくは[提供範囲と保証の境界](docs/reference/limitations.md)を参照してください。
 
 ## ドキュメント
 
+- [契約をテストするためのUX/DX](docs/guides/testing-contracts.md)（実装の受け入れ条件）
+- [設計思想](docs/concepts/concepts.md)
+- [具体的な書き方と禁止例](docs/guides/writing-tests.md)
 - [入門ガイド](docs/guides/getting-started.md)
-- [複数の呼び出しで契約をテストする](docs/guides/multiple-calls.md)
-- [シナリオ全体を検証するflow](docs/guides/flow.md)（未実装・設計中）
+- [複数実行を必要とする性質を検証する](docs/guides/multiple-calls.md)
+- [操作列の具体例と性質](docs/guides/flow.md)
 - API：[Test](docs/reference/api-test.md) / [ケース](docs/reference/api-it.md) / [マッチャ](docs/reference/api-expect.md) / [モック](docs/reference/api-mock.md)
 - [型推論](docs/reference/type-inference.md) / [実行の仕組み](docs/concepts/semantics.md)
 - [プラグイン向けblueprint](docs/reference/metadata.md)

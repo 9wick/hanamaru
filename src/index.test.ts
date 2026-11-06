@@ -6,10 +6,21 @@ test('the public package exposes authoring and shares its Test identity', () => 
   expect(api.Test).toBe(Test)
   expect(Object.keys(api).sort()).toEqual([
     'Test',
+    'arrays',
+    'boolean',
+    'constant',
     'defineConfig',
+    'environment',
+    'integers',
+    'method',
     'middleware',
+    'oneOf',
+    'record',
     'registerTest',
-    'relation',
     'resource',
+    'scenario',
+    'strings',
+    'tuples',
+    'valueAdapter',
   ])
 })

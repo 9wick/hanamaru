@@ -6,6 +6,10 @@ import type {
   GroupMiddlewareFailure,
 } from '@hanamaru/execution-protocol/data'
 export type {
+  EvaluationResult,
+  OperationResult,
+  ObservationResult,
+  PropertyRun,
   DiagnosticKey,
   DiagnosticProperty,
   DiagnosticValue,
@@ -24,6 +28,12 @@ import type { SourceLocation } from '@hanamaru/blueprint/model'
 import type { ResolvedExecutionConfig } from '../execution/config.js'
 
 interface AttemptResultBase {
+  readonly selectedEvaluationIndex?: import('@hanamaru/execution-protocol/data').MutableAttempt['selectedEvaluationIndex']
+  readonly expectedTermination?: import('@hanamaru/execution-protocol/data').MutableAttempt['expectedTermination']
+  readonly operations?: readonly import('@hanamaru/execution-protocol/data').OperationResult[]
+  readonly terminationTarget?: number | null
+  readonly evaluations?: readonly import('@hanamaru/execution-protocol/data').EvaluationResult[]
+  readonly property?: import('@hanamaru/execution-protocol/data').PropertyRun
   readonly attempt: number
   readonly durationMs: number
   readonly outcome: TargetOutcome | null
@@ -55,6 +65,8 @@ export type AttemptResult = PassedAttemptResult | FailedAttemptResult | Cancelle
 type RetriableFailedAttemptResult = FailedAttemptResult & { readonly cleanup: 'complete' }
 
 export type CaseResult = {
+  readonly caseKind: 'example' | 'property' | 'todo'
+  readonly characteristic: 'pure' | 'effectful'
   readonly name: string
   readonly origin: SourceLocation
   readonly path: readonly number[]

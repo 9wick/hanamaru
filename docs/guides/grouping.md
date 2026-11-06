@@ -1,276 +1,82 @@
 # テストをグループにまとめる
 
-`.group()` で関連するテストをまとめます。
-グループに書いたmock・useは、その配下のケースに共通して適用します。
-名前は必要なときだけ付けられます。
-
-読むファイルを名前で選ぶ機能は[project](projects.md)を参照してください。groupはテストを合成し、共通設定や環境の適用範囲を作ります。[環境を共有する利用例](project-use-cases.md#環境を複数のテストで共有する)では、groupで合成したルートを登録し、そのファイルをprojectで選びます。
+groupは完成した子と共通設定をまとめます。資源の共有とケース間の順序依存は別です。mockを親から任意の子へ注入する操作はありません。
 
 ## 関連するテストと共通設定
 
-ユーザーに関するテストをまとめ、作成のテストだけで保存処理をモックする例です。
-[groups.test.ts](../examples/groups.test.ts)と[対象のコード](../examples/user.ts)を掲載しています。
-
-<!-- example: docs/examples/groups.test.ts -->
-```ts
-import { Test, registerTest } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-const creation = new Test()
-  .target(createUser)
-  .mock(userRepository, 'save', m => m.resolves({ id: 'mock-user' }))
-  .it('保存して通知する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'mock-user' })])
-    .expectCalls(call => [
-      call(mailService, 'send').calledOnceWith({ id: 'mock-user' }),
-    ]))
-  .it('保存に失敗したら通知しない', t => t
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .args({ name: 'Alice' })
-    .expect(e => [e.error.toThrow('save failed')])
-    .expectCalls(call => [call(mailService, 'send').notCalled()]))
-
-const saving = new Test()
-  .target(userRepository, 'save')
-  .it('ユーザーを保存する', t => t
-    .args({ name: 'Alice' })
-    .expect(e => [e.result.toEqual({ id: 'u1' })]))
-
-export const registrations = new Test()
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .group('作成', [creation])
-  .group([saving])
-
-registerTest(registrations)
-```
-出典: [docs/examples/groups.test.ts](../examples/groups.test.ts)
-
-外側のsendのモックは、グループ内の全ケースに適用します。
-「作成」のsaveのモックは、その中の2ケースだけに適用します。
-隣のsaveのテストでは本物の保存処理を呼ぶため、結果は `u1` です。
-さらにケース内のmockで、そのケースだけ振る舞いを上書きできます。
+子のtargetと検証は子に書き、groupには環境の寿命と共通設定を置きます。各effectfulケースのenvironmentが、依存と観測器を評価ごとに提供します。
 
 ## group全体をmiddlewareで囲む
 
-`group(middleware, [children])` は、渡した子のまとまり全体を一度だけmiddlewareで囲みます。
+次の例は実際のファイルを書き、その内容を観測します。共有するのは親ディレクトリだけで、ファイルと観測器はケースごとに作ります。
 
-<!-- example: docs/examples/group-middleware.test.ts#group-middleware -->
+<!-- example: none — 公開APIの記述契約：実環境の共有と独立した観測 -->
 ```ts
-export const serverTests = new Test()
-  .group(middleware(async (_, next) => {
-    const server = await startServer()
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { Test, environment, middleware, registerTest } from 'hanamaru'
+
+const save = (path: string, text: string) => writeFile(path, text)
+const files = new Test<{ root: string }>().target(save).effectful()
+  .use(environment(async (ctx, scope, next) => {
+    const directory = await mkdtemp(join(ctx.root, 'case-'))
     try {
-      return await next({ server })
+      const path = join(directory, 'message.txt')
+      await writeFile(path, '')
+      const content = scope.state({ evidence: 'real-effect', read: () => readFile(path, 'utf8') })
+      return await next({ path, content })
     } finally {
-      await server.stop()
+      await rm(directory, { recursive: true })
     }
-  }), [listUsers, missingPage])
+  }))
+  .it('内容を保存する', t => t.argsFrom(c => [c.path, 'hello'])
+    .expect(e => [e.state(e.ctx.content).toEqual('hello')]))
+
+registerTest(new Test().group('files', middleware(async (_, next) => {
+  await mkdir('.tmp', { recursive: true })
+  const root = await mkdtemp('.tmp/hanamaru-')
+  try {
+    return await next({ root })
+  } finally {
+    await rm(root, { recursive: true })
+  }
+}), [files]))
 ```
-出典: [docs/examples/group-middleware.test.ts](../examples/group-middleware.test.ts)
-
-実行順は次の形です。
-
-```text
-startServer
-  listUsers の各case/attempt
-  missingPage の各case/attempt
-stopServer
-```
-
-通常の `.use()` は各attemptを囲み、`group(middleware, [children])` のmiddlewareは子のまとまり全体を一度だけ囲みます。
-middlewareが `next({ server })` へ渡したフィールドは、全子の要求コンテキストとして型検査され、各子のattemptのコンテキストから参照できます。
-同じ子を別のgroupへ追加した場合は、追加箇所ごとに独立してmiddlewareを実行します。
-
-group middlewareは共有資源のlifetimeを表します。配下のcaseが互いの実行結果や状態に依存してよいことを意味しません。
-順序を持つ一連の操作はflowとして表し、group middlewareによる共有資源の管理とは区別します。
-
-group middlewareの前処理が失敗した場合、渡した全子の実行は開始せず、配下の実行対象caseをcancelledとしてrunを失敗させます。
-通常の例外で復元・後処理が完了した場合は、そのgroupの外の後続を続行し、runはfailed / completedです。caseの試行を捏造せず、失敗はgroup middlewareの結果に残します。
-後処理が失敗した場合もrunを失敗させ、片付いていない共有状態を次のgroupへ持ち越さないため後続の実行を中断します。
-前処理・後処理の期限は `middleware(fn, { timeout })` で指定します。どちらの超過もrunをfailed / timeoutとし、group外も含めて後続を中断します。
-通常のcase失敗やretryではgroup middlewareを作り直さず、子全体の実行が終わるまで同じ共有資源を保持します。
-
-名前を付ける場合は `group(name, middleware, [children])` と書けます。
 
 ## 依存の要求と供給
 
-子が宣言するのは `new Test<Ctx>()` の依存だけです。値をgroupで作るか、各attemptのmiddlewareで作るかは供給する側が決めます。
-同じ子を、次のどちらの構成でも使えます。
+子が必要な値だけを `new Test<R>()` で要求します。供給元のuse/groupを子の型へ埋め込みません。親は必要な時点までに値を供給し、不足や順序違反を型で拒否します。
 
-<!-- example: docs/examples/group-supply.test.ts#supply -->
+環境のscopeはgroup middlewareに渡しません。environmentをgroupへ直接渡すこともできません。groupで資源を共有し、子のenvironmentで評価固有のトークンを発行します。
+
+<!-- example: none — 公開APIの記述契約：供給の禁止例。filesは上の定義 -->
 ```ts
-const child = new Test<{ seed: number }>()
-  .target((value: number) => value)
-  .it('渡された値を使う', t => t.argsFrom(ctx => [ctx.seed])
-    .expect(e => [e.result.toBe(e.ctx.seed)]))
-
-const provideSeed = middleware(async (_, next) => next({ seed: 2 }))
-export const suppliedPerAttempt = new Test().use(provideSeed).group([child])
-export const suppliedPerGroup = new Test().group(provideSeed, [child])
+// 型エラー: rootを供給していない完成定義は登録できない。
+registerTest(files)
+// 型エラー: Testに任意関数を差し替えるmockはない。
+new Test().mock(console, 'log', m => m.returns(undefined)).group([files])
 ```
-出典: [docs/examples/group-supply.test.ts](../examples/group-supply.test.ts)
-
-どちらも供給を含む完成したルートなので、テストファイルからexportすればCLIがそのまま実行します。
-middlewareも `Ctx<…>` に必要な値だけを宣言し、`.use()` と `.group()` で使い回せます。
-配置先によって実行回数と実行時点が決まります。供給は、その値を使う処理の開始に間に合う必要があります。
-
-<!-- example: docs/examples/group-supply.test.ts#group-phase -->
-```ts
-const expectedChild = new Test<{ expected: number }>()
-  .target((value: number) => value)
-  .it('groupが渡す期待値', t => t.argsFrom(ctx => [ctx.expected])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
-
-const seededGroup = new Test<{ seed: number }>()
-  .group(middleware(async (ctx, next) =>
-    next({ expected: ctx.seed + 1 })), [expectedChild])
-
-export const seededTests = new Test().group(provideSeed, [seededGroup])
-```
-出典: [docs/examples/group-supply.test.ts](../examples/group-supply.test.ts)
-
-seededGroupも要求は `{ seed: number }` だけです。group前処理で入力を使うことは、定義の構造から自動で追跡します。
-親を `.use(provideSeed).group([seededGroup])` に変えると、seedの供給が子のgroup開始に間に合わないため、合成箇所で型エラーになります。
-名前付きgroup、入れ子、複数の子、同じ子の再利用でもこの検査を行います。間のグループの要求も `new Test<Ctx>()` で宣言します。
-group middlewareが渡す値は、そのgroup内で使えます。同じチェーンの兄弟groupには渡しません。
 
 ## 名前は任意
 
-`group([children])` ならグループの名前は不要です。
-名前を付けたい場合は `group('作成', [children])` と書けます。middleware付きでも `group(middleware, [children])` / `group('作成', middleware, [children])` の同じ規則です。
-子が一つでも配列で渡します。空配列は完成したグループになりません。
-名前の有無で設定の範囲は変わらず、一意性も要求しません。
-子の対象ケース群の名前もそのまま保持します。`new Test()` はグループを作らず、各 `group()` 呼び出しが名前付きまたは無名のグループを作ります。
-
-<!-- example: docs/examples/group-scopes.test.ts#names -->
-```ts
-const grouped = new Test()
-  .group('基本', [addition, subtraction])
-  .group('再確認', [addition])
-```
-出典: [docs/examples/group-scopes.test.ts](../examples/group-scopes.test.ts)
-
-「基本」はadditionとsubtractionを包む一つのグループです。「再確認」は別のグループで、同じadditionをもう一度含みます。additionの定義は変わらず、二つの実行箇所はそれぞれの経路の設定で実行します。
+groupの名前は表示用です。省略や同名を許し、実行箇所は位置と階層で区別します。名前を入力・参照のIDとして使わせません。
 
 ## 入れ子にして設定の範囲を分ける
 
-<!-- example: docs/examples/group-scopes.test.ts#nesting -->
-```ts
-const inner = new Test().group('内側', [addition])
-const outer = new Test().group('外側', [inner])
-```
-出典: [docs/examples/group-scopes.test.ts](../examples/group-scopes.test.ts)
-
-この実行階層は「外側 → 内側 → additionの対象ケース群」です。二つの `new Test()` は定義の起点であり、階層を増やしません。
-
-<!-- example: docs/examples/group-scopes.test.ts#scoped-mock -->
-```ts
-const userGroup = new Test()
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .group('ユーザー', [createTests, saveTests])
-
-const scoped = new Test()
-  .group([userGroup])
-  .group('メール', [mailTests])
-```
-出典: [docs/examples/group-scopes.test.ts](../examples/group-scopes.test.ts)
-
-このsendのモックは「ユーザー」の配下だけに適用し、「メール」には適用しません。
-mockは外側→内側→ケースの順に重ね、同じオブジェクト・キーでは内側を優先します。
-兄弟グループの設定は互いに影響しません。
-
-useのmiddlewareもグループの配下だけに適用します。
-親から子へ登録順に進み、後処理は内側から外側へ戻ります。
-middlewareはグループ全体で1回ではなく、実行する各ケースの各試行で動きます。
-コンテキストと呼び出し記録も各試行で用意します。
-資源を使うグループでは[useのmiddleware](middleware.md)で各ケースを囲めます。
+groupを入れ子にしてmiddleware・timeout・retryの適用範囲を分けます。共通の環境値は内側で上書きできますが、子の用途をpureからeffectfulへ変えたり、対象外の操作を許可したりはできません。
 
 ## 親で用意したコンテキストを子へ渡す
 
-グループのuseで用意した値は、子のargsFrom・`e.ctx`へ渡ります。
-親のコンテキストを使う子は、必要なフィールドを `new Test<Ctx>()` で宣言します。
-自分のuseで値を用意する場合、型パラメータは不要です。
-
-次は[user-cases.ts](../examples/user-cases.ts)の例です。
-
-<!-- example: docs/examples/user-cases.ts -->
-```ts
-import { Test, middleware } from 'hanamaru'
-import { createUser, userRepository, mailService } from './user.ts'
-
-export interface UserContext {
-  input: { name: string }
-  expectedId: string
-}
-
-export const userCases = new Test<UserContext>()
-  .target(createUser)
-  .use(middleware(async (ctx, next) => next({ expected: { id: ctx.expectedId } })))
-  .it('保存して通知する', t => t
-    .argsFrom(ctx => [ctx.input])
-    .expect(e => [e.result.toEqual(e.ctx.expected)])
-    .expectCalls(call => [call(mailService, 'send').calledTimes(1)]))
-  .it('保存に失敗したら通知しない', t => t
-    .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-    .argsFrom(ctx => [ctx.input])
-    .expect(e => [e.error.toThrow('save failed')])
-    .expectCalls(call => [call(mailService, 'send').notCalled()]))
-```
-出典: [docs/examples/user-cases.ts](../examples/user-cases.ts)
-
-親で必要な値を用意してから子を追加します。
-
-<!-- example: docs/examples/user-cases.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-import { userRepository, mailService } from './user.ts'
-import { userCases } from './user-cases.ts'
-
-export const userCaseTests = new Test()
-  .use(middleware(async (_, next) => next({ input: { name: 'Alice' }, expectedId: 'u1' })))
-  .mock(userRepository, 'save', m => m.resolves({ id: 'u1' }))
-  .mock(mailService, 'send', m => m.resolves(undefined))
-  .group([userCases])
-
-registerTest(userCaseTests)
-```
-出典: [docs/examples/user-cases.test.ts](../examples/user-cases.test.ts)
-
-不足するフィールドや型違いがあればgroupで型エラーになります。
-子の定義時に、後から追加する親の型へ遡って推論されることはありません。
-コンテキストのフィールドは読み取り専用で、`next(fields)` で追加・置き換えます。
-親のコンテキストを手動でspreadする必要はありません。
+group middlewareのnextで供給した値は、子の各評価のコンテキストへ入ります。子のenvironmentはその値を読み、評価専用の状態と観測器を作れます。子の後処理を終えてから、親の資源を解放します。
 
 ## 別ファイルのテストをまとめる
 
-groupには、その場で書いた定義も、importした定義も渡せます。
-テストが増えたら、子を別ファイルへ分けて同じグループにまとめられます。
-前節の[user-cases.test.ts](../examples/user-cases.test.ts)は、[user-cases.ts](../examples/user-cases.ts)からimportした子を親のグループへまとめています。
-
-ビルダーはイミュータブルです。同じ子を複数のグループへ追加しても、元の定義は変わりません。
-それぞれの場所で、親の設定を引き継いで実行します。
+子をexportして親へimportできます。CLIの実行対象は親の `registerTest` で登録します。子のexportを独立実行の指定にはしません。[登録](registration.md)に従います。
 
 ## 定義と実行の条件
 
-- groupには、1ケース以上ある対象ケース群か、子を持つグループを、空でない配列で渡します。
-- グループ自体はテスト対象・ケースを持たず、それぞれの子がテスト対象を持ちます。
-- 共通のuse・mockは最初のgroupより前に書きます。以降はgroupの追加とblueprintの取得ができます。
-- 対象を持つテストをまとめたいときは、新しい親からgroupへ渡します。
-
-プラグイン向けの `.blueprint()` は無名のグループも含む階層と、それぞれの設定を保持します。
-子の要求コンテキストを満たさないテストは単独でrunへ渡せません。
-CLIには必要なコンテキストを用意したルートだけをexportします。
-[登録ベースのCLI収集](registration.md)では、供給を含む完成したルートを `registerTest` に渡します。projectは登録を収集するファイルを選ぶだけで、ctxの供給元を補いません。
-子のexportだけで別のルートにはなりません。CLIで実行するルートは `registerTest` で明示します。
-詳細は[型推論](../reference/type-inference.md)、[プラグイン向けblueprint](../reference/metadata.md)、[CLI](../reference/cli.md)を参照してください。
+子は非空で、各子は完成した定義である必要があります。グループはtargetやケースを持たず、完成した子を合成します。親も子もイミュータブルな定義値で、別経路への合成で書き換わりません。
 
 ## timeoutとretryも継承する
 
-親のgroupで指定したtimeout・retryは配下へ渡り、内側のgroupの共通設定、対象ケース群の共通設定、ケース個別の設定で項目ごとに上書きできます。
-未指定の項目は親の値を保ちます。groupで指定したtimeoutは配下の各ケースの試行期限、retryは失敗したケースの再試行回数です。
-グループ全体の時間制限や、成功した兄弟まで再実行する意味にはしません。
-[設定例と解決順](execution-options.md)を参照してください。
-
-useのmiddlewareは各ケースの各試行を囲みます。`group(middleware, [children])` のmiddlewareだけは、そのグループの子全体を一度囲みます。
-groupへの追加位置は自動取得し、blueprintと実行結果の階層へ保持します。詳しくは[宣言位置](../reference/results.md)を参照してください。
+timeoutは各試行に、retryは失敗したケースの再試行に適用します。group全体の再実行ではありません。group middlewareは全子を一度囲み、environmentは評価ごとに作り直し、propertyの生成例・縮小候補の間でも初期化します。

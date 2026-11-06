@@ -9,6 +9,8 @@ import type { ResolvedExecutionConfig } from '../execution/config.js'
 import type { DiagnosticValue } from './types.js'
 
 export interface CaseResultBase {
+  caseKind: 'example' | 'property' | 'todo'
+  characteristic: 'pure' | 'effectful'
   name: string
   origin: SourceLocation
   path: number[]

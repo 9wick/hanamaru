@@ -1,187 +1,89 @@
-# マッチャ
+# 期待と観測
 
-`.expect(e => [...])` に戻り値・例外の条件を、`.expectCalls(call => [...])` に呼び出しの条件を並べます。
-`e.result`、`e.error`、`call(obj, key)` は記述子を作る入口で、`e.ctx` はそのケースのmiddlewareが渡した値を順に反映したコンテキストです。
+expectはit/propertyのケース内で使います。itは具体値・部分・許容誤差、propertyはそれらとon(refs).satisfiesによる性質を記述します。共通not、ケース内property/relateはありません。
 
 ## result
 
-resultの期待値は、対象の `Awaited<ReturnType<F>>` から型推論します。
-同期・非同期で書き方を変える必要はありません。
+結果の型は対象から推論します。toEqualは標準の構造等価、toBeはObject.is、toBeCloseToは指定した絶対許容誤差を検証します。toEqualの値領域をプレーンデータだけに制限しません。[値の比較](value-comparison.md)に従います。
 
-| マッチャ | 意味 |
-|---|---|
-| `toBe(value)` | Object.isで一致 |
-| `toEqual(value)` | 深い一致 |
-| `toMatchObject(partial)` | 指定したプロパティが部分一致 |
-| `toSatisfy(predicate)` | predicateがtrueを返す |
+part(key)は部分の期待、field(key)は観測引数やpropertyで使うrefです。どちらも型に存在するキーを選び、nullableな値の欠落はmissingとして記録します。missingとundefinedは区別します。明示したgetterの取得がthrowした場合は観測失敗です。
 
-<!-- example: docs/examples/matchers.test.ts#result -->
-```ts
-.expect(e => [
-  e.result.toEqual({ id: 'u1' }),
-  e.result.toSatisfy(user => user.id.startsWith('u')),
-])
-```
-出典: [docs/examples/matchers.test.ts](../examples/matchers.test.ts)
+## 部分・性質・関係
 
-toMatchObjectの期待値型は `Partial<V>` です。ネストした値の型まで再帰的なPartialにはしません。
-predicateには実際の結果を渡し、真偽値を同期的に返すことを要求します。
+propertyのonはrefまたは非空の名前付きrefレコードを受け取ります。satisfies(name, predicate)は保存したデータに対する同期booleanの述語です。入力・結果・状態等の関係も同じ方式で書きます。比較方法の別系列や閉じたlaw集合を必要にしません。
+
+onへ渡すrefには少なくともその評価の正常結果・型を絞った例外・outcomeまたは実行後の観測値を含めます。入力・定数だけでtargetを検証した扱いにできません。判定の意味そのものや恒真でないことは自動証明しません。
+
+独自クラスのデータはpropertyのproject(ref, value => data)で投影できます。射影は元refの取得時点で行います。identity(ref)は生の同一性をopaqueなIdentityRefへ変換し、プロパティを読み直すためには使えません。state/action/sample/投影値へのidentityは拒否します。
 
 ## error
 
-errorを含む配列は、対象がthrowまたはrejectすることを期待します。
-例外の値はunknownです。
+error.toEqual(value)、error.message.toEqual(text)を使えます。独自例外はerror.ofType(Ctor).part(key)で、型を絞った公開データを照合します。ofTypeはinstanceofも検証し、不一致ならその条件を失敗にします。スタックはtoEqualの等価性に含めません。
 
-| マッチャ | 意味 |
-|---|---|
-| `toBeInstanceOf(ctor)` | instanceof ctor |
-| `toThrow(message)` | Error.messageが文字列を含む、または正規表現に一致 |
-| `toMatchObject(partial)` | 例外オブジェクトの指定プロパティが部分一致 |
-| `toSatisfy(predicate)` | unknownを受けるpredicateがtrueを返す |
+propertyではerror.ofType(Ctor)とそのfield(key)をrefとしてon/projectへ渡せます。例外refを含む条件はthrow/rejectを期待し、ofTypeのinstanceofも条件の一部として検証します。型が違えば条件不一致とし、後続のfield取得や述語は実行しません。正常終了なら終了種別の不一致として失敗します。
 
-<!-- example: docs/examples/matchers.test.ts#error -->
-```ts
-.expect(e => [
-  e.error.toBeInstanceOf(Error),
-  e.error.toThrow('save failed'),
-  e.error.not.toThrow('network failed'),
-])
-.expectCalls(call => [
-  call(mailService, 'send').notCalled(),
-])
-```
-出典: [docs/examples/matchers.test.ts](../examples/matchers.test.ts)
+errorと同じ終了対象の正常result由来のrefは混在できません。その結果を引数にする観測も同様です。input/sample依存の状態やactionは併用できます。stepsでは先行操作の正常終了を期待し、finalで指定した最終操作だけをerrorで照合できます。前段の例外は最後のerror条件を満たしません。
 
-toThrowはErrorでない値には一致しません。文字列やundefinedをthrowする対象にはtoSatisfyを使えます。
-RegExpのlastIndexを検証結果へ影響させず、検証後も元の値を変更しません。
-resultとerrorを同じ配列へ入れることは型で防ぎます。
+## outcome
 
-## 否定
+単一実行、または明示的な最終操作を持つpropertyで、正常と例外の混在する入力範囲を扱います。Rは終了期待の対象（単一実行または明示的な最終操作）の戻り値型で、e.outcomeはRef<{ kind: 'return'; value: R } | { kind: 'throw'; error: unknown }>です。直接onへは渡さず、kindのfield、withError、またはprojectで型付きの保存データを指定します。
 
-`e.result.not` と `e.error.not` は、それぞれの全マッチャの一致・不一致を反転します。
-期待値とpredicateの型は通常のマッチャと同じです。
+outcome.withError(Ctor, projectError?)は正常側のvalueを保持し、例外側をinstanceof Ctorで検査してから射影します。省略時のerrorはnullです。型不一致は条件失敗、射影のthrowは観測障害であり、どちらもfalseや成功へ変換しません。型付きコピーできない正常値も、必要ならprojectでデータへ投影してonに渡します。
 
-<!-- example: docs/examples/matchers.test.ts#not -->
-```ts
-.expect(e => [e.result.not.toBe(0)])
-```
+outcome由来のrefを含む条件があれば、期待する終了はreturn-or-throwです。同じ終了対象のresult/error条件・ref（観測引数やprojectでの使用も含む）とは混在できません。stepsの先行成功結果のrefは併用できます。input/sampleとそれらに依存する観測は使えます。itとfinalなしのstepsには提供しません。対象以外の失敗・実行timeoutをthrowの正常な枝として渡しません。
 
-<!-- example: docs/examples/matchers.test.ts#not-result -->
-```ts
-.expect(e => [e.result.not.toEqual({ id: 'missing' })])
-```
+stepsの返却レコードでは、明示的な最終操作フィールドは最後の正常結果、他のフィールドは先行成功結果を指します。レコード全体が最後の正常結果を含む場合、その全体refはerror/outcomeと併用できません。e.error/e.outcomeは最終操作だけを表し、前段の例外を拾いません。propertyのoutcome.valueは最終操作の戻り値型です。
 
-`e.error.not.toThrow(message)` は、対象がthrowまたはrejectしたうえで、その値が指定したメッセージに一致しないことを期待します。
-正常終了を期待する条件ではありません。resultの否定も正常終了を要求します。
-比較やpredicateが例外を投げた場合は、否定でも検証失敗です。
-否定条件は通常の条件と同じ配列へ並べられ、通常の条件を変更しません。
+## refの入口
+
+単一実行のit/propertyではinput(index)が対象へ束縛した引数を指します。sample(index)はpropertyだけで、生成データを指します。stepsには一意の引数タプルがないためinputを提供しません。resultは正常結果、field(key)はその部分、value(value)はcompile時に保存した定数です。
+
+propertyではerror.ofType(Ctor)/field(key)も失敗のrefとしてon/projectに使えます。型付き保存できない例外クラス全体はprojectで必要なデータへ投影します。この例外refは観測引数・before・afterには提供せず、単一実行または明示的な最終操作を持つpropertyの条件に限定します。
+
+itではこれらを結果依存の観測引数に使えます。propertyではon/projectにも渡せます。state(token,...args)は計画完了後の値、.before()は実行前の値、.after(stepRef)は指定操作直後の値を参照します。beforeはproperty専用で、後値や実行結果と関係を記述するために使います。beforeだけの条件をtargetの検証として完成させません。
+
+区間を指定したactionもpropertyのon/projectへ渡せます。eventuallyで待機する状態はrefにせず、toEqual等の単独条件にします。refの時点・所有者・型は[型推論](type-inference.md#refの入口)に従います。
+
+## 状態
+
+scope.state({ evidence, read })はreadの引数と戻り値を型として持ちます。e.state(token, ...args)のargsには型の合う定数またはinput/sample/result/操作結果のrefを渡します。引数には型付きコピー可能なデータを使い、別の状態/actionの結果に依存する観測グラフは作りません。
+
+通常は対象計画全体のsettle後に引数を解決して読みます。before/unchangedは実行前にも同じ保存した引数で読むため、result依存の引数を拒否します。state(...).after(stepRef)はその操作の完了直後に読む指定で、引数がその時点までに得られることをcompileで確認します。未実行の操作の観測は未評価です。afterは通常の先行操作のrefに限り、FinalStepRefをチェックポイントに使いません。最終操作の後はafter-planで観測します。
+
+toEqual、part(key).toEqual、unchangedを提供します。eventually({ withinMs, intervalMs })の後はtoEqual/partだけで、afterやunchangedとの併用はありません。正の有限値かつintervalMs <= withinMsを要求します。状態の読み取りだけを再試行し、取得失敗を不一致として再試行しません。
+
+## action
+
+scope.action({ evidence, open })のopenはtarget前に開始し、finishとdisposeを返します。finishは一度だけ履歴を確定し、disposeは成否にかかわらず解放します。環境は発生時点の値を独立して記録し、targetが編集できる最終配列だけを履歴にしません。
+
+action(token).untilTargetSettles()またはforAfterTarget(ms)で記録区間を指定し、toEqual(events)・count(n)・none()を照合します。countは0以上の安全な整数です。同じトークンの矛盾した区間は拒否し、条件が早く成立しても区間を短縮しません。
+
+## 証拠と呼び出し記録
+
+state/actionは時間的な観測形態です。evidenceはreal-effect（本物のtarget自身または置換していない資源の状態）、substitute-effect（fakeの契約モデルの状態）、call-record（依存へ渡された引数・回数の記録）として環境が別に宣言します。プロセス内外による分類ではありません。観測APIの形だけで、本物の外部効果を観測したと判断しません。caseからevidenceの変更はできません。
+
+呼び出し記録が必要なら環境がその履歴を観測トークンとして提供し、call-recordと表示します。expectCallsや任意メソッドをspyするAPIはありません。どこを観測しているかの意味は環境提供者の責任であり、宣言の真偽をフレームワークが自動認証するものではありません。
 
 ## 呼び出し
 
-| マッチャ | 意味 |
-|---|---|
-| `calledTimes(n)` | 合計n回呼ばれた |
-| `notCalled()` | 一度も呼ばれていない |
-| `calledWith(...args)` | 深く一致する引数の呼び出しが1回以上ある |
-| `calledOnceWith(...args)` | 合計1回だけ呼ばれ、その引数が深く一致する |
-| `calledNthWith(n, ...args)` | そのメソッドのn回目の引数が深く一致する |
+呼び出しの記録は前節のcall-recordとして扱います。実効果を直接観測できない場合の代替の証拠であり、受信・永続化を保証したとは報告しません。[環境の代替](api-mock.md)に従います。
 
-<!-- example: docs/examples/matchers.test.ts#calls -->
-```ts
-.expectCalls(call => [
-  call(userRepository, 'save').calledOnceWith({ name: 'Alice' }),
-])
-```
-出典: [docs/examples/matchers.test.ts](../examples/matchers.test.ts)
+## 否定
 
-expectCallsだけでも正常終了を期待します。途中で予期しない例外が起きれば失敗です。
-記録は実行器が自動設定し、mockがなければ本物のメソッドを呼びます。
-同じメソッドへの複数条件は同じ呼び出し記録に対して検証します。
-calledTimesは0以上の安全な整数を受け取り、それ以外は不正な期待として失敗します。
-calledNthWithのnは1始まりの正の安全な整数で、定義時・実行受付時に検査します。
-回数は呼び出し開始順で数え、Promiseの完了順ではありません。n回目がなければ失敗し、実際の合計回数を表示します。
-calledNthWithは合計回数を制約しないため、必要ならcalledTimesを併記します。
-引数は記録時の参照を保持し、深く複製しません。テスト対象が後から値を変更した場合は検証時の状態を比較します。
+具体値の期待に共通notはありません。性質の不一致条件はproperty、状態の不変はunchanged、出来事の不発生は有限区間のnoneで記述します。観測失敗を反転して成功にはしません。
 
 ## middlewareで生成した参照・値を検証する
 
-`call.from(ctx => ctx.client, 'send')` で、middlewareが作ったオブジェクトのメソッドを記録できます。
-期待する引数には `calledWithFrom(build)`、`calledOnceWithFrom(build)`、`calledNthWithFrom(n, build)` を使えます。
-`build` は型付きのctxから引数タプルを返します。静的な `call(obj, key)` とも組み合わせられます。
-
-<!-- example: docs/examples/context-calls.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-
-interface Client {
-  send(id: string): Promise<void>
-}
-
-registerTest(new Test()
-  .use(middleware(async (_, next) => {
-    const client: Client = { async send(_id) {} }
-    return next({ client, id: 'created-user' })
-  }))
-  .target((client: Client, id: string) => client.send(id))
-  .it('準備したclientが生成したIDで呼ばれる', t => t
-    .argsFrom(ctx => [ctx.client, ctx.id])
-    .expectCalls(call => [
-      call.from(ctx => ctx.client, 'send')
-        .calledOnceWithFrom(ctx => [ctx.id]),
-    ])))
-```
-出典: [docs/examples/context-calls.test.ts](../examples/context-calls.test.ts)
-
-参照と期待引数のresolverは、各attemptのmiddleware前処理後、記録設定・argsFrom・targetの前に同期的に一度評価します。
-retryでは新しいctxで評価し直し、skip/todoでは呼びません。resolverの例外はinstrumentationの失敗になり、targetを呼ばずmiddlewareの後始末へ進みます。
-期待引数が参照する値は深く複製しません。対象による後続の変更は、静的な呼び出し条件と同様に検証時に見えます。
-
-`call.from` は各attemptで得る通常オブジェクト向けです。module namespaceはCLIが読込前に準備するため、
-`call(namespace, key).calledOnceWithFrom(...)` のように参照を静的に渡し、期待引数だけをctxから取得します。
+環境のscopeが評価ごとにstate/actionを発行し、ctxからケースへ渡します。別評価のトークンやrefの持ち込みを拒否します。観測の定数引数と期待値はcompileで保存し、結果の引数refは利用可能になるまで実行を延期します。
 
 ## コンテキスト
 
-<!-- example: docs/examples/matchers.test.ts#context -->
-```ts
-const withContext = new Test()
-  .target(add)
-  .use(middleware(async (_, next) => next({ input: [1, 2] as const, expected: 3 })))
-  .it('ctxを使う', t => t
-    .argsFrom(ctx => [...ctx.input])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
-```
-出典: [docs/examples/matchers.test.ts](../examples/matchers.test.ts)
+expectはprepare後・target前に構築します。ctxは実環境、結果等はrefです。述語から可変ctxを期待として読み直さず、保存した入力・結果・valueを使います。インスタンス供給のfromもこの段階で解決します。
 
-コンテキストには親から子までのmiddlewareがnextへ渡したフィールドが入り、同名のものは内側を優先します。
-フィールド自体は読み取り専用ですが、参照先は同じ値なので、対象が変更したオブジェクトの状態も見えます。
-expectのコールバックはテスト対象の呼び出しが終わった後に呼ぶため、コールバックで参照した値もその時点の値です。
-predicateもコンテキストをクロージャで参照できます。追加のラベルや専用マッチャは不要です。
+## 期待値の保存
+
+期待値はcompile、実測値は各取得時点に、独立した比較表現へ保存します。toBeだけは生の参照を扱います。型付きデータのコピーと比較表現を混同しません。[比較と保存](value-comparison.md)に従います。
 
 ## 深い一致と評価
 
-toEqualと呼び出し引数の比較は、Vitest 5.0.2のtoEqualと同じ比較関数を使います。
-toMatchObjectも同バージョンの部分一致の比較関数を使います。JSONへのserializeは比較に使いません。
-比較基準は固定した `@vitest/expect` のバージョンに対応し、更新時は互換性を検証します。
-
-toEqualでは列挙可能なSymbolキーも比較します。同じSymbolのキーと値が一致すれば成功し、
-同じ説明文から別々に生成したSymbolは別のキーとして扱います。
-配列の穴とundefined、通常の欠けた文字列キーとundefinedのキーは区別しません。
-同じプロパティを持つクラスインスタンスと通常オブジェクトも一致できます。
-Dateは時刻、RegExpはsourceとflags、Map/Setは順序によらない内容の比較を行います。
-
-toMatchObjectでは指定した文字列キーが存在することを要求し、その値を部分一致で比較します。
-Dateは時刻を比較し、Map/Setは要素数と内容を比較します。Mapの値やSetの要素がオブジェクトなら部分一致になります。
-配列は長さが一致したうえで要素ごとに部分一致します。
-Vitest 5.0.2の挙動に合わせ、Symbolキーだけの条件は一致判定を制約しません。
-RegExp・WeakMap・Promise等の列挙プロパティを持たないオブジェクトも、toMatchObjectでは別の値と一致する場合があります。
-正規表現のパターンやフラグにはtoEqual、参照の同一性にはtoBe、Promiseの解決値にはawait後の値の検証を使います。
-
-比較ではgetterが実行される場合があり、その例外は検証失敗として報告します。
-診断を組み立てるためにgetterやtoJSONを実行しない規則は維持します。
-この互換性は値の比較基準についてのものであり、Vitestの全マッチャ・カスタム比較関数登録・実行APIの提供を意味しません。
-
-結果の期待、呼び出しの期待の順に、それぞれ配列順で評価し、最初の不一致で打ち切りません。
-終了の種類が合わない場合、対応するresult/errorの述語は呼ばず、呼び出しの検証は続けます。
-コールバックのthrowや述語のthrowも失敗として報告します。
-不一致と述語のthrowを区別し、条件ごとの診断を[実行結果](results.md)へ残します。
-blueprint上の表現は[プラグイン向けblueprint](metadata.md)、実行手順は[実行セマンティクス](../concepts/semantics.md)を参照してください。
+部分のキー経路、値アダプター、観測引数・時点・evidenceを診断に残します。不一致、取得不能、述語例外、未実行のための未評価を区別します。propertyでは入力・反例・縮小情報を結果へ残します。

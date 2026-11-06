@@ -1,8 +1,6 @@
 import { Injectable, inject } from '@zeltjs/core'
 import type { ModuleOptions as ProjectConfig } from '../../application/execution/options.js'
 import type { ModuleSession } from '../../application/ports/module-host.js'
-import type { ModulePreparation } from '@hanamaru/module-runtime/application/ports/module-loader'
-import type { RuntimeBlueprint } from '@hanamaru/blueprint/model'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../domain/execution/javascript.js'
 import type { RunningCompiler } from '@hanamaru/module-runtime/infrastructure/modules/compiler'
@@ -35,10 +33,6 @@ class WorkerModuleSession implements ModuleSession {
 
   invoke(name: string, args: Value[]): Promise<Value> {
     return this.#compiler.invoke(name, args)
-  }
-
-  prepare(blueprints: RuntimeBlueprint[]): ModulePreparation[] {
-    return this.#modules.prepare(blueprints)
   }
 
   describe(nodes: ExecutionNode[]): Value {
@@ -77,11 +71,10 @@ export class WorkerModuleToolchain {
 
   async open(vite: ProjectConfig['vite']): Promise<ModuleSession> {
     const compiler = await this.#compilers.start(vite)
-    // 収集は差し替えを行わない。宛先が決まるのは収集し終えた計画からで、据えるのは実行worker。
     const entryURL = this.#entry.url.href
     return new WorkerModuleSession(
       compiler,
-      this.#runtimes.start(compiler.invoke.bind(compiler), [], { key: 'hanamaru', url: entryURL }),
+      this.#runtimes.start(compiler.invoke.bind(compiler), { key: 'hanamaru', url: entryURL }),
       this.#modules,
       entryURL,
     )

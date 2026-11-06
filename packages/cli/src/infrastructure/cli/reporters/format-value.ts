@@ -54,6 +54,8 @@ export function formatValue(value: DiagnosticValue | TargetOutcome | TargetOutco
       return 'undefined'
     case 'null':
       return 'null'
+    case 'missing':
+      return '<missing>'
     case 'hole':
       return '<hole>'
     case 'number':

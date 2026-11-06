@@ -3,7 +3,7 @@
 `.use(m)` は、各ケースの実行を囲むmiddlewareを登録します。
 資源の取得と解放を同じスコープに書き、`next({ db })` で後続へ値を渡せます。
 
-<!-- example: docs/examples/middleware.test.ts -->
+<!-- example: none — 公開APIの記述契約：外部状態の読み取りをeffectで指定 -->
 ```ts
 import { Test, registerTest, middleware } from 'hanamaru'
 import { createDatabase, countUsers } from './database.ts'
@@ -17,17 +17,16 @@ export const userCount = new Test()
       await db.close()
     }
   }))
-  .target(countUsers)
+  .target(countUsers).effectful()
   .it('ユーザー数を取得する', t => t
     .argsFrom(ctx => [ctx.db])
     .expect(e => [e.result.toBe(e.ctx.expected)]))
 
 registerTest(userCount)
 ```
-出典: [docs/examples/middleware.test.ts](../examples/middleware.test.ts)
 
 [この例](../examples/middleware.test.ts)の[サンプルDB](../examples/database.ts)は、3件のユーザーを持つメモリ上の実装です。
-各試行で開き、期待の検証とモックの復元が終わってからcloseします。
+各評価で開き、期待の検証と観測の終了が終わってからcloseします。
 ケースが失敗してもfinallyを通ります。
 
 ## middlewareを作る
@@ -87,9 +86,9 @@ middlewareの引数コンテキストは呼び出し時点の値のままです�
 ```
 出典: [docs/examples/context-flow.test.ts](../examples/context-flow.test.ts)
 
-ケースへ値を渡す手段はmiddlewareだけです。
+値はmiddlewareのnextから供給します。effectfulな対象ではenvironmentのnextからも値・依存・観測トークンを供給できます。
 複数のmiddlewareは書いた順に実行します。グループでは親から子へ進み、後処理は逆順です。
-どれも定義時には実行せず、実行する各ケースの各試行で呼びます。
+どれも定義時には実行せず、実行する各評価で呼びます。itの一試行は一評価、propertyの一試行は生成例・縮小候補の複数評価です。
 共通設定なので、最初のケース・groupより前に登録します。
 
 ## nextを囲む処理
@@ -148,6 +147,6 @@ nextの中で配下（`.use()` ではケース、`.group()` では渡した子�
 
 ## 再試行
 
-retryでは各試行で新しいコンテキストからmiddlewareを実行し直します。前の試行の復元と後処理が成功した場合だけ再試行します。
+retryではケース全体をやり直します。その試行内でも各評価で新しいコンテキストからmiddleware/environmentを実行します。前の試行の復元と後処理が成功した場合だけ再試行します。
 試行期限は前処理から後処理までを含みます。標準CLIの強制終了ではfinallyの完了を保証できません。
 未完了の処理を次のケースへ持ち越さないことと、ライブラリrunでの制約は[timeoutとretry](execution-options.md)を参照してください。

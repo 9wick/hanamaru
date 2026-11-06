@@ -1,112 +1,45 @@
-# it ビルダー
+# ケースの記述
 
-ケースでは、必要ならモックを上書きし、引数を決め、期待を返します。
-戻り値・例外と、呼び出しの条件を、それぞれ配列に並べます。
-
-<!-- example: docs/examples/it-builder.test.ts#failure-case -->
-```ts
-.it('保存に失敗したら通知しない', t => t
-  .mock(userRepository, 'save', m => m.rejects(new Error('save failed')))
-  .args({ name: 'Alice' })
-  .expect(e => [
-    e.error.toBeInstanceOf(Error),
-  ])
-  .expectCalls(call => [
-    call(mailService, 'send').notCalled(),
-  ])
-)
-```
-出典: [docs/examples/it-builder.test.ts](../examples/it-builder.test.ts)
+itとpropertyはtarget配下の並列のケース入口です。property/relateをit内へ追加するAPIはありません。[公開構文](../guides/writing-tests.md)に従います。
 
 ## args / argsFrom
 
-`.args(...args)` は対象の引数をそのまま受け取ります。
-`.argsFrom(ctx => [...args])` はそのケースの親から子までのmiddlewareで用意したコンテキストから引数タプルを作ります。
+単一targetのitはargsまたはargsFrom(ctx => tuple)で具体的な一回の引数を指定します。引数なしにもargs()を要求します。
 
-<!-- example: docs/examples/it-builder.test.ts#args -->
-```ts
-.it('引数をそのまま渡す', t => t
-  .args(1, 2)
-  .expect(e => [e.result.toBe(3)]))
-.it('コンテキストから引数を作る', t => t
-  .argsFrom(ctx => [ctx.a, ctx.b])
-  .expect(e => [e.result.toBe(3)]))
-```
-出典: [docs/examples/it-builder.test.ts](../examples/it-builder.test.ts)
+単一targetのpropertyはforAllのタプルを直接使うか、argsFrom((ctx, sample) => tuple)で依存やデータを束縛します。複数実行が必要ならargsFromの代わりにstepsを選びます。クラスの依存はtargetのfromへ供給でき、データ引数へ移す必要はありません。
 
-`.args()` / `.argsFrom()` / `.calls()`は択一です。引数または呼び出し記述は一度だけ確定し、それまではexpectもexpectCallsも呼べません。
-引数のない関数にも `.args()` を書きます。
-argsFromは各試行で、middlewareの前処理の後・テスト対象の呼び出し前に1回評価します。
+## propertyとforAll
 
-## calls
+propertyはforAllを一度指定し、その入力範囲に対するexpectを必要とします。標準の単一実行、またはstepsによる対象限定の操作列を検査できます。空の生成範囲を拒否しますが、一点の範囲や空タプルは許します。探索範囲の広さを自動で保証しません。
 
-`.calls(c => ...)`は、targetに宣言した関数への呼び出しと引数を定義します。
-一つの関数・メソッドなら`c.args(...)`、`relation({ encode, decode })`なら`c.encode.args(...)`等を使います。
-返した呼び出し記述、または名前付きレコードが、実行後の`e.result`の型と形を決めます。
-別の呼び出しの記述を引数へ渡すと、その正常な戻り値をawaitして渡します。
-詳しい例と依存・retry・失敗時の契約は[複数の呼び出しで契約をテストする](../guides/multiple-calls.md)を参照してください。
+## steps
 
-callsのexpectにはresultとctxを提供します。途中のthrow / rejectはケースの失敗になり、expectは評価しません。
-mock・timeout・retry・expectCallsはケース全体へ適用できます。
+単一targetのpropertyではs.target.args、scenarioではsの宣言キーを使えます。scenarioではpure/effectfulを問わずit/propertyに提供します。単一targetのitには提供しません。
+
+s.ctxは準備済み環境、propertyのs.inputはcompile時点で確定した具体的な生成タプルです。s.inputは読み取り・計算・分岐に使えますが、操作結果のrefはまだ実測値ではありません。同期コールバックで全操作を記述し、結果refまたは非空の結果レコードを返します。全操作を宣言順にawaitします。実測値による分岐・任意関数を渡すcall・asyncな定義は拒否します。
+
+## 期待と観測
+
+itは具体値・部分・許容誤差・状態/actionの条件（例外は単一実行または明示的な最終操作のみ）、propertyはそれらに加えon(refs).satisfiesを使えます。expectは一度だけ、非空の完成条件配列を返します。状態/actionだけでも完成できます。
+
+複数実行の法則はstepsとexpectで表せます。専用relation/lawの閉じた集合を実装者が追加しないと新しい性質を書けない設計にはしません。
+
+## errorと明示的な最終操作
+
+errorは単一実行と、finalで指定した明示的な最終操作の終了を検証します。stepsの前段はargsで正常完了を要求し、最終操作だけfinal(...args)にできます。FinalStepRefは一つだけ、直接または平坦な結果レコードの一フィールドとして返します。
+
+error/outcomeの指定がなければfinalも正常終了を期待します。最終の制約はcompileで検査し、後続操作・複数final・返されないfinalを拒否します。FinalStepRefは次の操作の引数にはできません。it/propertyのどちらでも最後のerrorを期待でき、propertyならoutcomeでreturn/throwを一つの性質として扱えます。
+
+最後の正常結果とそのerror/outcomeは混在できません。先行操作の成功結果は併用できます。前段の例外は失敗として後続を止め、最後に期待した例外には流用しません。finalなしのstepsは全操作の正常完了を要求します。Result型の失敗値は通常の結果です。
+
+## 環境
+
+case内のmock/replaceはありません。useするenvironmentの設定や型付きfakeが外部条件を作ります。対象自身の実装を変えるためのフレームワークの差し替え口は提供しません。
 
 ## timeout / retry
 
-`.timeout(ms)` / `.retry(count)` でそのケースだけの実行設定を上書きします。
-argsの前後で使え、expect / expectCallsの後には変更できません。
-未指定の項目はgroupやケースに共通する設定から引き継ぎます。eachのtにも同じ操作があります。
-[timeoutとretry](../guides/execution-options.md)を参照してください。
-
-## mock
-
-`.mock(obj, key, def)` はTestレベルと同じAPIです。
-同じ参照・同じキーなら共通設定を置き換え、新しい組ならそのケースだけに追加します。
-argsの前でも後でも書けます。expect / expectCallsを始めた後は追加できません。
-適用順序は記述位置にかかわらず[実行セマンティクス](../concepts/semantics.md)に従います。
-
-## expect / expectCalls
-
-<!-- example: docs/examples/it-builder.test.ts#expectations -->
-```ts
-.expect(e => [
-  e.result.toEqual({ id: 'u1' }),
-])
-.expectCalls(call => [
-  call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-])
-```
-出典: [docs/examples/it-builder.test.ts](../examples/it-builder.test.ts)
-
-expectは結果・例外、expectCallsは呼び出しを検証します。
-どちらもコールバックから1つ以上のアサーションを配列で返します。
-空配列、マッチャの呼び忘れ、配列のreturn忘れは型エラーです。
-
-一方だけでもケースとして完成します。両方書く場合はどちらの順でもよく、それぞれ1回だけ設定できます。
-複数の条件は、それぞれの配列に並べます。期待を書いた後にargs・mock・timeout・retryを変更することはできません。
-
-| 期待の内容 | 期待する終了 |
-|---|---|
-| expectでresultを返す | 正常終了 |
-| expectでerrorを返す | throw / reject |
-| expectCallsだけを書く | 正常終了 |
-| expectでresultとerrorを混在させる | 型エラー。実行時も不正な期待として失敗 |
-
-判断に使うのは返された記述子です。返していないマッチャを呼んでも、期待や記録対象には追加しません。
-
-## 呼び出し条件を先に構造化する
-
-expectCallsのコールバックは定義時に1回評価します。
-`call(obj, key)` はメソッドを呼ばず、マッチャがobject・key・条件を持つ記述子を作ります。
-それをblueprintへ保持するため、実行器はテスト対象を呼ぶ前に記録対象を確定できます。
-mockやspyの事前登録は不要で、別途importする補助関数もありません。
-
-この段階ではmiddlewareは未実行です。静的な参照・引数はそのまま保持し、`call.from` と `calledWithFrom` / `calledOnceWithFrom` / `calledNthWithFrom` はctxから取得するresolverを保持します。resolverは各attemptの記録設定前に評価します。[動的な呼び出し条件](api-expect.md#middlewareで生成した参照・値を検証する)を参照してください。
+入力/forAll/stepsより前に指定します。retryは全ケース、eventuallyは状態の読み取りだけの再試行です。
 
 ## 結果の期待を組み立てる時点
 
-expectのコールバックは各試行でテスト対象の呼び出しが終わった後に1回評価します。
-`e.ctx` はmiddlewareが渡した値を順に反映したコンテキストで、`e.result` と `e.error` は記述子を作るためのマッチャです。
-対象が例外を投げた場合もresultの記述子は作れますが、実際の終了と合わなければ失敗します。
-コールバック自体のthrowはテストの失敗であり、テスト対象に期待した例外として扱いません。
-
-呼び出しの記述子は既にblueprintにあるため、expectの構築や結果の照合が失敗しても呼び出しの検証は続けます。
-マッチャの一覧は[マッチャ](api-expect.md)、型の仕組みは[型推論](type-inference.md)を参照してください。
+各評価のprepare後、from・argsFrom・steps・expectをcompileします。実環境とrefを区別し、結果依存の観測は実行後に引数を解決します。ビルダーのthrowはtargetの例外ではありません。

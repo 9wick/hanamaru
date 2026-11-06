@@ -13,10 +13,18 @@ const scalarKinds = new Set<DiagnosticValue['kind']>([
   'string',
   'date',
   'regexp',
+  'hole',
 ])
 
 function propertyPath(path: string, key: string): string {
   return /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}${path ? '.' : ''}${key}` : `${path}[${JSON.stringify(key)}]`
+}
+
+export function formatPath(selection: readonly (string | number)[]): string {
+  return selection.reduce<string>(
+    (path, key) => (typeof key === 'number' ? `${path}[${key}]` : propertyPath(path, key)),
+    '',
+  )
 }
 
 function stringProperties(properties: readonly DiagnosticProperty[]): Map<string, DiagnosticValue> | undefined {
@@ -33,7 +41,11 @@ function display(value: DiffValue): string {
 }
 
 /** Diagnostic snapshots support precise paths for plain data; opaque values keep the full diagnostic. */
-export function formatDiff(expected: DiagnosticValue, actual: DiagnosticValue, mode: 'equal' | 'partial'): string[] {
+export function formatDiff(
+  expected: DiagnosticValue,
+  actual: DiagnosticValue,
+  selection: readonly (string | number)[] = [],
+): string[] {
   const lines: string[] = []
   let count = 0,
     truncated = false
@@ -50,12 +62,6 @@ export function formatDiff(expected: DiagnosticValue, actual: DiagnosticValue, m
       if (wanted.kind !== received.kind) change(path, wanted, received)
       return true
     }
-    if (
-      (wanted.kind === 'hole' || wanted.kind === 'undefined') &&
-      (received.kind === 'hole' || received.kind === 'undefined')
-    )
-      return true
-    if (mode === 'partial' && wanted.kind === 'regexp') return false
     if (
       ![wanted, received].every(
         (value) => scalarKinds.has(value.kind) || value.kind === 'array' || value.kind === 'object',
@@ -74,25 +80,15 @@ export function formatDiff(expected: DiagnosticValue, actual: DiagnosticValue, m
       return true
     }
     if (wanted.kind === 'object' && received.kind === 'object') {
-      if (
-        wanted.omitted.length ||
-        received.omitted.length ||
-        wanted.type !== 'Object' ||
-        (mode === 'equal' && received.type !== 'Object')
-      )
+      if (wanted.omitted.length || received.omitted.length || wanted.type !== 'Object' || received.type !== 'Object')
         return false
       const left = stringProperties(wanted.properties),
         right = stringProperties(received.properties)
       if (!left || !right) return false
-      const keys = mode === 'partial' ? left.keys() : new Set([...left.keys(), ...right.keys()])
+      const keys = new Set([...left.keys(), ...right.keys()])
       for (const key of keys) {
         const a = left.get(key) ?? missing,
           b = right.get(key) ?? missing
-        if (
-          mode === 'equal' &&
-          ((a.kind === 'missing' && b.kind === 'undefined') || (a.kind === 'undefined' && b.kind === 'missing'))
-        )
-          continue
         if (!walk(a, b, propertyPath(path, key))) return false
       }
       return true
@@ -101,7 +97,8 @@ export function formatDiff(expected: DiagnosticValue, actual: DiagnosticValue, m
     if (formatValue(wanted) !== formatValue(received)) change(path, wanted, received)
     return true
   }
-  if (!walk(expected, actual, '')) return []
+  const initialPath = formatPath(selection)
+  if (!walk(expected, actual, initialPath)) return []
   if (truncated) lines.push('… additional differences not shown')
   return lines
 }

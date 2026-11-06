@@ -35,6 +35,14 @@ const jsValue = transportValueSchema
 
 // Protocol values are validated before use; object contents are checked at the module boundary.
 export const executionMessageSchema = v.variant('type', [
+  v.object({
+    type: v.literal('attempt-progress'),
+    id: v.number(),
+    phase: phaseSchema,
+    evaluationOffset: v.number(),
+    failureOffset: v.number(),
+    result: attempt,
+  }),
   v.object({ type: v.literal('compile'), id: v.number(), name: v.string(), args: v.array(jsValue) }),
   v.object({ type: v.literal('ready') }),
   v.object({ type: v.literal('loading'), file: v.string() }),
@@ -69,7 +77,6 @@ const commandSchemas = [
 export const executionWorkerDataSchema = v.object({
   entryURL: v.optional(v.string()),
   roots: v.array(v.object({ file: v.string(), index: v.number(), origin: location })),
-  preparation: v.array(v.object({ id: v.string(), keys: v.array(v.string()) })),
   shape: v.string(),
 })
 

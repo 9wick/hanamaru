@@ -1,5 +1,4 @@
 import { Injectable, inject } from '@zeltjs/core'
-import type { RuntimeBlueprint } from '@hanamaru/blueprint/model'
 import type { ExecutionNode } from '../../domain/execution/model.js'
 import type { Value } from '../../domain/execution/javascript.js'
 import type { ModuleOptions as Config } from '../../application/execution/options.js'
@@ -37,10 +36,6 @@ export class CollectionModules {
 
   invoke(name: string, args: Value[]): Promise<Value> {
     return this.#active.invoke(name, args)
-  }
-
-  prepare(blueprints: RuntimeBlueprint[]) {
-    return this.#active.prepare(blueprints)
   }
 
   describe(nodes: ExecutionNode[]): Value {

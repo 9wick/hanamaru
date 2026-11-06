@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@zeltjs/core'
 import { plainFields } from '../../domain/execution/callbacks.js'
 import type { Fields, RuntimeMiddleware, RuntimeMiddlewareResult } from '@hanamaru/blueprint/model'
-import { resultTag } from '@hanamaru/blueprint/model'
+import { ObservationOwner, ObservationIssuer, resultTag } from '@hanamaru/blueprint/model'
 import { defaultMiddlewareTimeoutMs } from '../../domain/execution/config.js'
 import type { GroupNode } from '../../domain/execution/model.js'
 import { diagnostic } from '../../domain/result/diagnostic.js'
@@ -91,7 +91,11 @@ export async function withMiddleware<T>(
   onTimeout?: () => void,
   onStage?: (stage: Stage, timeoutMs: number) => void,
   cancellation?: AbortSignal,
+  owner?: ObservationOwner,
 ): Promise<T | undefined> {
+  if (step.kind === 'environment' && owner === undefined)
+    throw new TypeError('environment requires an evaluation owner')
+  const issuer = step.kind === 'environment' ? new ObservationIssuer(required(owner)) : null
   const timeoutMs = step.timeout ?? defaultMiddlewareTimeoutMs
   const timer = new StageTimer<MiddlewareStage>(timeoutMs, 'before', () => onTimeout?.())
   const cancelTimer = () => timer.clear()
@@ -105,6 +109,7 @@ export async function withMiddleware<T>(
   const next = (fields?: object) => {
     calls++
     if (calls !== 1) throw new MiddlewareFault(new Error('next called more than once'), 'contract')
+    issuer?.seal()
     timer.clear()
     if (timer.overdue())
       throw new MiddlewareFault(new Error('middleware before timed out'), 'before', 'timeout', timeoutMs)
@@ -138,7 +143,10 @@ export async function withMiddleware<T>(
   try {
     let returned: MiddlewareReturn
     try {
-      returned = { kind: 'returned', token: await invoke(step.run, undefined, [ctx, next]) }
+      returned = {
+        kind: 'returned',
+        token: await invoke(step.run, undefined, issuer === null ? [ctx, next] : [ctx, issuer, next]),
+      }
     } catch (error) {
       returned = { kind: 'threw', error: valueOf(error) }
     }
@@ -163,6 +171,7 @@ export async function withMiddleware<T>(
     if (downstream) throw new CleanupFault([downstream.error, valueOf(error)])
     throw new MiddlewareFault(valueOf(error), trace.stage === 'inside' ? 'after' : trace.stage)
   } finally {
+    issuer?.stopIssuing()
     cancellation?.removeEventListener('abort', cancelTimer)
     timer.clear()
     onStage?.('end', timeoutMs)

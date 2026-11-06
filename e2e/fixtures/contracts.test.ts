@@ -1,4 +1,4 @@
-import { Test, middleware, registerTest } from 'hanamaru'
+import { Test, middleware, environment, registerTest } from 'hanamaru'
 
 export const lifecycle: string[] = []
 export const service = {
@@ -9,32 +9,34 @@ export const service = {
 export const originalRead = service.read
 
 const operations = new Test<{ label: string }>()
+  .target((input: number, read: (n: number) => number, label: string) => ({
+    values: [read(input), read(input + 1)],
+    label,
+  }))
+  .effectful()
   .use(
-    middleware(async (_, next) => {
+    environment(async (_, _scope, next) => {
       lifecycle.push('attempt open')
       try {
-        return await next({ input: 3 })
+        return await next({ input: 3, read: (n: number) => n + 4 })
       } finally {
         lifecycle.push('attempt close')
       }
     }),
   )
-  .mock(service, 'read', (m) => m.returnsOnce(7).returns(8))
-  .target((input: number) => [service.read(input), service.read(input + 1)])
-  .it('mock sequence', (t) =>
+  .it('environment fake', (t) =>
     t
-      .argsFrom((ctx) => [ctx.input])
-      .expect((e) => [e.result.toEqual([7, 8]), e.result.toSatisfy(() => e.ctx.label === 'shared')])
-      .expectCalls((call) => [call(service, 'read').calledTimes(2), call(service, 'read').calledNthWith(2, 4)]),
+      .argsFrom((ctx) => [ctx.input, ctx.read, ctx.label])
+      .expect((e) => [e.result.toEqual({ values: [7, 8], label: 'shared' })]),
   )
-  .it('case override', (t) =>
+  .it('explicit dependency', (t) =>
     t
-      .mock(service, 'read', (m) => m.returns(9))
-      .argsFrom((ctx) => [ctx.input])
-      .expect((e) => [e.result.toEqual([9, 9])])
-      .expectCalls((call) => [call(service, 'read').calledNthWith(1, 3)]),
+      .argsFrom((ctx) => [ctx.input, () => 9, ctx.label])
+      .expect((e) => [e.result.toEqual({ values: [9, 9], label: 'shared' })]),
   )
-  .skip('skipped', (t) => t.args(1).expect((e) => [e.result.toEqual([])]))
+  .skip('skipped', (t) =>
+    t.args(1, (n) => n, 'shared').expect((e) => [e.result.toEqual({ values: [], label: 'shared' })]),
+  )
   .todo('todo')
 
 const rows = new Test()

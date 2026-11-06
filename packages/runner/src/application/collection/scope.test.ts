@@ -4,7 +4,7 @@ import type { SourceLocation } from '../../../../blueprint/src/domain/definition
 import type { CollectionEvent } from './scope.js'
 import { CollectionLog } from './scope.js'
 
-const empty: RuntimeBlueprint = { version: 1, kind: 'definition', config: {}, steps: [], mocks: [], children: [] }
+const empty: RuntimeBlueprint = { version: 1, kind: 'definition', config: {}, steps: [], children: [] }
 
 function handle(): RuntimeDefinitionHandle {
   return { blueprint: () => empty }

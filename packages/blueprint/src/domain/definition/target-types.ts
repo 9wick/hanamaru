@@ -9,3 +9,5 @@ export type FnKeys<O> = Extract<
 >
 
 export type MethodOf<O, K extends keyof O> = Extract<O[K], AnyFn>
+
+export type ObjectReceiver<O> = O extends AnyFn | (abstract new (...args: never[]) => object) ? never : O

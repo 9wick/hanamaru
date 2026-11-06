@@ -95,9 +95,6 @@ function harness(options: Options = {}) {
     invoke(): Promise<Value> {
       return Promise.resolve(undefined)
     },
-    prepare(): [] {
-      return []
-    },
     describe(_nodes: ExecutionNode[]): Value {
       return {}
     },
@@ -165,7 +162,7 @@ function harness(options: Options = {}) {
 
     async initialize(_plan: Plan, _roots: RootReference[], signal: AbortSignal, _timeout: number): Promise<void> {
       await this.#execution.start(
-        { roots: [], preparation: [], shape: '[]' },
+        { roots: [], shape: '[]' },
         {
           invoke: () => Promise.resolve(undefined),
           signal,

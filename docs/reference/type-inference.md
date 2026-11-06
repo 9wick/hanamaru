@@ -1,251 +1,110 @@
 # 型推論
 
-通常は型パラメータを手書きする必要はありません。独立した子で親のコンテキストを使う場合だけ、その要求型を宣言します。
-型の契約は[hanamaru.d.ts](../spec/hanamaru.d.ts)、型エラーの検証は[type-errors.ts](../spec/type-errors.ts)にあります。
+対象の形、pure/effectful、it/propertyを別々の型情報にします。具体的な[許可例と禁止例](../guides/writing-tests.md)に従います。
 
 ## 対象とコンテキスト
 
-| 型 | 決まるところ | 使うところ |
-|---|---|---|
-| F: テスト対象の関数型 | `.target()` | args、argsFrom、result |
-| C: その段階のコンテキスト型 | 親への要求型、useでnextへ渡す値 | 次のuse、argsFrom、`e.ctx` |
-| R: 親に要求するコンテキスト型 | new Test<R>()。省略時は{} | use・group middleware・argsFrom・expect、groupの供給チェック |
+| 指定 | 型と制約 |
+|---|---|
+| target(fn) / target(obj, key) | 対象のParametersとAwaited ReturnType。固定した関数または受け手 |
+| target(Class, key).from(resolver) | 宣言したinstanceメソッドの型。fromで供給するinstance型を照合 |
+| target(scenario(operations)) | 宣言キーごとの引数と結果型。method記述子にはreceiverの供給が必要 |
+| pure()/effectful() | 特性。省略はpure。明示一度、ケース前 |
+| use(middleware(...)) | next(fields)からコンテキストを推論 |
+| use(environment(...)) | effectfulのみ。依存、state/action等を供給 |
 
-引数は `Parameters<F>`、結果の期待値は `Awaited<ReturnType<F>>` です。
-`next(fields)` へ渡したフィールドの型SをCへ追加し、同名のフィールドは置き換えます。
-Promise自体をコンテキストにはしません。各コールバックに渡るコンテキストのフィールドはreadonlyです。
+class形式では、fromがない定義へケースを追加できません。useでctxを推論した後にfromを指定し、別クラスを返すresolverを拒否します。scenarioのfromはmethod記述子のキーと対応したinstanceマップを要求します。通常関数のキーにreceiverを追加できません。
 
-<!-- example: docs/examples/context-flow.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-import { add } from './math.ts'
+## 特性の宣言
 
-export const contextFlow = new Test()
-  .target(add)
-  .use(middleware(async (_, next) => next({ a: 1, expected: 3 })))
-  .it('渡された値を使う', t => t
-    .argsFrom(ctx => [ctx.a, 2])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
-
-registerTest(contextFlow)
-```
-出典: [docs/examples/context-flow.test.ts](../examples/context-flow.test.ts)
-
-## middlewareから型を伝える
-
-<!-- example: docs/examples/middleware.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-import { createDatabase, countUsers } from './database.ts'
-
-export const userCount = new Test()
-  .use(middleware(async (_, next) => {
-    const db = await createDatabase()
-    try {
-      return await next({ db, expected: 3 })
-    } finally {
-      await db.close()
-    }
-  }))
-  .target(countUsers)
-  .it('ユーザー数を取得する', t => t
-    .argsFrom(ctx => [ctx.db])
-    .expect(e => [e.result.toBe(e.ctx.expected)]))
-
-registerTest(userCount)
-```
-出典: [docs/examples/middleware.test.ts](../examples/middleware.test.ts)
-
-nextは渡されたフィールド型Sを保持する `Promise<MiddlewareResult<S>>` を返します。
-useは `middleware()` が返す値からSを推論し、後続のCへ追加します。
-ブランド付きの完了値なので、return忘れや通常のオブジェクトの返却は型エラーです。
-`middleware()` を通さない素の関数も、ブランドを持たないため `.use()` / `.group()` で型エラーです。
-`next()` はフィールドを追加せずCを保ちます。同名フィールドは置き換えます。
-親のuseで供給したフィールドも、groupで子が要求する型と照合します。
-
-`.use()` の引数に直接書いたmiddlewareはその位置のC、`.group()` のmiddlewareはRからコンテキストを型付けします。注釈は不要です。
-useが追加するフィールドはCを拡張します。group前処理は各attemptより先に動くため、同じ定義のuseが追加するフィールドをまだ参照できません。
-変数へ入れて使い回すmiddlewareには文脈がないため、引数を `Ctx<…>` で包んで要求を書きます。
-`Ctx<C>` は要求するフィールドとhanamaruがコンテキストへ足すフィールドを合わせた公開型で、Cはここから推論します。
-要求を型パラメータに書かないのは、TypeScriptが型引数の部分推論をできず、nextへ渡すSの推論が失われるためです。
-要求を供給できるかは、使う場所で検査します。
+省略pureと明示pureの実行意味は同じです。明示済みフラグは型に保持し、pure().pure()やpure().effectful()を拒否します。最初のケース以降は両操作を提供しません。environmentを使う前にeffectfulを選びます。
 
 ## 設定とケース追加を分ける
 
-```text
-Test<R> → .target() → TestBuilder<F, C, R> → it → Suite<F, C, R>
-        → group → GroupSuite<C, R>
-```
-
-TestBuilderはuse・mockとケース追加を持ち、Suiteはケース追加とblueprintだけを持ちます。
-グループも最初のgroupで設定を固定し、GroupSuiteはgroupとblueprintだけを持ちます。
-既存ケースを書いた後のテスト対象やコンテキストの変更を型で防ぎ、テスト対象を選んだ後の `.target()` の再指定も禁止します。
-元のTestBuilderはイミュータブルなので、そこから別のuse・mockを選ぶ派生は作れます。
-
-ケースはargs / argsFromで引数を確定した後、expectとexpectCallsをそれぞれ一度だけ設定できます。
-一方でも完成したケースですが、もう一方を追加できます。両方を設定したら終端です。
-期待を書いた後にargsやmockへ戻ることはできません。
-
-| 現在の型 | 次に設定できる期待 | itから返せるか |
+| 対象とケース | 入力・操作 | 完成条件 |
 |---|---|---|
-| ItBuilder | なし。先にargs / argsFromが必要 | 不可 |
-| ItArgs | expect、expectCalls | 不可 |
-| ItExpected | expectCalls | 可 |
-| ItCalls | expect | 可 |
-| ItDone | なし | 可 |
+| 単一targetのit/each | args / argsFrom | expectに1件以上の条件 |
+| 単一targetのproperty | forAll、そのまま単一実行またはargsFromまたはsteps | expectに1件以上の条件 |
+| pureなscenarioのit | steps | expectに1件以上の具体値等の条件 |
+| pureなscenarioのproperty | forAll + steps | expectに1件以上の条件 |
+| effectfulなscenarioのit | steps | expectに1件以上の具体値等の条件 |
+| effectfulなscenarioのproperty | forAll + steps | expectに1件以上の条件 |
 
-これにより、return忘れ、検証を書いていないケース、期待の二重定義を防ぎます。
+単一targetのitにsteps、scenarioにeach、itにforAllや任意述語を提供しません。relation/lawという別の閉じた経路はありません。scenarioのitでも任意述語を持ち込めません。対象限定の操作列の具体例を、回数だけを理由に禁止しません。
 
-## グループ内のコンテキスト
+propertyで生成タプルがParametersへ適合しない場合はargsFromまたはstepsが必要です。argsFromとstepsは択一です。stepsのs.targetまたは宣言キーだけを呼べ、任意の関数を渡すcallはありません。s.inputはcompile時の具体値で、そこからsampleの型、s.ctxから環境の型を推論します。
 
-<!-- example: docs/examples/group-context.test.ts -->
-```ts
-import { Test, registerTest, middleware } from 'hanamaru'
-import { add } from './math.ts'
+## stepsの明示的な最終操作
 
-const child = new Test<{ a: number }>()
-  .target(add)
-  .it('親の値を使う', t => t.argsFrom(ctx => [ctx.a, 2])
-    .expect(e => [e.result.toBe(3)]))
+通常のargs呼び出しはCallRef<R>、final(...args)はFinalStepRef<R>を返します。FinalStepRefは他操作への引数・field操作に使えず、stepsの返却にだけ使えます。単独か、先行CallRefと同じ平坦な非空レコードの一フィールドとして返します。
 
-export const parentContext = new Test()
-  .use(middleware(async (_, next) => next({ a: 1, extra: true })))
-  .group([child])
+error/outcomeを使わないfinalも許し、その場合はreturnを期待します。一つのfinalが最後の操作で、返却に含まれることをcompileで検査します。コールバック内の命令順を型だけで保証しません。二つのfinal、後続操作、返されないfinalは対象開始前に拒否します。
 
-registerTest(parentContext)
-```
-出典: [docs/examples/group-context.test.ts](../examples/group-context.test.ts)
+返却型から、e.resultのどのfieldが最終の正常結果に依存するかを追跡します。最終error/outcomeとそのfieldまたはそのfieldを含む全体refは混在できません。先行成功結果のfieldは混在できます。明示的な最終操作がなければerror/outcomeを提供しません。propertyのoutcome.valueは最終操作自身のRで、返却レコードの型ではありません。
 
-childは親に `{ a: number }` を要求します。親に余分なフィールドがあっても合成できます。
-`group([first, second])` では配列内の全子について、要求Rを満たせるか検査します。
-子は値の供給元を型に書きません。同じ子を、親のuseで値を用意する構成にも、group middlewareで用意する構成にも追加できます。
-group middlewareが `next(fields)` へ渡した型Sは、そのgroupの子にだけ供給します。同じチェーンの次のgroupには供給しません。
-不足や型違い、必須フィールドに対するoptionalな供給は型エラーです。
-子が型パラメータを省略すれば、親のコンテキストへの要求はありません。
+## 完成条件
 
-Rは子の定義を作っている間ずっと親への要求として保持します。
-子自身のmiddlewareで同名のフィールドを供給しても、それより前のコードが要求を利用し得るので消しません。
-間のグループも `new Test<R>()` で必要なコンテキストを宣言し、さらに外側の親から受け取れます。
+入力/操作と非空のexpectを必要とします。state/actionのみでも完成し、全責任の網羅は要求しません。環境や期待を設定した後に入力を変更できません。timeout/retryは入力/生成/操作の前に指定します。
 
-値が必要になる時点は、middlewareの配置から自動で追跡します。利用者が時点を型引数で指定する必要はありません。
-group middlewareを持つ定義では、入力Rをgroup開始時から利用可能とします。通常のgroupだけでも、子に必要な時点を引き継ぎます。
-その時点に間に合う供給がない場合は合成箇所を型エラーにします。たとえば、子のgroup前処理が使うseedを、後から動く親のuseで用意する合成は成立しません。
-具体例は[依存の要求と供給](../guides/grouping.md#依存の要求と供給)を参照してください。
+区間指定・eventually・forAllだけでは完成しません。todoは実行しない別の定義です。errorと同じ終了対象の正常result由来の条件や観測引数を混在できません。stepsはfinalで指定した最終操作だけにerrorを提供します。
 
-完成したテストとblueprintは `TestDefinition<R>` / `TestBlueprint<R>` として要求を保持します。runへ渡せるのはRを `{}` で満たすルートだけです。
-親のコンテキストを要求する子もblueprintは取得できますが、単独実行やrunへ渡す配列への混入を型で防ぎます。
+part/fieldはNonNullable<T>のキーから選びます。実測値がnull等でその経路が存在しなければmissingとして照合し、undefinedとは区別します。
 
-`TestDefinition<R>` は、入力を各attemptで使う定義とgroup開始時から使う定義を含みます。具体的な値からの推論や絞り込みが残る場合は、その時点を保ちます。
-関数の戻り値などを `TestDefinition<R>` に広げて時点が不明になった場合は、group開始時に必要な可能性も含めて検査します。合成の自由度を保つには、完成した定義の戻り値型を推論に任せます。
-型検査はコールバック本体の参照フィールドを解析しません。宣言したR全体が、定義の入力契約です。
+## refの入口
 
-## モックの型と呼び出しの型
+| 入口 | 利用箇所・意味 |
+|---|---|
+| e.input(index) | 単一実行のit/property。実際に束縛した引数へのref。stepsには提供しない |
+| e.sample(index) | property。生成またはconstantのデータへのref |
+| e.result / field(key) | 正常結果または返却した操作結果。fieldは部分のref |
+| e.value(value) | compile時に保存する定数ref |
+| e.outcome / withError(Ctor, projectError?) | 単一実行または明示的な最終操作を持つproperty。return/throwの判別union。withErrorはthrow側だけ型検査・データ化する |
+| e.error.ofType(Ctor) / field(key) | 単一実行または明示的な最終操作を持つproperty。指定した例外型またはそのフィールドへのref。on/projectに使える |
+| e.state(token,...args) | 計画完了後の観測。条件として照合でき、propertyではon/projectに渡せるrefでもある |
+| e.state(...).before() | propertyの前値ref。結果非依存の引数のみで、on/projectで後値等と組み合わせる |
+| e.state(...).after(stepRef) | 指定操作直後の観測。条件またはpropertyのon/project用ref |
+| e.action(token).untilTargetSettles()/forAfterTarget(ms) | 区間内の出来事。条件またはpropertyのon/project用ref |
 
-mockの振る舞いは、その場で渡されたメソッドのReturnTypeに従います。
-callの条件も、その場で渡されたメソッドから推論します。
+beforeとafterは同じ観測に同時指定できません。eventually付きビルダーは単独の終端条件を必要とし、refとしてon/projectへ渡せません。onの入力には正常結果・型を絞った例外・outcome・実行後/操作後の観測のいずれかを含め、beforeやinputだけでは完成条件になりません。
 
-callはexpectCallsコールバックの引数であり、グローバルにexportする関数ではありません。
-`call(obj, key)` のkeyはobjに存在する関数型プロパティに限られ、マッチャの引数はそのメソッドのParametersから推論します。
-関数でないプロパティ、存在しないキー、引数の型違いは次のように型エラーになります（`ready` は `new Test().target(add)`、`mailService.send` は `User` を1つ取るメソッドです）。
+例外refを使う条件はthrow/rejectの期待を持ちます。refレコード内や別条件に同じ終了対象の正常resultが含まれる混在を型とcompileで拒否します。error.ofType(Ctor)はinstanceofを検証してからfieldやprojectを解決し、不一致ならその条件を失敗にします。明示的な最終操作のないstepsと観測引数には例外refを提供しません。
 
-<!-- example: docs/spec/type-errors.ts#call-keys -->
-```ts
-// @ts-expect-error a non-function property is not observable.
-ready.it('非メソッド', t => t.args(1, 2).expectCalls(call => [call({ label: 'a' }, 'label').notCalled()]))
-// @ts-expect-error nonexistent keys are unavailable.
-ready.it('キー違い', t => t.args(1, 2).expectCalls(call => [call(mailService, 'save').notCalled()]))
-// @ts-expect-error call arguments follow the original method.
-ready.it('引数型', t => t.args(1, 2).expectCalls(call => [call(mailService, 'send').calledOnceWith({ id: 1 })]))
-```
-出典: [docs/spec/type-errors.ts](../spec/type-errors.ts)
+outcomeを含む条件はreturn-or-throwを期待します。同じ終了対象のresult/error条件や、それらのrefを経由する観測との混在を型とcompileで拒否します。withErrorのprojectErrorはinstanceofで絞った例外型を受け、その戻り値型がthrow側のerrorになります。省略時はnullです。正常側のvalueは終了期待の対象（単一実行または明示的な最終操作）の戻り値型を保ちます。
 
-使い方は次のとおりです。
+生のoutcomeはerrorがunknownのrefなので直接onに渡せません。field('kind')、withError、またはprojectで保存できるデータを選びます。withErrorの正常値が独自クラスなら、通常の保存規則どおりprojectを必要とします。outcomeは明示的な最終操作のないsteps・it・観測引数へ提供しません。
 
-<!-- example: docs/examples/call-descriptor-source.ts#expect-calls -->
-```ts
-.expectCalls(call => [
-  call(mailService, 'send').calledOnceWith({ id: 'u1' }),
-])
-```
-出典: [docs/examples/call-descriptor-source.ts](../examples/call-descriptor-source.ts)
+## 観測の型と時点
 
-この検証にはmock登録が不要です。登録済みのモック一覧を型パラメータへ積む必要もありません。
-モックの有無は実行時の振る舞いを決めますが、呼び出しを検証できるかどうかの条件にはなりません。
+State<Args, Value>はread関数から推論します。state(token,...args)で引数の数・型を検査し、定数か、対象のinput/sample/result/step結果refを受け付けます。観測の引数は型付きコピー可能なデータです。他のstate/actionを引数にした依存グラフは拒否します。
 
-## 結果と呼び出しを混同しない
+state(...).before()/unchangedは実行前に使えるrefだけを受け付け、result引数を拒否します。after(stepRef)は通常の先行操作に限り、その操作以前に引数が揃うことをcompileでも確認します。明示的な最終操作の後は計画完了後の観測を使います。未実行操作に紐づく観測は未評価です。異なる評価のトークン・ref・条件を拒否します。
 
-expectが返せるのは、resultだけ、またはerrorだけの空でない配列です。
-混在（順序を入れ替えても同じ）、空配列、マッチャの呼び忘れは次のように型エラーになります。
+## ケースごとの期待の型
 
-<!-- example: docs/spec/type-errors.ts#outcome-mix -->
-```ts
-// @ts-expect-error result and error assertions cannot coexist.
-ready.it('矛盾', t => t.args(1, 2).expect(e => [e.result.toBe(3), e.error.toThrow('bad')]))
-// @ts-expect-error reversed ordering cannot hide contradictory expectations.
-ready.it('逆順の矛盾', t => t.args(1, 2).expect(e => [e.error.toThrow('bad'), e.result.toBe(3)]))
-// @ts-expect-error at least one assertion is required.
-ready.it('空配列', t => t.args(1, 2).expect(() => []))
-// @ts-expect-error matcher must be called.
-ready.it('未完了', t => t.args(1, 2).expect(e => [e.result]))
-```
-出典: [docs/spec/type-errors.ts](../spec/type-errors.ts)
+itは具体値・部分・許容誤差・状態/actionを持ち、例外は単一実行または明示的な最終操作に提供します。propertyはon(refs).satisfiesも持ちます。素のbooleanは条件として受け付けません。onの入力には実際の正常結果・例外・outcome・実行後の観測値のいずれかを含め、入力だけを条件にしません。
 
-expectCallsが返せるのは、CallAssertionの空でない配列です。
-通常のコールバックから配列を返す書き方で検査でき、`as const` は不要です。
-各記述子のブランドによって、素のbooleanやマッチャの呼び忘れを防ぎます。
+propertyのonへ独自クラスを不正な複製型で渡しません。必要ならprojectでDTOに投影し、その返り値型を使います。identityは入力・結果・定数の生の参照からopaque objectを作り、観測済みコピーには提供しません。[比較と保存](value-comparison.md)に従います。
 
-expectCallsだけのケースが正常終了を期待することは、実行器が照合する契約です。
-TypeScriptの型だけで対象のthrowを推論することはしません。
+## middlewareから型を伝える
 
-## 型で検査すること
+next(fields)から後続の型を推論し、同名は内側が置換します。値を供給できるのはmiddlewareと、effectfulのenvironmentです。nextの完了値を返すことを型で要求し、呼び出し回数・待機は実行時にも検査します。
 
-- 対象と引数・期待値の型の一致
-- モックの戻り値と、呼び出し条件のメソッドキー・引数の型
-- 未供給のコンテキストのプロパティ参照、middlewareの非同期処理から伝わる型
-- ケース・group追加後の共通設定変更
-- グループの親によるコンテキストの供給、要求が残るテストの単独実行
-- middlewareを重ねたときのコンテキストの型、middlewareのreturn忘れ、関数のままの登録
-- 引数の確定と期待の順序、未完了のケース、期待の二重定義
-- result/errorの混在、空配列、マッチャの呼び忘れ、非同期predicate
+## グループとコンテキスト
+
+独立した子はnew Test<R>()で必要な値だけを要求します。供給時点を型で検査し、未供給の子を単独登録できません。groupでは共有資源を用意し、子のenvironmentが各評価を初期化します。
 
 ## 型の限界
 
-親のコンテキストの要求型はJavaScriptでは消えるため、CLIは登録された定義が親のコンテキストを要求するか、実行時に検査できません。
-型が防ぐのはgroup・runを呼ぶ際の要求Rの不足と、合成した実行順に間に合わない供給です。CLIへ公開するルートには必要なコンテキストを全て用意し、子は探索対象外のファイルに置きます。
-型引数を宣言するだけで値が生成されることはありません。
-
-[登録ベースのCLI収集](../guides/registration.md)では、`registerTest` の型が単独実行できるルートだけを受け付けます。型検査は利用者のtest scriptで実行し、CLI収集時には行いません。型を偽装した値やJavaScriptからの呼び出しで、未供給ctxをCLIが検出する保証はありません。
-
-同じ構造の別オブジェクトはTypeScriptの型だけでは区別できません。
-呼び出しの記録は、実際に指定した参照に付けます。別オブジェクトの指定を、未登録のエラーとしては扱いません。
-テストが意図した参照を選んでいるかどうかは、型だけでは検査できません。
-
-anyや型アサーションで型検査を回避した値、プロパティの差し替え可否は実行時検査が必要です。
-nextへの追加フィールドがplain objectかどうかは、実行時に検査します。
-nextを1回呼んでその完了を待つこと、返した完了値がその呼び出しのものかは、型だけでは保証できません。
-finallyがあるときに `return next(...)` で早く片付けてしまう誤りも型では防げないため、`return await next(...)` と書きます。
-省略可能なメソッドは、存在を保証する型へ絞ってから渡します。
-オーバーロードやジェネリック関数では、Parameters/ReturnTypeだけで全ての関係を保持できない場合があります。
-必要ならテストしたい具体的なシグネチャの関数で包みます。
+関数の純粋性、述語の意味、観測点とevidenceの真実性、fakeの契約適合は提供者とレビューの責務です。型は呼べる対象・記述の種類・引数と結果・トークンの権限を限定します。フレームワークが任意コードの実行をsandbox化する保証ではありません。
 
 ## 検証
 
-```console
-tsc -p docs/spec/tsconfig.json
-```
+利用例と禁止例を型契約へ落とし、補完も用途に合わせます。動的な同一性・期間・保存・供給失敗は[実行仕様](../concepts/semantics.md)に従います。
 
-このコマンドはサンプルの型チェックと、`@ts-expect-error` を付けた誤操作が型エラーになることを検証します。
-グループ・コンテキストの検証は[group-types.ts](../spec/group-types.ts)、middlewareの検証は[middleware-types.ts](../spec/middleware-types.ts)にあります。
-APIの実装を実行するものではありません。ランナー自体も型チェックはせず、通常のtest scriptからtscを呼ぶ想定です。
+## 固定入力と生成
 
-## each・実行設定・sequence
+propertyはforAllにconstant/record/boolean/oneOf等も使えます。constantだけで構成するtuples/recordと空タプルは、runs省略時に一評価で縮小しません。固定入力の性質をargsFromへ隠す必要はありません。単一実行のpropertyでは直接のタプルかargsFromで対象の引数へ対応させます。
 
-eachは行からrowを、テスト対象からargs/resultを推論し、各行に完成済みのケースを要求します。
-最初のeach・it・group以降は共通設定を固定します。ケースのtimeout/retryは期待の構築前まで変更できます。
-onceの列だけではモックは未完成で、最後に通常動作を指定する必要があります。
-calledNthWithの引数は、指定したメソッドのParametersに従います。
+## each・実行設定
 
-型で防ぐ契約は[execution-contracts.ts](../spec/execution-contracts.ts)で検証します。
-数値の範囲・有限性、空の行配列、行から作る名前の実行結果などは定義時・実行受付時の検査です。
-SourceLocationの正しい取得、設定の継承結果、期限・再試行・復元・JSONの実動作は、この型検証では確認できません。
-middlewareのtimeoutも、型では数値であることだけを検査します。
+eachは単一targetの具体例の省略形で、特性は行ごとに変わりません。propertyの候補ごとに環境を初期化し、試行期限とretryは探索全体に適用します。

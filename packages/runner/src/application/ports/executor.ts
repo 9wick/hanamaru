@@ -2,7 +2,7 @@ import type { RootReference } from './root-reference.js'
 import type { GroupNode, SuiteNode } from '../../domain/execution/model.js'
 import type { Fields, RuntimeCase } from '@hanamaru/blueprint/model'
 import type { MutableAttempt, MutableGroupMiddleware, Reason } from '../../domain/result/mutable.js'
-import type { ModuleInvoke, ModulePreparation } from '@hanamaru/module-runtime/application/ports/module-loader'
+import type { ModuleInvoke } from '@hanamaru/module-runtime/application/ports/module-loader'
 
 export interface AttemptReply {
   result: MutableAttempt
@@ -20,7 +20,6 @@ export interface GroupReply {
 export interface ExecutionSpec {
   readonly entryURL?: string
   roots: RootReference[]
-  preparation: ModulePreparation[]
   shape: string
 }
 

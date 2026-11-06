@@ -29,7 +29,7 @@ defineConfig({ vite: { resolve: { alias: { '@app': 123 } } } })
 const rows = [{ a: 1, b: 2, expected: 3 }]
 const ready = new Test().retry(2).target(add).timeout(2_000).retry(1)
 const suite = ready.each('足す', rows, (t, row) => t
-  .timeout(500).args(row.a, row.b).retry(0)
+  .timeout(500).retry(0).args(row.a, row.b)
   .expect(e => [e.result.toBe(row.expected)]))
 ready.each(row => `${row.a} + ${row.b}`, rows, (t, row) => t.args(row.a, row.b).expect(e => [e.result.toBe(row.expected)]))
 ready.each('タプル', [[1, 2, 3], [2, 3, 5]], (t, row) => t.args(row[0], row[1]).expect(e => [e.result.toBe(row[2])]))
@@ -72,28 +72,9 @@ ready.it('予約ctxなし', t => t.args(1, 2).expect(e => [e.result.toBe(e.ctx.t
 // @ts-expect-error registration does not accept execution options.
 registerTest(suite, { signal: {} })
 
-const api = { async fetch(id: string) { return { id } } }
-ready.mock(api, 'fetch', m => m.rejectsOnce(new Error('temporary')).resolvesOnce({ id: 'u1' }).resolves({ id: 'u2' }))
-ready.mock({ add }, 'add', m => m.returnsOnce(1).throwsOnce(undefined).callsFakeOnce((a, b) => a + b).returns(3))
-// @ts-expect-error a sequence must define its persistent behavior.
-ready.mock(api, 'fetch', m => m.resolvesOnce({ id: 'u1' }))
-// @ts-expect-error an empty behavior builder is not a behavior.
-ready.mock(api, 'fetch', m => m)
-// @ts-expect-error once values preserve the original return type.
-ready.mock(api, 'fetch', m => m.resolvesOnce({ id: 1 }).resolves({ id: 'u1' }))
-// @ts-expect-error synchronous methods cannot reject once.
-ready.mock({ add }, 'add', m => m.rejectsOnce('error').returns(3))
-// @ts-expect-error synchronous methods cannot resolve once.
-ready.mock({ add }, 'add', m => m.resolvesOnce(3).returns(3))
-// @ts-expect-error fake parameters retain the method signature.
-ready.mock(api, 'fetch', m => m.callsFakeOnce(async (n: number) => ({ id: String(n) })).resolves({ id: 'u1' }))
-// @ts-expect-error terminal behavior cannot be extended into another sequence.
-ready.mock(api, 'fetch', m => m.resolves({ id: 'u1' }).rejectsOnce('error'))
-const observed = ready.it('2回目', t => t.args(1, 2).expectCalls(call => [call(api, 'fetch').calledNthWith(2, 'u1')]))
-// @ts-expect-error nth arguments follow the original method.
-ready.it('nth引数', t => t.args(1, 2).expectCalls(call => [call(api, 'fetch').calledNthWith(2, 123)]))
-// @ts-expect-error nth requires its index.
-ready.it('nth位置', t => t.args(1, 2).expectCalls(call => [call(api, 'fetch').calledNthWith('u1')]))
+// @ts-expect-error arbitrary method replacement is not available.
+ready.mock({ add }, 'add', () => undefined)
+const observed = ready.it('具体例', t => t.args(1, 2).expect(e => [e.result.toEqual(3)]))
 
 for (const c of observed.blueprint().cases) {
   const origin: SourceLocation = c.origin
@@ -102,12 +83,9 @@ for (const c of observed.blueprint().cases) {
   // @ts-expect-error source locations are readonly.
   c.origin.line = 1
   if (c.mode === 'todo') continue
-  for (const a of c.calls) {
-    if (a.check.matcher === 'calledNthWith') {
-      const n: number = a.check.n
-      void n
-    }
-  }
+  // @ts-expect-error call assertions are not blueprint metadata.
+  c.calls
+
 }
 declare const result: CaseResult
 const timeout: number = result.config.timeout
@@ -125,8 +103,8 @@ for (const attempt of result.attempts) {
   void index
 }
 const failure = {
-  kind: 'assertion', phase: 'assertion', message: 'called twice',
-  assertion: { source: 'expectCalls', index: 0, subject: 'call', key: 'fetch', matcher: 'calledOnceWith' },
+  kind: 'assertion', phase: 'assert', message: 'unexpected count',
+  assertion: { source: 'expect', index: 0, subject: 'action', matcher: 'count', evidence: 'call-record' },
   expected: { kind: 'number', value: 1 }, actual: { kind: 'number', value: 2 },
 } satisfies Failure
 const thrownUndefined = { kind: 'outcome', phase: 'target', message: 'unexpected throw', expected: 'return', actual: { kind: 'throw', value: { kind: 'undefined' } } } satisfies Failure
@@ -136,6 +114,7 @@ const failedAttempt = { ...attemptInfo, status: 'failed', failures: [failure], c
 const failedCleanupAttempt = { ...attemptInfo, status: 'failed', failures: [failure], cleanup: 'incomplete' } satisfies FailedAttemptResult
 const cancelledAttempt: AttemptResult = { ...attemptInfo, status: 'cancelled', failures: [], cleanup: 'incomplete' }
 const failedAssertion = {
+  failureIndexes: [0],
   assertion: failure.assertion, status: 'failed',
   expected: { kind: 'number', value: 1 }, actual: { kind: 'number', value: 2 },
 } satisfies AssertionResult
@@ -170,7 +149,7 @@ const passedTimeout = { ...runInfo, status: 'passed', reason: 'timeout' } satisf
 const cancelledCompleted = { ...runInfo, status: 'cancelled', reason: 'completed' } satisfies RunResult
 void [passedRun, failedRun, cancelledRun, passedTimeout, cancelledCompleted]
 // @ts-expect-error assertion failures must retain expected and actual.
-const incompleteFailure: Failure = { kind: 'assertion', phase: 'assertion', message: 'bad', assertion: failure.assertion }
+const incompleteFailure: Failure = { kind: 'assertion', phase: 'assert', message: 'bad', assertion: failure.assertion }
 // @ts-expect-error a location cannot omit its column.
 const incompleteOrigin: SourceLocation = { file: '/tests/add.test.ts', line: 1 }
 // @ts-expect-error diagnostic values distinguish BigInt from strings and numbers.
@@ -188,6 +167,7 @@ result.status
 result.flaky
 
 const caseInfo = {
+  caseKind: 'example' as const, characteristic: 'pure' as const,
   name: '足す', origin: { file: '/tests/math.test.ts', line: 1, column: 1 },
   path: [0, 0], row: null, config: { timeout: 500, retry: 2 }, durationMs: 0,
 }
@@ -200,7 +180,7 @@ const retriedAfterFailedCleanup: CaseResult = { ...caseInfo, attempts: [failedCl
 // @ts-expect-error a passed attempt cannot be followed by a retry.
 const retriedAfterSuccess: CaseResult = { ...caseInfo, attempts: [passedAttempt, failedAttempt] }
 const skipped: CaseResult = { ...caseInfo, attempts: [], notRun: 'skipped' }
-const todo: CaseResult = { ...caseInfo, attempts: [], notRun: 'todo' }
+const todo: CaseResult = { ...caseInfo, caseKind: 'todo', attempts: [], notRun: 'todo' }
 const cancelled: CaseResult = { ...caseInfo, attempts: [], notRun: 'cancelled' }
 // @ts-expect-error a case with no attempts must explain why it was not run.
 const unexplained: CaseResult = { ...caseInfo, attempts: [] }

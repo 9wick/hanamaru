@@ -46,7 +46,7 @@ export default [
     plugins: { architecture: architecturePlugin },
     rules: { 'architecture/dependencies': 'error' },
   },
-  { ignores: ['node_modules/**', 'dist/**', 'coverage/**'] },
+  { ignores: ['node_modules/**', 'dist/**', 'coverage/**', '.tmp/**'] },
   { linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: 'error' } },
   {
     files: ['**/*.ts', '**/*.mts', '**/*.cts'],

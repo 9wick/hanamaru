@@ -1,20 +1,32 @@
+export { ObservationOwner, ObservationIssuer, checkedState, checkedAction } from './definition/observation.js'
 export type * from './definition/types.js'
 export type * from './definition/runtime.js'
 export type * from './definition/resource.js'
-export type * from './definition/calls.js'
-export type * from './assertion/types.js'
-export type {
-  RuntimeValueAssertion,
-  RuntimeCallAssertion,
-  ResolvedCallAssertion,
-  RuntimeAssertion,
-} from './assertion/runtime.js'
 export type { ExecutionConfig } from './definition/conditions.js'
 export type { AnyFn, FnKeys, MethodOf } from './definition/target-types.js'
 export type { Value } from './definition/javascript.js'
 export { completedDefinitions } from './definition/handle.js'
 export { validatedBlueprints } from './definition/validation.js'
-export { checkedAssertion, validateAssertion } from './assertion/validation.js'
-export { CallDescriptor, descriptor, plannedCalls } from './definition/calls.js'
 export { checkedResources, resourceGraph } from './definition/resource.js'
 export { resultTag, middlewareTag } from './definition/tags.js'
+export { RuntimeReference, referenceGraph, referenceTermination } from './assertion/references.js'
+export type { ReferenceSource } from './assertion/references.js'
+export { Condition, compileChecks, checkReferences } from './assertion/compiled-checks.js'
+export type { Check, CompiledChecks } from './assertion/compiled-checks.js'
+export { captureValue, equalValues, recordImage } from './assertion/value-image.js'
+export type { ValueImage } from './assertion/value-image.js'
+export { captureAdaptedValue, adapterTypeOf } from './assertion/value-adapter.js'
+export { copyData } from './definition/data-copy.js'
+export { expectation } from './assertion/expectation.js'
+
+export { propertyExpectation } from './assertion/property-expectation.js'
+
+export { generate, seeded, shrink } from './definition/generation.js'
+export type { PropertyInput } from './definition/property-input.js'
+
+export { resolveReceiver, resolveOperations } from './definition/receiver.js'
+
+export { compileSteps } from './definition/steps.js'
+export type { StepPlan, PlannedStep } from './definition/steps.js'
+
+export { targetShape, inputShape } from './definition/shape.js'

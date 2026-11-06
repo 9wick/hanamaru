@@ -1,3 +1,4 @@
+import { withFailureReferences } from '@hanamaru/execution-protocol'
 import type { ResourceScope } from '@hanamaru/blueprint/model'
 import type {
   CaseResultBase,
@@ -27,6 +28,8 @@ export type Stage = 'before' | 'inside' | 'after' | 'end' | 'contract'
 export type ActiveExecution =
   | {
       kind: 'attempt'
+      partial?: MutableAttempt
+      timeoutPhase?: ExecutionPhase
       base: CaseResultBase
       attempts: MutableAttempt[]
       number: number
@@ -52,36 +55,59 @@ export function progressOf(
 ): Exclude<Progress, { kind: 'init' }> {
   if (active.kind === 'attempt') {
     const { base, attempts, number, started, timeoutMs } = active
-    return {
-      kind: 'case',
-      result: {
-        ...base,
-        durationMs: now() - started,
-        attempts: [
-          ...attempts,
+    const partial = active.partial
+    const failures = [...(partial?.failures ?? [])]
+    const timeoutIndex = reason === 'timeout' ? failures.length : null
+    if (reason === 'timeout')
+      failures.push(
+        failure(
+          'timeout',
+          active.timeoutPhase ?? required(phase, 'no active phase for progress'),
+          `attempt exceeded ${timeoutMs}ms`,
           {
-            attempt: number,
-            status: reason === 'timeout' ? 'failed' : 'cancelled',
-            durationMs: now() - started,
-            outcome: null,
-            assertions: [],
-            failures:
-              reason === 'timeout'
-                ? [
-                    failure(
-                      'timeout',
-                      required(phase, 'no active phase for progress'),
-                      `attempt exceeded ${timeoutMs}ms`,
-                      { timeoutMs, cleanup: 'incomplete' },
-                    ),
-                  ]
-                : [],
+            timeoutMs,
             cleanup: 'incomplete',
           },
-        ],
-      },
+        ),
+      )
+    const status = failures.length ? 'failed' : 'cancelled'
+    const pending = (assertions: MutableAttempt['assertions']) =>
+      assertions.map((assertion) =>
+        assertion.status === 'not-evaluated' && assertion.pending
+          ? { ...assertion, reason: `${reason} before evaluation completed` }
+          : assertion,
+      )
+    const interrupted: MutableAttempt = {
+      ...partial,
+      attempt: number,
+      status,
+      durationMs: now() - started,
+      outcome: partial?.outcome ?? null,
+      assertions: pending(partial?.assertions ?? []),
+      failures,
+      cleanup: 'incomplete',
+      evaluations:
+        partial?.evaluations?.map((evaluation) =>
+          evaluation.cleanup === 'incomplete'
+            ? {
+                ...evaluation,
+                status,
+                assertions: pending([...evaluation.assertions]),
+                failureIndexes:
+                  timeoutIndex === null ? evaluation.failureIndexes : [...evaluation.failureIndexes, timeoutIndex],
+              }
+            : evaluation,
+        ) ?? [],
+      ...(partial?.property
+        ? { property: { ...partial.property, stopped: reason === 'timeout' ? 'execution-failed' : 'interrupted' } }
+        : {}),
+    }
+    return {
+      kind: 'case',
+      result: { ...base, durationMs: now() - started, attempts: [...attempts, withFailureReferences(interrupted)] },
     }
   }
+
   if (active.kind === 'resource')
     return {
       kind: 'resource',

@@ -55,19 +55,22 @@ test('hoists dependencies once, exposes direct fields and cleans up in reverse o
     .require(schema)
     .target((url: string) => {
       log.push(`case ${++attempt}`)
-      return url
+      return { url, attempt }
     })
     .it('retry', (t) =>
       t
         .retry(1)
         .argsFrom((ctx) => [ctx.schemaUrl])
-        .expect((e) => [e.result.toBe('db://local/schema'), e.result.toSatisfy(() => attempt === 2)]),
+        .expect((e) => [e.result.toEqual({ url: 'db://local/schema', attempt: 2 })]),
     )
   const b = new Test().target(identity).it('case requirement', (t) =>
     t
       .require(schema)
-      .argsFrom((ctx) => [ctx.schemaUrl])
-      .expect((e) => [e.result.toBe('db://local/schema'), e.result.toSatisfy(() => !Object.hasOwn(e.ctx, 'dbUrl'))]),
+      .argsFrom((ctx) => {
+        expect(Object.hasOwn(ctx, 'dbUrl')).toBe(false)
+        return [ctx.schemaUrl]
+      })
+      .expect((e) => [e.result.toEqual('db://local/schema')]),
   )
   const result = await run([a, b])
   expect(result.status).toBe('passed')
@@ -403,12 +406,13 @@ test('every retry receives a fresh copy of supplied data', async () => {
   })
   const cases = new Test()
     .require(data)
-    .target((state: { count: number }) => state.count++)
+    .target((state: { count: number }) => ({ before: state.count++, attempt: ++attempt }))
+    .effectful()
     .it('retry', (t) =>
       t
         .retry(1)
         .argsFrom((ctx) => [ctx.state])
-        .expect((e) => [e.result.toBe(0), e.result.toSatisfy(() => ++attempt === 2)]),
+        .expect((e) => [e.result.toEqual({ before: 0, attempt: 2 })]),
     )
   const result = await run(cases)
   expect(result.status).toBe('passed')

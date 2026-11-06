@@ -174,18 +174,18 @@ createUser
   ✓ 保存に失敗したら通知しない
 ```
 
-例えばsendが実際には `{ id: 'u2' }` で1回呼ばれたとき、
-`calledOnceWith({ id: 'u1' })` の失敗は次のように示す。
+受信側で観測した宛先が期待と異なる場合は、観測先と証拠の種別を添えて示します。
 
 ```text
 ✗ 保存して通知する  src/user.test.ts:42:4
-  call(send).calledOnceWith
-    expected: 合計1回、引数 [{ id: 'u1' }]
-    actual:   合計1回、引数 [{ id: 'u2' }]
+  state(received).part(0).part("recipient").toEqual
+    evidence: substitute-effect
+    args: ["user-1"]
+    expected: "alice@example.test"
+    actual:   "bob@example.test"
 ```
 
-表示のsendはexpectCallsで指定したメソッドのキーであり、利用者が付けた別名ではない。
-一致しなかった呼び出しを0回と表示しない。
+呼び出し記録だけならevidenceはcall-recordで、実効果として表示しません。不一致と未観測・観測障害を区別します。
 グループは名前があれば見出しとして表示し、無名なら名前を補わず子を表示する。
 group(name, [children])で作ったグループの名前を見出しとして使う。名前がなくてもblueprintとJSON結果の階層は保持する。
 失敗ケースにはcwdからの相対パスと1始まりの行・列を表示する。

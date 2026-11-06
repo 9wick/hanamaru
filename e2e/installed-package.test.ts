@@ -207,20 +207,20 @@ registerTest(new Test().group('unknown arguments', [contextual]))
   expect(items.every((item) => item.attempts[0]?.status === 'passed')).toBe(true)
 })
 
-test('installed CLI executes relation dependencies and named results through workers', () => {
+test('installed CLI executes scenario dependencies and named results through workers', () => {
   const file = consumerFixture(
     installed,
     'multiple-calls.test',
     `
-import { relation } from 'hanamaru'
+import { scenario, tuples, constant } from 'hanamaru'
 const encode = async (value: string) => new TextEncoder().encode(value)
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
-const codec = new Test().target('codec', relation({ encode, decode }))
-  .it('round trip', t => t.calls(c => c.decode.args(c.encode.args('こんにちは')))
+const codec = new Test().target('codec', scenario({ encode, decode }))
+  .it('round trip', t => t.steps(c => c.decode.args(c.encode.args('こんにちは')))
     .expect(e => [e.result.toBe('こんにちは')]))
 const key = (a: string, b: string) => JSON.stringify([a, b])
-const keys = new Test().target(key).it('distinct', t => t.calls(c => ({ first: c.args('ab', 'c'), second: c.args('a', 'bc') }))
-  .expect(e => [e.result.toSatisfy(({ first, second }) => first !== second)]))
+const keys = new Test().target(key).property('distinct', p => p.forAll(tuples(constant('ab'), constant('c'))).steps(s => ({ first: s.target.args(s.input[0], s.input[1]), second: s.target.args('a', 'bc') }))
+  .expect(e => [e.on(e.result).satisfies('different pairs', ({ first, second }) => first !== second)]))
 registerTest(new Test().group('contracts', [codec, keys]))
 `,
   )
@@ -234,19 +234,24 @@ test('installed CLI reports a failed invocation, its cause and unexecuted depend
     installed,
     'failed-calls.test',
     `
-import { relation } from 'hanamaru'
+import { scenario, tuples, constant } from 'hanamaru'
 const encode = async (_value: string): Promise<Uint8Array> => { throw new Error('broken codec') }
 const decode = (_bytes: Uint8Array): string => { throw new Error('decode must not run') }
-registerTest(new Test().target(relation({ encode, decode })).it('failure', t =>
-  t.calls(c => c.decode.args(c.encode.args('input'))).expect(e => [e.result.toBe('input')])))
+registerTest(new Test().target(scenario({ encode, decode })).it('failure', t =>
+  t.steps(c => c.decode.args(c.encode.args('input'))).expect(e => [e.result.toBe('input')])))
 `,
   )
   const output = jsonResult(invoke(installed.env, file, '--reporter', 'json'), 1)
   const attempt = testNode(output).cases[0].attempts[0]
-  expect(attempt?.failures[0]?.message).toContain('call encode #1 failed; not run: decode #2')
+  expect(attempt?.failures[0]).toMatchObject({ kind: 'outcome', operationIndex: 0 })
+  expect(attempt?.operations).toMatchObject([
+    { key: 'encode', status: 'threw' },
+    { key: 'decode', status: 'not-run' },
+  ])
+  expect(attempt?.evaluations?.[0]?.kind).toBe('example')
   expect(attempt?.failures[0]?.phase).toBe('target')
   expect(JSON.stringify(attempt?.failures)).toContain('broken codec')
-  expect(attempt?.assertions).toEqual([])
+  expect(attempt?.assertions).toMatchObject([{ status: 'not-evaluated' }])
 })
 
 test('installed CLI loads typed consumers and reports group, each, skip and todo results', () => {
@@ -314,19 +319,19 @@ export const suite = new Test().target(() => 1).it('mismatch', t => t.args().exp
   expect(failure.actual).toStrictEqual({ kind: 'number', value: 1 })
 })
 
-test('installed comparisons follow Vitest for symbols and special values', () => {
+test('installed comparisons distinguish symbol, native and missing values', () => {
   const file = consumerFixture(
     installed,
     'comparison-criteria',
     `
     const symbol = Symbol('id')
-    export const suite = new Test().target((value: object) => value)
+    export const suite = new Test().target((value: Record<string, unknown>) => value)
       .it('same symbol', t => t.args({ [symbol]: 1 }).expect(e => [e.result.toEqual({ [symbol]: 1 })]))
       .it('different symbols', t => t.args({ [Symbol('id')]: 1 }).expect(e => [e.result.toEqual({ [Symbol('id')]: 1 })]))
-      .it('different dates', t => t.args({ at: new Date(0) }).expect(e => [e.result.toMatchObject({ at: new Date(1) })]))
-      .it('map values', t => t.args({ m: new Map([[1, 2]]) }).expect(e => [e.result.toMatchObject({ m: new Map([[1, 3]]) })]))
-      .it('set values', t => t.args({ s: new Set([1]) }).expect(e => [e.result.toMatchObject({ s: new Set([2]) })]))
-      .it('regexp shape', t => t.args({ r: /x/g }).expect(e => [e.result.toMatchObject({ r: /y/i })]))
+      .it('different dates', t => t.args({ at: new Date(0) }).expect(e => [e.result.part('at').toEqual(new Date(1))]))
+      .it('map values', t => t.args({ m: new Map([[1, 2]]) }).expect(e => [e.result.part('m').toEqual(new Map([[1, 3]]))]))
+      .it('set values', t => t.args({ s: new Set([1]) }).expect(e => [e.result.part('s').toEqual(new Set([2]))]))
+      .it('regexp shape', t => t.args({ r: /x/g }).expect(e => [e.result.part('r').toEqual(/y/i)]))
       .it('undefined field', t => t.args({ value: undefined }).expect(e => [e.result.toEqual({})]))
   `,
   )
@@ -337,22 +342,23 @@ test('installed comparisons follow Vitest for symbols and special values', () =>
     'failed',
     'failed',
     'failed',
-    'passed',
-    'passed',
+    'failed',
+    'failed',
   ])
 })
 
-test('installed CLI aborts after failed mock restoration', () => {
+test('installed CLI aborts after failed observation cleanup', () => {
   const file = consumerFixture(
     installed,
     'failed-restoration',
     `
-    const service = Object.defineProperty({}, 'read', { value: () => 1, configurable: false, writable: true })
-    export const suite = new Test().retry(1).target(() => {
-      Object.defineProperty(service, 'read', { writable: false })
-      return service.read()
-    }).it('locks mock', t => t.mock(service, 'read', m => m.returns(2)).args().expect(e => [e.result.toBe(2)]))
-      .it('later', t => t.args().expect(e => [e.result.toBe(1)]))
+    import { environment } from 'hanamaru'
+    const local = environment(async (_, scope, next) => next({
+      event: scope.action({ evidence: 'real-effect', open: () => ({ finish: () => [], dispose: () => { throw new Error('dispose failed') } }) }),
+    }))
+    export const suite = new Test().retry(1).target(() => 1).effectful().use(local)
+      .it('cleanup fails', t => t.args().expect(e => [e.result.toEqual(1), e.action(e.ctx.event).untilTargetSettles().none()]))
+      .it('later', t => t.args().expect(e => [e.result.toEqual(1)]))
   `,
   )
   const output = jsonResult(invoke(installed.env, file, '--reporter', 'json'), 1)
@@ -457,7 +463,7 @@ test('CLI collection errors do not invent a RunResult', () => {
   }
 })
 
-test('CLI mocks direct and captured module imports and restores the real export', () => {
+test('CLI preserves direct and captured module imports across cases', () => {
   writeFileSync(
     join(installed.consumer, 'module-service.ts'),
     'export function read(value: number) { return value * 2 }',
@@ -474,9 +480,7 @@ export function readBoth() { return [read(1), captured(2)] }`,
     `import * as service from './module-service.ts'
 import { readBoth } from './module-target.ts'
 export const suite = new Test().target(readBoth)
-  .it('mock', t => t.mock(service, 'read', m => m.returnsOnce(7).returns(8)).args()
-    .expect(e => [e.result.toEqual([7, 8])])
-    .expectCalls(call => [call(service, 'read').calledTimes(2), call(service, 'read').calledNthWith(2, 2)]))
+  .it('first', t => t.args().expect(e => [e.result.toEqual([2, 4])]))
   .it('real', t => t.args().expect(e => [e.result.toEqual([2, 4])]))`,
   )
   const output = jsonResult(invoke(installed.env, file, '--reporter', 'json'), 0)
@@ -484,7 +488,7 @@ export const suite = new Test().target(readBoth)
   expect(testNode(output).cases.map((item) => item.attempts[0].status)).toStrictEqual(['passed', 'passed'])
 })
 
-test('CLI Vite aliases and function plugins preserve module mock contracts', () => {
+test('CLI Vite aliases and function plugins preserve imported dependencies', () => {
   writeFileSync(join(installed.consumer, 'plugin-service.ts'), 'export function value(): number { return 2 }')
   const file = consumerFixture(
     installed,
@@ -492,7 +496,7 @@ test('CLI Vite aliases and function plugins preserve module mock contracts', () 
     `import * as service from '@service'
 import { read } from 'virtual:reader'
 export const suite = new Test().target(read)
-  .it('mock', t => t.mock(service, 'value', m => m.returns(9)).args().expect(e => [e.result.toBe(9)]))
+  .it('first', t => t.args().expect(e => [e.result.toEqual(2)]))
   .it('real', t => t.args().expect(e => [e.result.toBe(2)]))`,
   )
   const config = join(installed.consumer, 'plugin.config.ts')
@@ -620,7 +624,7 @@ test('installed CLI keeps diagnostic inspection failures separate from target ou
     'inspection-regression',
     `
 const target = () => new Proxy({}, { ownKeys() { throw new Error('inspection exploded') } })
-export const cases = new Test().target(target).it('must throw', t => t.args().expect(e => [e.error.toThrow('inspection exploded')]))
+export const cases = new Test().target(target).it('must throw', t => t.args().expect(e => [e.error.message.toEqual('inspection exploded')]))
 `,
   )
   const result = jsonResult(invoke(installed.env, file, '-r', 'json'), 1)
@@ -634,7 +638,7 @@ test('installed pretty reporter shows group setup causes and concrete error expe
     `
 const child = new Test().target(() => 1).it('child', t => t.args().expect(e => [e.result.toBe(1)]))
 export const group = new Test().group('database', middleware(async () => { throw new Error('DATABASE_CONNECTION_REFUSED') }), [child])
-export const errors = new Test().target(() => { throw new Error('actual') }).it('message', t => t.args().expect(e => [e.error.toThrow('wanted-message')]))
+export const errors = new Test().target(() => { throw new Error('actual') }).it('message', t => t.args().expect(e => [e.error.message.toEqual('wanted-message')]))
 `,
   )
   const result = invoke(installed.env, file, '-r', 'pretty')
@@ -643,29 +647,27 @@ export const errors = new Test().target(() => { throw new Error('actual') }).it(
   expect(result.stdout).toContain('wanted-message')
 })
 
-test('installed CLI resolves dynamic fixture objects and namespace argument expectations', () => {
+test('installed CLI resolves fresh environments and observes their state', () => {
   writeFileSync(join(installed.consumer, 'dynamic-service.ts'), 'export const send = (id: number) => id\n')
   const file = consumerFixture(
     installed,
     'dynamic-calls',
     `
-import * as service from './dynamic-service.ts'
+import { environment } from 'hanamaru'
 import { send } from './dynamic-service.ts'
 let setups = 0
-const child = new Test().use(middleware(async (_, next) => {
-  const client = { send(id: number) { return id } }
-  const original = client.send
-  try { return await next({client, id: ++setups}) }
-  finally { if (client.send !== original) throw new Error('not restored') }
-})).target((client: {send(id: number): number}, id: number) => client.send(id))
-.it('fixture', t => t.retry(1).argsFrom(ctx => [ctx.client, ctx.id]).expect(e => [e.result.toBe(2)])
-.expectCalls(call => [call.from(ctx => ctx.client, 'send').calledOnceWithFrom(ctx => [ctx.id])]))
+class Client { sent: number[] = []; send(id: number) { this.sent.push(id); return id } }
+const local = environment(async (_, scope, next) => {
+  const client = new Client()
+  return next({ client, id: ++setups, sent: scope.state({ evidence: 'real-effect', read: () => client.sent }) })
+})
+const child = new Test().target((client: Client, id: number) => client.send(id)).effectful().use(local)
+  .it('fixture', t => t.retry(1).argsFrom(ctx => [ctx.client, ctx.id])
+    .expect(e => [e.result.toEqual(2), e.state(e.ctx.sent).toEqual([e.ctx.id])]))
 export const fixtures = new Test().group('resources', [child])
-export const namespace = new Test().use(middleware(async (_, next) => next({id: 7}))).target((id: number) => send(id))
-.it('mock', t => t.mock(service, 'send', m => m.returns(42)).argsFrom(ctx => [ctx.id])
-.expect(e => [e.result.toBe(42)]).expectCalls(call => [call(service, 'send').calledOnceWithFrom(ctx => [ctx.id])]))
-.it('restore', t => t.argsFrom(ctx => [ctx.id]).expect(e => [e.result.toBe(e.ctx.id)])
-.expectCalls(call => [call(service, 'send').calledNthWithFrom(1, ctx => [ctx.id])]))
+export const namespace = new Test().target(send)
+  .it('first', t => t.args(7).expect(e => [e.result.toEqual(7)]))
+  .it('second', t => t.args(8).expect(e => [e.result.toEqual(8)]))
 `,
   )
   const result = jsonResult(invoke(installed.env, file, '-r', 'json'), 0)
@@ -704,7 +706,7 @@ export const suite = new Test().require(schema).group('group', middleware(async 
   if (ctx.brain === threadId) throw new Error('resource was not hoisted')
   try { return await next() } finally { appendFileSync(${JSON.stringify(trace)}, 'worker close\\n') }
 }), [new Test<{url: string, brain: number}>().target((url: string) => url)
-.it('uses schema', t => t.argsFrom(ctx => [ctx.url]).expect(e => [e.result.toBe('db://test/schema'), e.result.toSatisfy(() => !Object.hasOwn(e.ctx, 'dbUrl'))]))])
+.it('uses schema', t => t.argsFrom(ctx => { if (Object.hasOwn(ctx, 'dbUrl')) throw new Error('transitive field leaked'); return [ctx.url] }).expect(e => [e.result.toEqual('db://test/schema')]))])
 `,
     ),
   )
@@ -784,4 +786,110 @@ export const suite = new Test().require(stuck).target(() => 1).it('case', t => t
       failures: [{ kind: 'timeout', phase: stage }],
     })
   }
+})
+
+test('installed property workers reset environments, shrink and retain reproducible samples', () => {
+  const file = consumerFixture(
+    installed,
+    'generated-contract',
+    `
+import { environment, integers, tuples } from 'hanamaru'
+class Counter {
+  value = 0
+  add(amount: number) { this.value += amount; return this.value }
+}
+const local = environment(async (_, scope, next) => {
+  console.error('EVALUATION_OPEN')
+  try { return await next({ counter: new Counter() }) }
+  finally { console.error('EVALUATION_CLOSE') }
+})
+registerTest(new Test().target(Counter, 'add').effectful().use(local).from(ctx => ctx.counter)
+  .property('bounded total', p => p.forAll(tuples(integers({ min: 3, max: 100 })), { seed: 42, runs: 5, maxShrinks: 20 })
+    .expect(e => [
+      e.on(e.result).satisfies('under three', total => total < 3),
+      e.on({ amount: e.sample(0), total: e.result }).satisfies('fresh counter', ({ amount, total }) => amount === total),
+    ])))
+`,
+  )
+  const firstRun = invoke(installed.env, file, '--reporter', 'json')
+  const first = testNode(jsonResult(firstRun, 1)).cases[0].attempts[0]
+  expect.assert(first !== undefined)
+  expect(first.property?.seed).toBe(42)
+  expect(first.property?.counterexample).toMatchObject({ kind: 'array', items: [{ kind: 'number', value: 3 }] })
+  expect(first.evaluations?.some((evaluation) => evaluation.kind === 'shrink')).toBe(true)
+  expect(firstRun.stderr.match(/EVALUATION_OPEN/g)?.length).toBe(first.evaluations?.length)
+  expect(firstRun.stderr.match(/EVALUATION_CLOSE/g)?.length).toBe(first.evaluations?.length)
+  expect(first.failures.every((failure) => failure.kind === 'assertion' && failure.assertion.index === 0)).toBe(true)
+  const second = testNode(jsonResult(invoke(installed.env, file, '--reporter', 'json'), 1)).cases[0].attempts[0]
+  expect(second?.property).toEqual(first.property)
+  expect(second?.evaluations?.map((evaluation) => evaluation.input)).toEqual(
+    first.evaluations?.map((evaluation) => evaluation.input),
+  )
+})
+
+test('timeout during shrinking preserves the original counterexample and incomplete operation', () => {
+  const file = consumerFixture(
+    installed,
+    'shrink-timeout',
+    `
+import { integers, tuples } from 'hanamaru'
+function target(value: number): number {
+  if (value === 0) while (true) {}
+  return value
+}
+registerTest(new Test().target(target).property('fails before hanging shrink', p => p.timeout(250)
+  .forAll(tuples(integers({ min: 0, max: 100 })), { seed: 42, runs: 5, maxShrinks: 20 })
+  .steps(s => s.target.args(s.input[0]))
+  .expect(e => [e.on(e.result).satisfies('negative', value => value < 0)])))
+`,
+  )
+  const output = jsonResult(invoke(installed.env, file, '--reporter', 'json', '--shutdown-grace', '200'), 1)
+  expect(output.reason).toBe('timeout')
+  const attempt = testNode(output).cases[0].attempts[0]
+  expect.assert(attempt !== undefined)
+  expect(attempt.property?.seed).toBe(42)
+  expect(attempt.property?.originalCounterexample).not.toBeNull()
+  expect(attempt.property?.counterexample).toEqual(attempt.property?.originalCounterexample)
+  expect(attempt.evaluations?.map((evaluation) => evaluation.kind)).toEqual(['generated', 'shrink'])
+  expect(attempt.evaluations?.[0]?.status).toBe('failed')
+  expect(attempt.evaluations?.[1]).toMatchObject({
+    status: 'failed',
+    cleanup: 'incomplete',
+    failureIndexes: [1],
+    operations: [{ index: 0, key: 'target', status: 'incomplete', args: [{ kind: 'number', value: 0 }] }],
+  })
+  expect(attempt.selectedEvaluationIndex).toBe(0)
+  expect(attempt.outcome).toEqual(attempt.evaluations?.[0].outcome)
+  expect(attempt.operations).toEqual(attempt.evaluations?.[0].operations)
+  expect(attempt.assertions.map((assertion) => assertion.status)).toEqual(['failed'])
+  expect(attempt.assertions[0].failureIndexes).toEqual([0])
+  expect(attempt.failures.map((failure) => failure.kind)).toEqual(['assertion', 'timeout'])
+})
+
+test('timeout in cleanup retains the counterexample found by the first evaluation', () => {
+  const file = consumerFixture(
+    installed,
+    'counterexample-cleanup-timeout',
+    `
+import { environment, constant, tuples } from 'hanamaru'
+const local = environment(async (_, scope, next) => {
+  try { return await next({}) }
+  finally { await new Promise<void>(() => {}) }
+})
+registerTest(new Test().target((value: number) => value).effectful().use(local)
+  .property('contract failed before cleanup', p => p.timeout(250).forAll(tuples(constant(5)))
+    .expect(e => [e.on(e.result).satisfies('negative', value => value < 0)])))
+`,
+  )
+  const output = jsonResult(invoke(installed.env, file, '--reporter', 'json', '--shutdown-grace', '200'), 1)
+  const attempt = testNode(output).cases[0].attempts[0]
+  expect(output.reason).toBe('timeout')
+  expect(attempt?.property?.originalCounterexample).toMatchObject({
+    kind: 'array',
+    items: [{ kind: 'number', value: 5 }],
+  })
+  expect(attempt?.evaluations).toHaveLength(1)
+  expect(attempt?.evaluations?.[0]).toMatchObject({ status: 'failed', cleanup: 'incomplete', failureIndexes: [0, 1] })
+  expect(attempt?.failures.map((failure) => failure.kind)).toEqual(['assertion', 'timeout'])
+  expect(attempt?.failures[1]?.phase).toBe('cleanup')
 })

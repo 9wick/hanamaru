@@ -1,15 +1,13 @@
 import type { ConfigClass } from '@zeltjs/core'
 import { Config, createApp } from '@zeltjs/core'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, onTestFinished, test } from 'vite-plus/test'
-import type { ModulePreparation, ModuleInvoke } from '../../application/ports/module-loader.js'
-import { invoke, objectValue, property } from '../../foundation/value.js'
+import type { ModuleInvoke } from '../../application/ports/module-loader.js'
+import { invoke, objectValue } from '../../foundation/value.js'
 import { ModuleCompilerLauncher } from './compiler.js'
 import { ModuleEntry } from './entry.js'
-import { ModuleRegistry } from './reference.js'
 import { ModuleRuntimeLauncher } from './runtime.js'
 
 @Config()
@@ -17,7 +15,7 @@ class TestEntry extends ModuleEntry {
   override readonly url = new URL('../../../../../src/index.ts', import.meta.url)
 }
 
-/** 1つのscopeにつき1つのtest runtime。別のscopeは評価状態もmockの台帳も共有しない。 */
+/** 1つのscopeにつき1つのtest runtime。別のscopeは評価状態を共有しない。 */
 async function scope(configs: ConfigClass<object>[] = []) {
   const created = await createApp([]).createRuntime({ configs: [TestEntry, ...configs] })
   onTestFinished(() => created.shutdown())
@@ -26,7 +24,9 @@ async function scope(configs: ConfigClass<object>[] = []) {
 
 /** 書き換えて読み直す場面があるため、fixtureは1件ごとに別のdirectoryへ置く。 */
 function workspace() {
-  const directory = mkdtempSync(join(tmpdir(), 'hanamaru-modules-'))
+  const root = join(process.cwd(), '.tmp')
+  mkdirSync(root, { recursive: true })
+  const directory = mkdtempSync(join(root, 'hanamaru-modules-'))
   onTestFinished(() => rmSync(directory, { recursive: true, force: true }))
   return {
     write(name: string, source: string) {
@@ -44,12 +44,9 @@ async function compiler() {
   return created
 }
 
-/** 実行workerと同じ組み立て。差し替える宛先はruntimeを組み立てるときに決まる。 */
-async function runtime(transport: { invoke: ModuleInvoke }, preparation: ModulePreparation[] = []) {
-  const created = (await (await scope()).get(ModuleRuntimeLauncher)).start(
-    transport.invoke.bind(transport),
-    preparation,
-  )
+/** 実行workerと同じ組み立て。読み込み状態はruntimeごとに独立する。 */
+async function runtime(transport: { invoke: ModuleInvoke }) {
+  const created = (await (await scope()).get(ModuleRuntimeLauncher)).start(transport.invoke.bind(transport))
   onTestFinished(() => created.close())
   return created
 }
@@ -68,16 +65,10 @@ test('a module keeps one namespace per runtime and separate runtimes keep separa
   expect(invoke(objectValue(second.next), undefined, [])).toBe(1)
 })
 
-test('the namespace of a module is registered in the registry that built it', async () => {
+test('path and file URL resolve to the same namespace', async () => {
   const { file, url } = workspace().write('value.ts', 'export const value = 1\n')
-  const transport = await compiler()
-  const open = await scope()
-  const registry = await open.get(ModuleRegistry)
-  const loaded = (await open.get(ModuleRuntimeLauncher)).start(transport.invoke.bind(transport), [])
-  onTestFinished(() => loaded.close())
-  // 台帳の見出しはViteが解決したmodule idで、import時のURLではない。準備の照合もこの見出しに従う。
-  expect(registry.identify(await loaded.import(url))).toBe(file)
-  expect(registry.identify(await loaded.import(file))).toBe(file)
+  const loaded = await runtime(await compiler())
+  expect(await loaded.import(file)).toBe(await loaded.import(url))
 })
 
 test('the compiler answers builtins, rejects unknown requests and keeps fetched code per instance', async () => {
@@ -92,25 +83,14 @@ test('the compiler answers builtins, rejects unknown requests and keeps fetched 
   expect(await (await compiler()).invoke('fetchModule', [url, undefined, {}])).not.toStrictEqual(before)
 })
 
-test('a prepared mock replaces the export for saved references and restores it', async () => {
-  const { file, url } = workspace().write('answer.ts', 'export function answer() {\n  return 1\n}\n')
-  const loaded = await runtime(await compiler(), [{ id: file, keys: ['answer'] }])
-  const namespace = await loaded.import(url)
-  const saved = objectValue(namespace.answer)
-  const binding = loaded.bindCall({ object: namespace, key: 'answer' })
-  expect(binding.sourceObject).toBe(namespace)
-  const original = property(binding.object, binding.key)
-  expect(Reflect.set(binding.object, binding.key, () => 99)).toBe(true)
-  expect(invoke(saved, undefined, [])).toBe(99)
-  expect(Reflect.set(binding.object, binding.key, original)).toBe(true)
-  expect(invoke(saved, undefined, [])).toBe(1)
-})
-
-test('binding a key that was not prepared is refused', async () => {
-  const { url } = workspace().write('plain.ts', 'export function answer() {\n  return 1\n}\n')
+test('module runtime exposes no export replacement entry point', async () => {
+  const { url } = workspace().write('answer.ts', 'export function answer() { return 1 }\n')
   const loaded = await runtime(await compiler())
   const namespace = await loaded.import(url)
-  expect(() => loaded.bindCall({ object: namespace, key: 'answer' })).toThrow('unprepared module mock')
+  const saved = objectValue(namespace.answer)
+  expect('bindCall' in loaded).toBe(false)
+  expect(invoke(saved, undefined, [])).toBe(1)
+  expect((await loaded.import(url)).answer).toBe(saved)
 })
 
 test('a missing named export is reported with the importing module url', async () => {

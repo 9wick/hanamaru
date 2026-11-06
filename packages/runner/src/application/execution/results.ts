@@ -1,4 +1,4 @@
-import type { CaseBlueprint } from '@hanamaru/blueprint/model'
+import type { CaseBlueprint, Characteristic } from '@hanamaru/blueprint/model'
 import type { ResolvedExecutionConfig } from '../../domain/execution/config.js'
 import { configWith } from '../../domain/execution/config.js'
 import type { ExecutionNode } from '../../domain/execution/model.js'
@@ -24,9 +24,12 @@ export function caseBase(
   item: CaseBlueprint,
   index: number,
   path: number[],
+  characteristic: Characteristic,
 ): CaseResultBase {
   return {
     name: item.name,
+    caseKind: item.caseKind,
+    characteristic,
     origin: item.origin,
     path: [...path, item.originalIndex ?? index],
     row: item.row ? { index: item.row.index, value: diagnostic(item.row.value) } : null,
@@ -50,7 +53,10 @@ export function cancelledTree(node: ExecutionNode, path: number[], only: boolean
       name: node.bp.name,
       path,
       cases: node.bp.cases.map((item, index) =>
-        notRunCase(caseBase(node.config, item, index, path), executableMode(item, only) ?? 'cancelled'),
+        notRunCase(
+          caseBase(node.config, item, index, path, node.bp.characteristic),
+          executableMode(item, only) ?? 'cancelled',
+        ),
       ),
     }
   return {

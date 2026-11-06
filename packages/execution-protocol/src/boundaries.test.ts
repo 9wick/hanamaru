@@ -9,8 +9,8 @@ test('worker boundaries reject malformed input and mismatched payload fields', (
     () => parse(executionIncomingSchema, { type: 'group-close', id: 1, path: [0] }),
     () => parse(executionIncomingSchema, { type: 'other' }),
     () => parse(executionIncomingSchema, { type: 'initialize' }),
-    () => parse(executionIncomingSchema, { type: 'initialize', spec: { roots: [], preparation: [], shape: [] } }),
-    () => parse(executionWorkerDataSchema, { roots: [], preparation: [], shape: [] }),
+    () => parse(executionIncomingSchema, { type: 'initialize', spec: { roots: [], shape: [] } }),
+    () => parse(executionWorkerDataSchema, { roots: [], shape: [] }),
     () => parse(executionMessageSchema, { type: 'reply', id: 1, value: { result: {}, retryable: true } }),
   ]
   for (const attempt of invalid) expect(attempt).toThrow()
@@ -19,6 +19,6 @@ test('worker boundaries reject malformed input and mismatched payload fields', (
 test('validated worker messages preserve commands and initialization data', () => {
   const command = { type: 'group-close', id: 1, path: [0, 2], failed: false }
   expect(parse(executionIncomingSchema, command)).toEqual(command)
-  const initialization = { type: 'initialize', spec: { roots: [], preparation: [], shape: '[]' } }
+  const initialization = { type: 'initialize', spec: { roots: [], shape: '[]' } }
   expect(parse(executionIncomingSchema, initialization)).toEqual(initialization)
 })
